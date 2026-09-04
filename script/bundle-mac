@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# ekanban を macOS の .app バンドルにまとめる。
+#
+# 使い方:
+#   script/bundle-mac [debug|release]
+#
+# 出力: target/<profile>/bundle/Ekanban.app
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+PROFILE="${1:-release}"
+case "$PROFILE" in
+  debug)   CARGO_FLAGS=() ;;
+  release) CARGO_FLAGS=(--release) ;;
+  *) echo "usage: $0 [debug|release]" >&2; exit 1 ;;
+esac
+
+BIN_NAME="ekanban"
+APP_NAME="Ekanban"
+BUNDLE_ID="dev.tokuhirom.ekanban"
+VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+
+cargo build "${CARGO_FLAGS[@]}"
+
+APP_DIR="target/$PROFILE/bundle/$APP_NAME.app"
+rm -rf "$APP_DIR"
+mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
+
+cp "target/$PROFILE/$BIN_NAME" "$APP_DIR/Contents/MacOS/$APP_NAME"
+
+ICON_ENTRY=""
+if [ -f assets/icon.icns ]; then
+  cp assets/icon.icns "$APP_DIR/Contents/Resources/$APP_NAME.icns"
+  ICON_ENTRY="	<key>CFBundleIconFile</key>
+	<string>$APP_NAME</string>
+"
+fi
+
+cat > "$APP_DIR/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleExecutable</key>
+	<string>$APP_NAME</string>
+	<key>CFBundleIdentifier</key>
+	<string>$BUNDLE_ID</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$APP_NAME</string>
+	<key>CFBundleDisplayName</key>
+	<string>$APP_NAME</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$VERSION</string>
+	<key>CFBundleVersion</key>
+	<string>$VERSION</string>
+${ICON_ENTRY}	<key>LSMinimumSystemVersion</key>
+	<string>11.0</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSSupportsAutomaticGraphicsSwitching</key>
+	<true/>
+</dict>
+</plist>
+PLIST
+
+printf 'APPL????' > "$APP_DIR/Contents/PkgInfo"
+
+# 署名。ローカルでは ad-hoc ("-") で十分だが、配布時は Developer ID を渡す:
+#   CODESIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" script/bundle-mac release
+# Info.plist を書き換えると署名が壊れるので、必ず最後に実行する。
+IDENTITY="${CODESIGN_IDENTITY:--}"
+CODESIGN_ARGS=(--force --deep --sign "$IDENTITY")
+if [ "$IDENTITY" != "-" ]; then
+  # 公証を通すには hardened runtime が必須。
+  CODESIGN_ARGS+=(--options runtime --timestamp)
+  if [ -f script/entitlements.plist ]; then
+    CODESIGN_ARGS+=(--entitlements script/entitlements.plist)
+  fi
+fi
+
+if codesign "${CODESIGN_ARGS[@]}" "$APP_DIR" >/dev/null 2>&1; then
+  :
+elif [ "$IDENTITY" = "-" ]; then
+  echo "warning: ad-hoc 署名に失敗しました (署名なしで続行します)" >&2
+else
+  echo "error: '$IDENTITY' での署名に失敗しました" >&2
+  exit 1
+fi
+
+echo "built $APP_DIR"

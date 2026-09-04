@@ -1,5 +1,7 @@
 pub mod db;
+pub mod diagnostics;
 pub mod model;
+pub mod paths;
 pub mod views;
 
 use std::path::PathBuf;
@@ -9,21 +11,39 @@ use gpui_kit::component::Root;
 use gpui_kit::{px, size, App, AppContext, Bounds, WindowBounds, WindowOptions};
 use views::BoardView;
 
+/// データベースの置き場所を決める。
+///
+/// GUI から起動するとカレントディレクトリが当てにならないため、相対パスは使わない。
+/// `EKANBAN_DATABASE` が指定されていればそれを、なければ OS ごとの標準の場所を使う。
 pub fn database_path() -> PathBuf {
-    std::env::var_os("EKANBAN_DATABASE")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(".ekanban.sqlite3"))
+    if let Some(path) = std::env::var_os("EKANBAN_DATABASE") {
+        return PathBuf::from(path);
+    }
+    paths::data_dir().join("ekanban.sqlite3")
 }
 
 pub fn run() {
+    diagnostics::install_panic_hook();
+
     let path = database_path();
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            if let Err(error) = std::fs::create_dir_all(parent) {
+                diagnostics::report_fatal(&format!(
+                    "failed to create {}: {error}",
+                    parent.display()
+                ));
+                return;
+            }
+        }
+    }
     let (database, board) = match Database::open(&path).and_then(|database| {
         let board = database.load_board()?;
         Ok((database, board))
     }) {
         Ok(value) => value,
         Err(error) => {
-            eprintln!("failed to open {}: {error}", path.display());
+            diagnostics::report_fatal(&format!("failed to open {}: {error}", path.display()));
             return;
         }
     };
