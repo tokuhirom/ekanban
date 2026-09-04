@@ -15,8 +15,8 @@ use gpui_kit::{
     component::{button::Button, button::ButtonVariants as _},
     div,
     prelude::*,
-    px, rgb, rgba, Context, Entity, Focusable as _, Half, IntoElement, KeyDownEvent, Pixels, Point,
-    Render, SharedString, Window,
+    px, rgb, rgba, Context, Entity, FocusHandle, Focusable as _, Half, IntoElement, KeyDownEvent,
+    Pixels, Point, Render, SharedString, Window,
 };
 
 use crate::{
@@ -138,6 +138,14 @@ enum DueFilter {
     ThroughThisWeek,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CardDirection {
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
 impl Render for ColumnDragPreview {
     fn render(&mut self, _: &mut Window, _: &mut Context<'_, Self>) -> impl IntoElement {
         let preview_width = px(220.);
@@ -167,6 +175,7 @@ pub struct BoardView {
     board: Board,
     boards: Vec<BoardSummary>,
     database_path: PathBuf,
+    focus_handle: FocusHandle,
     save_lock: Arc<Mutex<()>>,
     next_save_id: u64,
     pending_saves: VecDeque<PendingSave>,
@@ -179,6 +188,7 @@ pub struct BoardView {
     due_filter: DueFilter,
     tag_filter: Option<TagId>,
     show_archived: bool,
+    selected_card: Option<CardId>,
     search: Entity<InputState>,
     search_query: String,
 }
@@ -196,6 +206,7 @@ impl BoardView {
             board,
             boards,
             database_path,
+            focus_handle: cx.focus_handle(),
             save_lock: Arc::new(Mutex::new(())),
             next_save_id: 0,
             pending_saves: VecDeque::new(),
@@ -208,6 +219,7 @@ impl BoardView {
             due_filter: DueFilter::None,
             tag_filter: None,
             show_archived: false,
+            selected_card: None,
             search,
             search_query: String::new(),
         }
@@ -249,6 +261,7 @@ impl BoardView {
         self.editing_column = None;
         self.editing_tag = None;
         self.editing_board = None;
+        self.selected_card = None;
         self.due_filter = DueFilter::None;
         self.tag_filter = None;
         self.show_archived = false;
@@ -566,6 +579,186 @@ impl BoardView {
         cx.notify();
     }
 
+    fn select_card(&mut self, card_id: CardId, window: &mut Window, cx: &mut Context<Self>) {
+        if !self
+            .board
+            .columns
+            .iter()
+            .any(|column| column.cards.iter().any(|card| card.id == card_id))
+        {
+            return;
+        }
+        self.selected_card = Some(card_id);
+        self.focus_handle.focus(window, cx);
+        cx.notify();
+    }
+
+    fn navigate_selection(
+        &mut self,
+        direction: CardDirection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let next_card = next_card_id(&self.board.columns, self.selected_card, direction);
+        if let Some(card_id) = next_card {
+            self.selected_card = Some(card_id);
+            self.focus_handle.focus(window, cx);
+            cx.notify();
+        }
+    }
+
+    fn selected_card_location(&self) -> Option<(usize, usize)> {
+        self.board
+            .columns
+            .iter()
+            .enumerate()
+            .find_map(|(column_index, column)| {
+                column
+                    .cards
+                    .iter()
+                    .position(|card| Some(card.id) == self.selected_card)
+                    .map(|card_index| (column_index, card_index))
+            })
+    }
+
+    fn move_selected_card_between_columns(
+        &mut self,
+        direction: CardDirection,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(card_id) = self.selected_card else {
+            return;
+        };
+        let Some((source_column_index, source_card_index)) = self.selected_card_location() else {
+            self.selected_card = None;
+            return;
+        };
+
+        let target_column_index = match direction {
+            CardDirection::Left => source_column_index.checked_sub(1),
+            CardDirection::Right => {
+                let next = source_column_index + 1;
+                (next < self.board.columns.len()).then_some(next)
+            }
+            CardDirection::Up | CardDirection::Down => None,
+        };
+        let Some(target_column_index) = target_column_index else {
+            return;
+        };
+        let target_column_id = self.board.columns[target_column_index].id;
+        let target_index =
+            source_card_index.min(self.board.columns[target_column_index].cards.len());
+        self.move_card(card_id, target_column_id, target_index, cx);
+    }
+
+    fn selection_after_removing(&self, card_id: CardId) -> Option<CardId> {
+        let (column_index, card_index) =
+            self.board
+                .columns
+                .iter()
+                .enumerate()
+                .find_map(|(column_index, column)| {
+                    column
+                        .cards
+                        .iter()
+                        .position(|card| card.id == card_id)
+                        .map(|card_index| (column_index, card_index))
+                })?;
+
+        let column = &self.board.columns[column_index];
+        column
+            .cards
+            .get(card_index + 1)
+            .or_else(|| {
+                card_index
+                    .checked_sub(1)
+                    .and_then(|index| column.cards.get(index))
+            })
+            .map(|card| card.id)
+            .or_else(|| {
+                self.board
+                    .columns
+                    .iter()
+                    .flat_map(|column| column.cards.iter())
+                    .find(|card| card.id != card_id)
+                    .map(|card| card.id)
+            })
+    }
+
+    fn keyboard_shortcuts_disabled(&self, window: &Window, cx: &Context<Self>) -> bool {
+        self.editing_card.is_some()
+            || self.editing_column.is_some()
+            || self.editing_tag.is_some()
+            || self.editing_board.is_some()
+            || self.search.read(cx).focus_handle(cx).is_focused(window)
+    }
+
+    fn handle_board_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Text inputs own the key event while editing. This also keeps Enter,
+        // Escape, and arrow keys from escaping during IME composition.
+        if self.keyboard_shortcuts_disabled(window, cx) || self.show_archived {
+            return;
+        }
+
+        let key = event.keystroke.key.as_str();
+        let modifiers = &event.keystroke.modifiers;
+        if modifiers.control && !modifiers.alt && !modifiers.shift && !modifiers.platform {
+            match key {
+                "left" => {
+                    cx.stop_propagation();
+                    self.move_selected_card_between_columns(CardDirection::Left, cx);
+                }
+                "right" => {
+                    cx.stop_propagation();
+                    self.move_selected_card_between_columns(CardDirection::Right, cx);
+                }
+                _ => {}
+            }
+            return;
+        }
+
+        if modifiers.modified() {
+            return;
+        }
+
+        match key {
+            "up" => {
+                cx.stop_propagation();
+                self.navigate_selection(CardDirection::Up, window, cx);
+            }
+            "down" => {
+                cx.stop_propagation();
+                self.navigate_selection(CardDirection::Down, window, cx);
+            }
+            "left" => {
+                cx.stop_propagation();
+                self.navigate_selection(CardDirection::Left, window, cx);
+            }
+            "right" => {
+                cx.stop_propagation();
+                self.navigate_selection(CardDirection::Right, window, cx);
+            }
+            "enter" => {
+                if let Some(card_id) = self.selected_card {
+                    cx.stop_propagation();
+                    self.begin_card_edit(card_id, window, cx);
+                }
+            }
+            "delete" | "backspace" => {
+                if let Some(card_id) = self.selected_card {
+                    cx.stop_propagation();
+                    self.delete_card(card_id, cx);
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn move_card(
         &mut self,
         card_id: CardId,
@@ -646,6 +839,7 @@ impl BoardView {
             return;
         };
 
+        self.selected_card = Some(card_id);
         let title_input = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder("カードのタイトル")
@@ -728,9 +922,15 @@ impl BoardView {
     }
 
     fn delete_card(&mut self, card_id: CardId, cx: &mut Context<Self>) {
+        let next_selection = if self.selected_card == Some(card_id) {
+            self.selection_after_removing(card_id)
+        } else {
+            self.selected_card
+        };
         let before = self.board.clone();
         match self.board.delete_card(card_id) {
             Ok(()) => {
+                self.selected_card = next_selection;
                 let on_failure = if self
                     .editing_card
                     .as_ref()
@@ -751,9 +951,15 @@ impl BoardView {
     }
 
     fn archive_card(&mut self, card_id: CardId, cx: &mut Context<Self>) {
+        let next_selection = if self.selected_card == Some(card_id) {
+            self.selection_after_removing(card_id)
+        } else {
+            self.selected_card
+        };
         let before = self.board.clone();
         match self.board.archive_card(card_id) {
             Ok(true) => {
+                self.selected_card = next_selection;
                 let on_failure = if self
                     .editing_card
                     .as_ref()
@@ -775,10 +981,26 @@ impl BoardView {
     }
 
     fn archive_column(&mut self, column_id: ColumnId, cx: &mut Context<Self>) {
+        let next_selection = if self.selected_card.is_some_and(|card_id| {
+            self.board.columns.iter().any(|column| {
+                column.id == column_id && column.cards.iter().any(|card| card.id == card_id)
+            })
+        }) {
+            self.board
+                .columns
+                .iter()
+                .filter(|column| column.id != column_id)
+                .flat_map(|column| column.cards.iter())
+                .map(|card| card.id)
+                .next()
+        } else {
+            self.selected_card
+        };
         let before = self.board.clone();
         match self.board.archive_column(column_id) {
             Ok(0) => self.status = Some("アーカイブするカードがありません".to_string()),
             Ok(count) => {
+                self.selected_card = next_selection;
                 let on_failure = self
                     .editing_card
                     .take()
@@ -810,6 +1032,7 @@ impl BoardView {
         self.show_archived = !self.show_archived;
         self.editing_card = None;
         self.editing_column = None;
+        self.selected_card = None;
         self.status = Some(if self.show_archived {
             "アーカイブを表示しています".to_string()
         } else {
@@ -1153,9 +1376,25 @@ impl BoardView {
     }
 
     fn delete_column(&mut self, column_id: ColumnId, cx: &mut Context<Self>) {
+        let next_selection = if self.selected_card.is_some_and(|card_id| {
+            self.board.columns.iter().any(|column| {
+                column.id == column_id && column.cards.iter().any(|card| card.id == card_id)
+            })
+        }) {
+            self.board
+                .columns
+                .iter()
+                .filter(|column| column.id != column_id)
+                .flat_map(|column| column.cards.iter())
+                .map(|card| card.id)
+                .next()
+        } else {
+            self.selected_card
+        };
         let before = self.board.clone();
         match self.board.remove_column(column_id) {
             Ok(()) => {
+                self.selected_card = next_selection;
                 let on_failure = if self
                     .editing_column
                     .as_ref()
@@ -1987,6 +2226,7 @@ impl BoardView {
             .editing_card
             .as_ref()
             .is_some_and(|editor| editor.card_id == card_id);
+        let is_selected = self.selected_card == Some(card_id);
         let editor = self.editing_card.as_ref();
         div()
             .id(("card", card_id as u64))
@@ -1999,7 +2239,9 @@ impl BoardView {
             .border_1()
             .border_color(rgb(0x475569))
             .hover(|this| this.bg(rgb(0x3f4f66)))
+            .when(is_selected, |this| this.border_color(rgb(0x93c5fd)))
             .when(dimmed, |this| this.opacity(0.35))
+            .on_click(cx.listener(move |this, _, window, cx| this.select_card(card_id, window, cx)))
             .on_drop(cx.listener(move |this, drag: &CardDrag, _, cx| {
                 this.move_card(drag.card_id, column_id, index, cx);
             }))
@@ -2189,6 +2431,10 @@ impl Render for BoardView {
         let column_count = self.board.columns.len();
         div()
             .key_context("Board")
+            .track_focus(&self.focus_handle)
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                this.handle_board_key_down(event, window, cx)
+            }))
             .on_action(
                 cx.listener(|this, _: &AddBoard, window, cx| this.begin_add_board(window, cx)),
             )
@@ -2270,6 +2516,67 @@ impl Render for BoardView {
                             .into_any_element()
                     }),
             )
+    }
+}
+
+fn next_card_id(
+    columns: &[Column],
+    selected_card: Option<CardId>,
+    direction: CardDirection,
+) -> Option<CardId> {
+    let first_card = || {
+        columns
+            .iter()
+            .flat_map(|column| column.cards.iter())
+            .map(|card| card.id)
+            .next()
+    };
+    let Some(selected_card) = selected_card else {
+        return first_card();
+    };
+    let Some((column_index, card_index)) =
+        columns
+            .iter()
+            .enumerate()
+            .find_map(|(column_index, column)| {
+                column
+                    .cards
+                    .iter()
+                    .position(|card| card.id == selected_card)
+                    .map(|card_index| (column_index, card_index))
+            })
+    else {
+        return first_card();
+    };
+
+    match direction {
+        CardDirection::Up => card_index
+            .checked_sub(1)
+            .and_then(|index| columns[column_index].cards.get(index))
+            .map(|card| card.id),
+        CardDirection::Down => columns[column_index]
+            .cards
+            .get(card_index + 1)
+            .map(|card| card.id),
+        CardDirection::Left | CardDirection::Right => {
+            let step = if direction == CardDirection::Left {
+                -1
+            } else {
+                1
+            };
+            let mut target = column_index as isize + step;
+            while target >= 0 && (target as usize) < columns.len() {
+                let column = &columns[target as usize];
+                if !column.cards.is_empty() {
+                    return column
+                        .cards
+                        .get(card_index.min(column.cards.len() - 1))
+                        .map(|card| card.id);
+                }
+                target += step;
+            }
+            None
+        }
     }
 }
 
@@ -2358,4 +2665,66 @@ fn format_board_error(error: BoardError) -> String {
 
 fn format_db_error(error: DbError) -> String {
     format!("ボードを操作できませんでした: {error}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{next_card_id, CardDirection};
+    use crate::model::Board;
+
+    #[test]
+    fn arrow_navigation_moves_within_and_between_columns() {
+        let board = Board::demo();
+        let first_column_card = board.columns[0].cards[0].id;
+        let second_column_card = board.columns[0].cards[1].id;
+        let third_column_card = board.columns[1].cards[0].id;
+
+        assert_eq!(
+            next_card_id(&board.columns, Some(first_column_card), CardDirection::Down),
+            Some(second_column_card)
+        );
+        assert_eq!(
+            next_card_id(&board.columns, Some(second_column_card), CardDirection::Up),
+            Some(first_column_card)
+        );
+        assert_eq!(
+            next_card_id(
+                &board.columns,
+                Some(first_column_card),
+                CardDirection::Right
+            ),
+            Some(third_column_card)
+        );
+        assert_eq!(
+            next_card_id(&board.columns, Some(third_column_card), CardDirection::Left),
+            Some(first_column_card)
+        );
+    }
+
+    #[test]
+    fn arrow_navigation_skips_empty_columns() {
+        let mut board = Board::demo();
+        let empty_column_id = board.add_column("空").expect("column can be added");
+        board
+            .move_column(empty_column_id, 1)
+            .expect("column can be moved");
+        let first_card = board.columns[0].cards[0].id;
+        let next_card = board.columns[2].cards[0].id;
+
+        assert_eq!(
+            next_card_id(&board.columns, Some(first_card), CardDirection::Right),
+            Some(next_card)
+        );
+    }
+
+    #[test]
+    fn arrow_navigation_starts_at_first_card_without_selection() {
+        let board = Board::demo();
+        let first_card = board.columns[0].cards[0].id;
+
+        assert_eq!(
+            next_card_id(&board.columns, None, CardDirection::Down),
+            Some(first_card)
+        );
+    }
 }
