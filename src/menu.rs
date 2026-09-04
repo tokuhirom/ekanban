@@ -9,20 +9,25 @@ use crate::actions::{
 };
 
 pub fn install(cx: &mut App) {
+    // `secondary` は macOS では Cmd、Linux と Windows では Ctrl になる。アプリ独自の
+    // 割り当てはこれで定義する。`cmd-` を残すのは 2 種類だけ:
+    //   - `cmd-q` `cmd-h` `cmd-alt-h` は macOS のシステムメニューの割り当て
+    //   - `cmd-ctrl-*` は `secondary-ctrl-*` にすると非 macOS で Ctrl が重なって
+    //     `secondary-s` / `secondary-f` に潰れ、保存や検索と衝突する
     cx.bind_keys([
-        KeyBinding::new("cmd-shift-b", AddBoard, Some("Board")),
-        KeyBinding::new("cmd-n", AddCard, Some("Board")),
-        KeyBinding::new("cmd-shift-n", AddColumn, Some("Board")),
-        KeyBinding::new("cmd-shift-t", AddTag, Some("Board")),
-        KeyBinding::new("cmd-f", FocusSearch, Some("Board")),
-        KeyBinding::new("cmd-s", SaveEdit, Some("Board")),
-        KeyBinding::new("cmd-shift-a", ToggleArchiveView, Some("Board")),
+        KeyBinding::new("secondary-shift-b", AddBoard, Some("Board")),
+        KeyBinding::new("secondary-n", AddCard, Some("Board")),
+        KeyBinding::new("secondary-shift-n", AddColumn, Some("Board")),
+        KeyBinding::new("secondary-shift-t", AddTag, Some("Board")),
+        KeyBinding::new("secondary-f", FocusSearch, Some("Board")),
+        KeyBinding::new("secondary-s", SaveEdit, Some("Board")),
+        KeyBinding::new("secondary-shift-a", ToggleArchiveView, Some("Board")),
         KeyBinding::new("cmd-ctrl-s", ToggleBoardList, Some("Board")),
-        KeyBinding::new("cmd-0", ShowAllCards, Some("Board")),
-        KeyBinding::new("cmd-1", ShowOverdueCards, Some("Board")),
-        KeyBinding::new("cmd-2", ShowThisWeekCards, Some("Board")),
-        KeyBinding::new("cmd-shift-f", ClearSearch, Some("Board")),
-        KeyBinding::new("cmd-w", CloseWindow, Some("Board")),
+        KeyBinding::new("secondary-0", ShowAllCards, Some("Board")),
+        KeyBinding::new("secondary-1", ShowOverdueCards, Some("Board")),
+        KeyBinding::new("secondary-2", ShowThisWeekCards, Some("Board")),
+        KeyBinding::new("secondary-shift-f", ClearSearch, Some("Board")),
+        KeyBinding::new("secondary-w", CloseWindow, Some("Board")),
         KeyBinding::new("cmd-ctrl-f", ToggleFullscreen, Some("Board")),
         KeyBinding::new("secondary-z", Undo, Some("Board")),
         KeyBinding::new("secondary-shift-z", Redo, Some("Board")),

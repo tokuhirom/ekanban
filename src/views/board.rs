@@ -19,8 +19,8 @@ use gpui_kit::{
     div, point,
     prelude::*,
     px, rgb, App, Bounds, Context, DragMoveEvent, Entity, FocusHandle, Focusable as _, Half,
-    IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, Pixels, Point, Render, ScrollHandle,
-    SharedString, Subscription, Window,
+    IntoElement, KeyDownEvent, Modifiers, MouseButton, MouseDownEvent, Pixels, Point, Render,
+    ScrollHandle, SharedString, Subscription, Window,
 };
 
 use crate::{
@@ -1080,7 +1080,7 @@ impl BoardView {
 
         let key = event.keystroke.key.as_str();
         let modifiers = &event.keystroke.modifiers;
-        if modifiers.platform && modifiers.alt && !modifiers.shift && !modifiers.control {
+        if moves_selected_card(modifiers) {
             match key {
                 "left" => {
                     cx.stop_propagation();
@@ -3960,6 +3960,15 @@ fn theme_color(cx: &gpui_kit::App, color: UiColor) -> gpui_kit::Hsla {
     }
 }
 
+/// 選択カードの移動に割り当てた修飾キーの組み合わせか。
+///
+/// macOS は Cmd+Option、それ以外は Ctrl+Alt。`Modifiers::secondary()` が
+/// その差を吸収する。ちょうど 2 つだけ押されていることを見るのは、`!shift`
+/// `!control` のような並びが非 macOS では意味が反転するため。
+fn moves_selected_card(modifiers: &Modifiers) -> bool {
+    modifiers.secondary() && modifiers.alt && modifiers.number_of_modifiers() == 2
+}
+
 /// ウィンドウタイトルを組み立てる。
 ///
 /// アプリ名だけだと複数のボードを開き分けたときに区別できず、ボード名だけだと
@@ -4410,13 +4419,15 @@ fn field_error_note(message: String, color: gpui_kit::Hsla) -> impl IntoElement 
 #[cfg(test)]
 mod tests {
     use super::{
-        board_error_detail, column_name_for_card, db_error_detail, field_error_for, next_card_id,
-        render_board_markdown, window_title, CardDirection, EditorField,
+        board_error_detail, column_name_for_card, db_error_detail, field_error_for,
+        moves_selected_card, next_card_id, render_board_markdown, window_title, CardDirection,
+        EditorField,
     };
     use crate::{
         db::DbError,
         model::{Board, BoardError},
     };
+    use gpui_kit::Modifiers;
 
     #[test]
     fn arrow_navigation_moves_within_and_between_columns() {
@@ -4561,5 +4572,31 @@ mod tests {
     #[test]
     fn window_title_falls_back_to_the_app_name_for_a_blank_board() {
         assert_eq!(window_title("   "), crate::APP_NAME);
+    }
+
+    #[test]
+    fn moves_selected_card_on_the_secondary_and_alt_keys() {
+        let mut modifiers = Modifiers::secondary_key();
+        modifiers.alt = true;
+        assert!(moves_selected_card(&modifiers));
+    }
+
+    #[test]
+    fn does_not_move_selected_card_when_another_modifier_joins() {
+        let mut modifiers = Modifiers::secondary_key();
+        modifiers.alt = true;
+        modifiers.shift = true;
+        assert!(!moves_selected_card(&modifiers));
+    }
+
+    #[test]
+    fn does_not_move_selected_card_on_a_single_modifier() {
+        assert!(!moves_selected_card(&Modifiers::secondary_key()));
+
+        let alt_only = Modifiers {
+            alt: true,
+            ..Modifiers::none()
+        };
+        assert!(!moves_selected_card(&alt_only));
     }
 }
