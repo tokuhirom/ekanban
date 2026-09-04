@@ -39,9 +39,16 @@ pub fn run() {
             }
         }
     }
-    let board = match Database::open(&path).and_then(|database| {
-        let board = database.load_board()?;
-        Ok(board)
+    let (board, boards) = match Database::open(&path).and_then(|database| {
+        let boards = database.load_boards()?;
+        let board_id = database
+            .load_last_board_id()?
+            .filter(|board_id| boards.iter().any(|board| board.id == *board_id))
+            .or_else(|| boards.first().map(|board| board.id))
+            .ok_or(db::DbError::NoBoard)?;
+        let board = database.load_board_by_id(board_id)?;
+        database.set_last_board_id(board.id)?;
+        Ok((board, boards))
     }) {
         Ok(value) => value,
         Err(error) => {
@@ -64,7 +71,7 @@ pub fn run() {
                 ..Default::default()
             },
             move |window, cx| {
-                let view = cx.new(|cx| BoardView::new(board, path, window, cx));
+                let view = cx.new(|cx| BoardView::new(board, boards, path, window, cx));
                 cx.new(|cx| Root::new(view, window, cx))
             },
         )

@@ -1,13 +1,15 @@
 use gpui_kit::{App, KeyBinding, Menu, MenuItem, OsAction, SystemMenuType};
 
 use crate::actions::{
-    About, AddCard, AddColumn, AddTag, CancelEdit, ClearSearch, CloseWindow, FocusSearch,
-    HideApplication, HideOtherApplications, Quit, Redo, SaveEdit, ShowAllApplications,
-    ShowAllCards, ShowOverdueCards, ShowThisWeekCards, ToggleArchiveView, ToggleFullscreen, Undo,
+    About, AddBoard, AddCard, AddColumn, AddTag, CancelEdit, ClearSearch, CloseWindow, DeleteBoard,
+    FocusSearch, HideApplication, HideOtherApplications, Quit, Redo, RenameBoard, SaveEdit,
+    ShowAllApplications, ShowAllCards, ShowOverdueCards, ShowThisWeekCards, ToggleArchiveView,
+    ToggleFullscreen, Undo,
 };
 
 pub fn install(cx: &mut App) {
     cx.bind_keys([
+        KeyBinding::new("cmd-shift-b", AddBoard, Some("Board")),
         KeyBinding::new("cmd-n", AddCard, Some("Board")),
         KeyBinding::new("cmd-shift-n", AddColumn, Some("Board")),
         KeyBinding::new("cmd-shift-t", AddTag, Some("Board")),
@@ -40,6 +42,7 @@ pub fn install(cx: &mut App) {
             MenuItem::action("ekanbanを終了", Quit),
         ]),
         Menu::new("ファイル").items([
+            MenuItem::action("ボードを追加", AddBoard),
             MenuItem::action("カードを追加", AddCard),
             MenuItem::action("カラムを追加", AddColumn),
             MenuItem::action("タグを追加", AddTag),
@@ -58,6 +61,10 @@ pub fn install(cx: &mut App) {
             MenuItem::separator(),
             MenuItem::action("編集をキャンセル", CancelEdit),
             MenuItem::action("検索をクリア", ClearSearch),
+        ]),
+        Menu::new("ボード").items([
+            MenuItem::action("ボード名を変更", RenameBoard),
+            MenuItem::action("現在のボードを削除", DeleteBoard),
         ]),
         Menu::new("表示").items([
             MenuItem::action("検索にフォーカス", FocusSearch),

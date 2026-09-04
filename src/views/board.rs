@@ -8,6 +8,7 @@ use chrono::{Datelike, Duration, Local, NaiveDate, Weekday};
 use gpui_kit::{
     component::dialog::DialogButtonProps,
     component::input::{Input, InputState, Textarea, TextareaState},
+    component::scroll::ScrollableElement as _,
     component::Disableable as _,
     component::Sizable,
     component::WindowExt as _,
@@ -20,14 +21,14 @@ use gpui_kit::{
 
 use crate::{
     actions::{
-        About, AddCard, AddColumn, AddTag, CancelEdit, ClearSearch, CloseWindow, FocusSearch, Redo,
-        SaveEdit, ShowAllCards, ShowOverdueCards, ShowThisWeekCards, ToggleArchiveView,
-        ToggleFullscreen, Undo,
+        About, AddBoard, AddCard, AddColumn, AddTag, CancelEdit, ClearSearch, CloseWindow,
+        DeleteBoard, FocusSearch, Redo, RenameBoard, SaveEdit, ShowAllCards, ShowOverdueCards,
+        ShowThisWeekCards, ToggleArchiveView, ToggleFullscreen, Undo,
     },
-    db::{save_board_snapshot, DbError},
+    db::{save_board_snapshot, Database, DbError},
     model::{
-        card_matches_search, due_status, parse_due_date, parse_wip_limit, Board, BoardError, Card,
-        CardId, Column, ColumnId, DueStatus, Tag, TagId,
+        card_matches_search, due_status, parse_due_date, parse_wip_limit, Board, BoardError,
+        BoardId, BoardSummary, Card, CardId, Column, ColumnId, DueStatus, Tag, TagId,
     },
 };
 
@@ -96,12 +97,18 @@ struct TagEditor {
     color: Entity<InputState>,
 }
 
+struct BoardEditor {
+    board_id: Option<BoardId>,
+    name: Entity<InputState>,
+}
+
 enum SaveFailure {
     None,
     ClearCardEditor,
     RestoreCardEditor(CardEditor),
     RestoreColumnEditor(ColumnEditor),
     RestoreTagEditor(TagEditor),
+    RestoreBoardEditor(BoardEditor),
     RestoreTagState {
         tag_id: TagId,
         editor: Option<TagEditor>,
@@ -158,6 +165,7 @@ impl Render for ColumnDragPreview {
 
 pub struct BoardView {
     board: Board,
+    boards: Vec<BoardSummary>,
     database_path: PathBuf,
     save_lock: Arc<Mutex<()>>,
     next_save_id: u64,
@@ -167,6 +175,7 @@ pub struct BoardView {
     editing_card: Option<CardEditor>,
     editing_column: Option<ColumnEditor>,
     editing_tag: Option<TagEditor>,
+    editing_board: Option<BoardEditor>,
     due_filter: DueFilter,
     tag_filter: Option<TagId>,
     show_archived: bool,
@@ -177,6 +186,7 @@ pub struct BoardView {
 impl BoardView {
     pub fn new(
         board: Board,
+        boards: Vec<BoardSummary>,
         database_path: PathBuf,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -184,6 +194,7 @@ impl BoardView {
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("タイトル・説明を検索"));
         Self {
             board,
+            boards,
             database_path,
             save_lock: Arc::new(Mutex::new(())),
             next_save_id: 0,
@@ -193,6 +204,7 @@ impl BoardView {
             editing_card: None,
             editing_column: None,
             editing_tag: None,
+            editing_board: None,
             due_filter: DueFilter::None,
             tag_filter: None,
             show_archived: false,
@@ -204,6 +216,252 @@ impl BoardView {
     fn rollback_board(&mut self, before: Board) {
         self.board = before;
         self.board.discard_pending_events();
+        self.sync_current_board_summary();
+    }
+
+    fn sync_current_board_summary(&mut self) {
+        if let Some(summary) = self
+            .boards
+            .iter_mut()
+            .find(|summary| summary.id == self.board.id)
+        {
+            summary.name = self.board.name.clone();
+            summary.created_at = self.board.created_at;
+            summary.updated_at = self.board.updated_at;
+        }
+    }
+
+    fn has_pending_save(&self) -> bool {
+        self.active_save.is_some() || !self.pending_saves.is_empty()
+    }
+
+    fn reject_while_saving(&mut self, cx: &mut Context<Self>) -> bool {
+        if !self.has_pending_save() {
+            return false;
+        }
+        self.status = Some("保存が完了するまでボードを変更できません".to_string());
+        cx.notify();
+        true
+    }
+
+    fn reset_board_view(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.editing_card = None;
+        self.editing_column = None;
+        self.editing_tag = None;
+        self.editing_board = None;
+        self.due_filter = DueFilter::None;
+        self.tag_filter = None;
+        self.show_archived = false;
+        self.search
+            .update(cx, |state, cx| state.set_value("", window, cx));
+        self.search_query.clear();
+    }
+
+    fn switch_board(&mut self, board_id: BoardId, window: &mut Window, cx: &mut Context<Self>) {
+        if board_id == self.board.id {
+            return;
+        }
+        if self.reject_while_saving(cx) {
+            return;
+        }
+        if self.editing_card.is_some()
+            || self.editing_column.is_some()
+            || self.editing_tag.is_some()
+            || self.editing_board.is_some()
+        {
+            self.status = Some("編集中はボードを切り替えられません".to_string());
+            cx.notify();
+            return;
+        }
+
+        let result = Database::open(&self.database_path)
+            .and_then(|database| database.load_board_by_id(board_id));
+        match result {
+            Ok(board) => {
+                let name = board.name.clone();
+                self.board = board;
+                self.reset_board_view(window, cx);
+                match Database::open(&self.database_path)
+                    .and_then(|database| database.set_last_board_id(board_id))
+                {
+                    Ok(()) => self.status = Some(format!("「{name}」に切り替えました")),
+                    Err(error) => {
+                        self.status = Some(format!("ボードを切り替えました（記憶に失敗: {error}）"))
+                    }
+                }
+            }
+            Err(error) => self.status = Some(format_db_error(error)),
+        }
+        cx.notify();
+    }
+
+    fn begin_add_board(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.reject_while_saving(cx) {
+            return;
+        }
+        let name = cx.new(|cx| InputState::new(window, cx).placeholder("ボード名"));
+        name.update(cx, |state, cx| state.focus(window, cx));
+        self.editing_board = Some(BoardEditor {
+            board_id: None,
+            name,
+        });
+        cx.notify();
+    }
+
+    fn begin_board_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.reject_while_saving(cx) {
+            return;
+        }
+        let name = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("ボード名")
+                .default_value(self.board.name.clone())
+        });
+        name.update(cx, |state, cx| state.focus(window, cx));
+        self.editing_board = Some(BoardEditor {
+            board_id: Some(self.board.id),
+            name,
+        });
+        cx.notify();
+    }
+
+    fn cancel_board_edit(&mut self, cx: &mut Context<Self>) {
+        if self.editing_board.take().is_some() {
+            self.status = Some("ボード名の編集をキャンセルしました".to_string());
+            cx.notify();
+        }
+    }
+
+    fn save_board_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(editor) = self.editing_board.take() else {
+            return;
+        };
+        let name = editor.name.read(cx).value().to_string();
+        match editor.board_id {
+            None => {
+                let result = Database::open(&self.database_path).and_then(|mut database| {
+                    let board = database.create_board(name)?;
+                    database.set_last_board_id(board.id)?;
+                    Ok(board)
+                });
+                match result {
+                    Ok(board) => {
+                        let summary = BoardSummary {
+                            id: board.id,
+                            name: board.name.clone(),
+                            created_at: board.created_at,
+                            updated_at: board.updated_at,
+                        };
+                        self.boards.push(summary);
+                        self.board = board;
+                        self.reset_board_view(window, cx);
+                        self.status = Some("ボードを追加しました".to_string());
+                    }
+                    Err(error) => {
+                        self.editing_board = Some(editor);
+                        self.status = Some(format_db_error(error));
+                    }
+                }
+            }
+            Some(board_id) => {
+                let before = self.board.clone();
+                match self.board.rename(name) {
+                    Ok(false) => self.status = Some("ボード名に変更はありません".to_string()),
+                    Ok(true) => {
+                        self.sync_current_board_summary();
+                        self.enqueue_save(
+                            before,
+                            "ボード名を変更しました",
+                            SaveFailure::RestoreBoardEditor(editor),
+                            cx,
+                        );
+                    }
+                    Err(error) => {
+                        self.editing_board = Some(editor);
+                        self.status = Some(format_board_error(error));
+                    }
+                }
+                debug_assert_eq!(board_id, self.board.id);
+            }
+        }
+        cx.notify();
+    }
+
+    fn request_delete_board(
+        &mut self,
+        board_id: BoardId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.reject_while_saving(cx) {
+            return;
+        }
+        let Some(summary) = self.boards.iter().find(|summary| summary.id == board_id) else {
+            self.status = Some("ボードが見つかりません".to_string());
+            cx.notify();
+            return;
+        };
+        let board_name = summary.name.clone();
+        let board_view = cx.entity();
+        window.open_alert_dialog(cx, move |alert, _, _| {
+            let board_view = board_view.clone();
+            alert
+                .confirm()
+                .title("ボードを削除しますか？")
+                .description(format!("「{board_name}」と、その中のカードを削除します。"))
+                .button_props(
+                    DialogButtonProps::default()
+                        .ok_text("削除")
+                        .cancel_text("キャンセル")
+                        .show_cancel(true),
+                )
+                .on_ok(move |_, window, cx| {
+                    board_view.update(cx, |this, cx| this.delete_board(board_id, window, cx));
+                    true
+                })
+        });
+    }
+
+    fn delete_board(&mut self, board_id: BoardId, window: &mut Window, cx: &mut Context<Self>) {
+        if self.reject_while_saving(cx) {
+            return;
+        }
+        let result = Database::open(&self.database_path).and_then(|mut database| {
+            database.delete_board(board_id)?;
+            let boards = database.load_boards()?;
+            Ok((boards, database))
+        });
+        match result {
+            Ok((boards, database)) => {
+                let deleting_current = self.board.id == board_id;
+                self.boards = boards;
+                if deleting_current {
+                    let next_id = self
+                        .boards
+                        .first()
+                        .map(|summary| summary.id)
+                        .expect("deleting the last board is rejected");
+                    match database.load_board_by_id(next_id) {
+                        Ok(board) => {
+                            self.board = board;
+                            self.reset_board_view(window, cx);
+                            if let Err(error) = database.set_last_board_id(next_id) {
+                                self.status = Some(format!(
+                                    "ボードを削除して切り替えました（記憶に失敗: {error}）"
+                                ));
+                            } else {
+                                self.status = Some("ボードを削除しました".to_string());
+                            }
+                        }
+                        Err(error) => self.status = Some(format_db_error(error)),
+                    }
+                } else {
+                    self.status = Some("ボードを削除しました".to_string());
+                }
+            }
+            Err(error) => self.status = Some(format_db_error(error)),
+        }
+        cx.notify();
     }
 
     fn enqueue_save(
@@ -289,6 +547,7 @@ impl BoardView {
                     SaveFailure::RestoreCardEditor(editor) => self.editing_card = Some(editor),
                     SaveFailure::RestoreColumnEditor(editor) => self.editing_column = Some(editor),
                     SaveFailure::RestoreTagEditor(editor) => self.editing_tag = Some(editor),
+                    SaveFailure::RestoreBoardEditor(editor) => self.editing_board = Some(editor),
                     SaveFailure::RestoreTagState {
                         tag_id,
                         editor,
@@ -300,6 +559,7 @@ impl BoardView {
                         self.editing_tag = editor;
                     }
                 }
+                self.sync_current_board_summary();
                 self.status = Some(format!("保存に失敗しました: {error}"));
             }
         }
@@ -955,13 +1215,15 @@ impl BoardView {
         cx.notify();
     }
 
-    fn save_active_edit(&mut self, cx: &mut Context<Self>) {
+    fn save_active_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.editing_card.is_some() {
             self.save_card_edit(cx);
         } else if self.editing_column.is_some() {
             self.save_column_edit(cx);
         } else if self.editing_tag.is_some() {
             self.save_tag_edit(cx);
+        } else if self.editing_board.is_some() {
+            self.save_board_edit(window, cx);
         }
     }
 
@@ -972,6 +1234,8 @@ impl BoardView {
             self.cancel_column_edit(cx);
         } else if self.editing_tag.is_some() {
             self.cancel_tag_edit(cx);
+        } else if self.editing_board.is_some() {
+            self.cancel_board_edit(cx);
         }
     }
 
@@ -979,6 +1243,7 @@ impl BoardView {
         if self.editing_card.is_some()
             || self.editing_column.is_some()
             || self.editing_tag.is_some()
+            || self.editing_board.is_some()
             || self.search.read(cx).focus_handle(cx).is_focused(window)
         {
             self.status = Some("編集中は元に戻せません".to_string());
@@ -999,6 +1264,7 @@ impl BoardView {
         if self.editing_card.is_some()
             || self.editing_column.is_some()
             || self.editing_tag.is_some()
+            || self.editing_board.is_some()
             || self.search.read(cx).focus_handle(cx).is_focused(window)
         {
             self.status = Some("編集中はやり直せません".to_string());
@@ -1022,6 +1288,156 @@ impl BoardView {
                 .description("ローカル SQLite で動作する Kanban アプリです。")
                 .button_props(DialogButtonProps::default().ok_text("OK"))
         });
+    }
+
+    fn render_board_editor(
+        &self,
+        editor: &BoardEditor,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                match event.keystroke.key.as_str() {
+                    "enter" => {
+                        cx.stop_propagation();
+                        this.save_board_edit(window, cx);
+                    }
+                    "escape" => {
+                        cx.stop_propagation();
+                        this.cancel_board_edit(cx);
+                    }
+                    _ => {}
+                }
+            }))
+            .child(Input::new(&editor.name).small())
+            .child(
+                div()
+                    .flex()
+                    .gap_1()
+                    .child(
+                        Button::new("save-board-edit")
+                            .primary()
+                            .label("保存")
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.save_board_edit(window, cx)),
+                            ),
+                    )
+                    .child(
+                        Button::new("cancel-board-edit")
+                            .secondary()
+                            .label("取消")
+                            .on_click(cx.listener(|this, _, _, cx| this.cancel_board_edit(cx))),
+                    ),
+            )
+    }
+
+    fn render_sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let editing_board = self.editing_board.as_ref();
+        div()
+            .w(px(220.))
+            .h_full()
+            .flex_none()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .p_4()
+            .border_r_1()
+            .border_color(rgb(0x253047))
+            .bg(rgb(0x111827))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        div()
+                            .text_lg()
+                            .font_weight(gpui_kit::FontWeight::BOLD)
+                            .child("ボード"),
+                    )
+                    .child(Button::new("add-board").secondary().label("＋").on_click(
+                        cx.listener(|this, _, window, cx| this.begin_add_board(window, cx)),
+                    )),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .overflow_y_scrollbar()
+                    .children(self.boards.iter().map(|summary| {
+                        let board_id = summary.id;
+                        let selected = board_id == self.board.id;
+                        div()
+                            .id(("board-item", board_id as u64))
+                            .w_full()
+                            .p_2()
+                            .rounded_md()
+                            .cursor_pointer()
+                            .bg(if selected {
+                                rgb(0x1d4ed8)
+                            } else {
+                                rgb(0x1e293b)
+                            })
+                            .hover(|this| {
+                                this.bg(if selected {
+                                    rgb(0x2563eb)
+                                } else {
+                                    rgb(0x334155)
+                                })
+                            })
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.switch_board(board_id, window, cx)
+                            }))
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(rgb(0xf8fafc))
+                                    .child(summary.name.clone()),
+                            )
+                    }))
+                    .when(self.boards.is_empty(), |this| {
+                        this.child(
+                            div()
+                                .text_xs()
+                                .text_color(rgb(0x94a3b8))
+                                .child("ボードがありません"),
+                        )
+                    }),
+            )
+            .child(if let Some(editor) = editing_board {
+                self.render_board_editor(editor, cx).into_any_element()
+            } else {
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        Button::new("rename-board")
+                            .secondary()
+                            .label("名前を変更")
+                            .on_click(
+                                cx.listener(|this, _, window, cx| {
+                                    this.begin_board_edit(window, cx)
+                                }),
+                            ),
+                    )
+                    .child(
+                        Button::new("delete-board")
+                            .danger()
+                            .disabled(self.boards.len() <= 1)
+                            .label("ボードを削除")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.request_delete_board(this.board.id, window, cx)
+                            })),
+                    )
+                    .into_any_element()
+            })
     }
 
     fn render_search(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1773,6 +2189,9 @@ impl Render for BoardView {
         let column_count = self.board.columns.len();
         div()
             .key_context("Board")
+            .on_action(
+                cx.listener(|this, _: &AddBoard, window, cx| this.begin_add_board(window, cx)),
+            )
             .on_action(cx.listener(|this, _: &About, window, cx| this.show_about(window, cx)))
             .on_action(cx.listener(|this, _: &AddCard, window, cx| this.add_card(window, cx)))
             .on_action(
@@ -1787,7 +2206,15 @@ impl Render for BoardView {
             .on_action(cx.listener(|this, _: &FocusSearch, window, cx| {
                 this.search.update(cx, |state, cx| state.focus(window, cx));
             }))
-            .on_action(cx.listener(|this, _: &SaveEdit, _, cx| this.save_active_edit(cx)))
+            .on_action(
+                cx.listener(|this, _: &SaveEdit, window, cx| this.save_active_edit(window, cx)),
+            )
+            .on_action(
+                cx.listener(|this, _: &RenameBoard, window, cx| this.begin_board_edit(window, cx)),
+            )
+            .on_action(cx.listener(|this, _: &DeleteBoard, window, cx| {
+                this.request_delete_board(this.board.id, window, cx)
+            }))
             .on_action(cx.listener(|this, _: &Undo, window, cx| this.undo(window, cx)))
             .on_action(cx.listener(|this, _: &Redo, window, cx| this.redo(window, cx)))
             .on_action(
@@ -1809,33 +2236,40 @@ impl Render for BoardView {
             }))
             .size_full()
             .flex()
-            .flex_col()
             .bg(rgb(0x0f172a))
             .text_color(rgb(0xf8fafc))
-            .child(self.render_header(cx))
-            .child(if self.show_archived {
-                self.render_archived(cx).into_any_element()
-            } else {
+            .child(self.render_sidebar(cx))
+            .child(
                 div()
-                    .id("board-content")
                     .flex_1()
+                    .min_w_0()
                     .flex()
-                    .gap_4()
-                    .p_6()
-                    .overflow_x_scroll()
-                    .on_drop(cx.listener(move |this, drag: &ColumnDrag, _, cx| {
-                        this.move_column(drag.column_id, column_count, cx);
-                    }))
-                    .children(
-                        self.board
-                            .columns
-                            .iter()
-                            .enumerate()
-                            .map(|(index, column)| self.render_column(index, column, cx)),
-                    )
-                    .child(self.render_add_column(cx))
-                    .into_any_element()
-            })
+                    .flex_col()
+                    .child(self.render_header(cx))
+                    .child(if self.show_archived {
+                        self.render_archived(cx).into_any_element()
+                    } else {
+                        div()
+                            .id("board-content")
+                            .flex_1()
+                            .flex()
+                            .gap_4()
+                            .p_6()
+                            .overflow_x_scroll()
+                            .on_drop(cx.listener(move |this, drag: &ColumnDrag, _, cx| {
+                                this.move_column(drag.column_id, column_count, cx);
+                            }))
+                            .children(
+                                self.board
+                                    .columns
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(index, column)| self.render_column(index, column, cx)),
+                            )
+                            .child(self.render_add_column(cx))
+                            .into_any_element()
+                    }),
+            )
     }
 }
 
@@ -1916,4 +2350,12 @@ fn format_card_error(error: BoardError) -> String {
 
 fn format_tag_error(error: BoardError) -> String {
     format!("タグを操作できませんでした: {error}")
+}
+
+fn format_board_error(error: BoardError) -> String {
+    format!("ボードを操作できませんでした: {error}")
+}
+
+fn format_db_error(error: DbError) -> String {
+    format!("ボードを操作できませんでした: {error}")
 }

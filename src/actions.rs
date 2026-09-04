@@ -1,5 +1,6 @@
 gpui_kit::actions!([
     About,
+    AddBoard,
     AddCard,
     AddColumn,
     AddTag,
@@ -19,4 +20,6 @@ gpui_kit::actions!([
     ToggleFullscreen,
     Undo,
     Redo,
+    RenameBoard,
+    DeleteBoard,
 ]);

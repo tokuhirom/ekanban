@@ -4,9 +4,13 @@ use chrono::NaiveDate;
 use rusqlite::{params, Connection, OptionalExtension};
 use thiserror::Error;
 
-use crate::model::{Board, Card, Column, Tag};
+use crate::model::{Board, BoardId, BoardSummary, Card, Column, Tag};
 
-const CURRENT_SCHEMA_VERSION: i64 = 7;
+const CURRENT_SCHEMA_VERSION: i64 = 8;
+
+const LAST_BOARD_STATE_KEY: &str = "last_board_id";
+const NEXT_BOARD_STATE_KEY: &str = "next_board_id";
+const BOARD_ID_NAMESPACE_SHIFT: u32 = 32;
 
 #[derive(Debug, Error)]
 pub enum DbError {
@@ -14,6 +18,12 @@ pub enum DbError {
     Sqlite(#[from] rusqlite::Error),
     #[error("no board exists in the database")]
     NoBoard,
+    #[error("cannot delete the last board")]
+    LastBoard,
+    #[error("a board name cannot be empty")]
+    EmptyBoardName,
+    #[error("invalid saved application state")]
+    InvalidAppState,
 }
 
 pub struct Database {
@@ -43,13 +53,78 @@ impl Database {
     }
 
     pub fn load_board(&self) -> Result<Board, DbError> {
+        if let Some(board_id) = self.load_last_board_id()? {
+            match self.load_board_by_id(board_id) {
+                Ok(board) => return Ok(board),
+                Err(DbError::NoBoard) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        let id = self
+            .connection
+            .query_row("SELECT id FROM boards ORDER BY id LIMIT 1", [], |row| {
+                row.get(0)
+            })
+            .optional()?
+            .ok_or(DbError::NoBoard)?;
+
+        self.load_board_by_id(id)
+    }
+
+    pub fn load_boards(&self) -> Result<Vec<BoardSummary>, DbError> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, name, created_at, updated_at
+             FROM boards ORDER BY id",
+        )?;
+        let summaries = statement
+            .query_map([], |row| {
+                Ok(BoardSummary {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    created_at: row.get(2)?,
+                    updated_at: row.get(3)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(DbError::from);
+        summaries
+    }
+
+    pub fn load_last_board_id(&self) -> Result<Option<BoardId>, DbError> {
+        let value = self
+            .connection
+            .query_row(
+                "SELECT value FROM app_state WHERE key = ?1",
+                params![LAST_BOARD_STATE_KEY],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        value
+            .map(|value| {
+                value
+                    .parse::<BoardId>()
+                    .map_err(|_| DbError::InvalidAppState)
+            })
+            .transpose()
+    }
+
+    pub fn set_last_board_id(&self, board_id: BoardId) -> Result<(), DbError> {
+        self.connection.execute(
+            "INSERT INTO app_state (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![LAST_BOARD_STATE_KEY, board_id.to_string()],
+        )?;
+        Ok(())
+    }
+
+    pub fn load_board_by_id(&self, id: BoardId) -> Result<Board, DbError> {
         let (id, name, created_at, updated_at, next_card_id, next_column_id, next_tag_id) = self
             .connection
             .query_row(
                 "SELECT id, name, created_at, updated_at, next_card_id, next_column_id,
                         next_tag_id
-                 FROM boards ORDER BY id LIMIT 1",
-                [],
+                 FROM boards WHERE id = ?1",
+                params![id],
                 |row| {
                     Ok((
                         row.get(0)?,
@@ -207,6 +282,103 @@ impl Database {
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
         })
+    }
+
+    pub fn create_board(&mut self, name: impl Into<String>) -> Result<Board, DbError> {
+        let name = name.into();
+        if name.trim().is_empty() {
+            return Err(DbError::EmptyBoardName);
+        }
+
+        let now = now();
+        let transaction = self.connection.transaction()?;
+        let largest_board_id =
+            transaction.query_row("SELECT COALESCE(MAX(id), 0) FROM boards", [], |row| {
+                row.get::<_, BoardId>(0)
+            })?;
+        let stored_next_board_id = transaction
+            .query_row(
+                "SELECT value FROM app_state WHERE key = ?1",
+                params![NEXT_BOARD_STATE_KEY],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .map(|value| {
+                value
+                    .parse::<BoardId>()
+                    .map_err(|_| DbError::InvalidAppState)
+            })
+            .transpose()?;
+        let board_id = stored_next_board_id
+            .unwrap_or(largest_board_id + 1)
+            .max(largest_board_id + 1);
+        // IDs are primary keys rather than (board_id, id) pairs. Reserve a
+        // namespace per newly-created board so independent Board values can
+        // allocate IDs without colliding after a board switch.
+        let next_card_id = board_scoped_id(board_id);
+        let first_column_id = board_scoped_id(board_id);
+        let next_tag_id = board_scoped_id(board_id);
+
+        transaction.execute(
+            "INSERT INTO boards
+             (id, name, created_at, updated_at, next_card_id, next_column_id, next_tag_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                board_id,
+                name,
+                now,
+                now,
+                next_card_id,
+                first_column_id + 1,
+                next_tag_id
+            ],
+        )?;
+        transaction.execute(
+            "INSERT INTO app_state (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![NEXT_BOARD_STATE_KEY, (board_id + 1).to_string()],
+        )?;
+        transaction.execute(
+            "INSERT INTO columns
+             (id, board_id, name, position, created_at, updated_at, wip_limit)
+             VALUES (?1, ?2, ?3, 0, ?4, ?5, NULL)",
+            params![first_column_id, board_id, "やること", now, now],
+        )?;
+        transaction.commit()?;
+
+        Ok(Board::new_empty(
+            board_id,
+            name,
+            next_card_id,
+            first_column_id,
+            next_tag_id,
+            now,
+        ))
+    }
+
+    pub fn delete_board(&mut self, board_id: BoardId) -> Result<(), DbError> {
+        let transaction = self.connection.transaction()?;
+        let board_exists = transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM boards WHERE id = ?1)",
+            params![board_id],
+            |row| row.get::<_, bool>(0),
+        )?;
+        if !board_exists {
+            return Err(DbError::NoBoard);
+        }
+        let board_count = transaction.query_row("SELECT COUNT(*) FROM boards", [], |row| {
+            row.get::<_, i64>(0)
+        })?;
+        if board_count <= 1 {
+            return Err(DbError::LastBoard);
+        }
+        transaction.execute("DELETE FROM boards WHERE id = ?1", params![board_id])?;
+        transaction.execute(
+            "DELETE FROM app_state WHERE key = ?1 AND value = ?2",
+            params![LAST_BOARD_STATE_KEY, board_id.to_string()],
+        )?;
+        transaction.commit()?;
+        Ok(())
     }
 
     pub fn save_board(&mut self, board: &mut Board) -> Result<(), DbError> {
@@ -625,6 +797,21 @@ impl Database {
             )?;
             transaction.execute(
                 "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, ?2)",
+                params![7, now()],
+            )?;
+            transaction.commit()?;
+        }
+
+        if version < 8 {
+            let transaction = self.connection.transaction()?;
+            transaction.execute_batch(
+                "CREATE TABLE IF NOT EXISTS app_state (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                 );",
+            )?;
+            transaction.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, ?2)",
                 params![CURRENT_SCHEMA_VERSION, now()],
             )?;
             transaction.commit()?;
@@ -641,6 +828,7 @@ impl Database {
         if count == 0 {
             let mut board = Board::demo();
             self.save_board(&mut board)?;
+            self.set_last_board_id(board.id)?;
         }
         Ok(())
     }
@@ -651,6 +839,13 @@ fn now() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .expect("system clock is before UNIX epoch")
         .as_millis() as i64
+}
+
+fn board_scoped_id(board_id: BoardId) -> i64 {
+    board_id
+        .checked_shl(BOARD_ID_NAMESPACE_SHIFT)
+        .and_then(|id| id.checked_add(1))
+        .expect("board ID namespace overflowed")
 }
 
 #[cfg(test)]
@@ -719,6 +914,104 @@ mod tests {
 
         let database = Database::open(&path).unwrap();
         assert_eq!(database.load_board().unwrap(), first);
+    }
+
+    #[test]
+    fn lists_loads_and_remembers_multiple_boards() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("board.sqlite3");
+        let mut database = Database::open(&path).unwrap();
+        let first = database.load_board().unwrap();
+        let second = database.create_board("仕事").unwrap();
+
+        let summaries = database.load_boards().unwrap();
+        assert_eq!(summaries.len(), 2);
+        assert_eq!(summaries[0].id, first.id);
+        assert_eq!(summaries[1].id, second.id);
+        assert_eq!(database.load_board_by_id(second.id).unwrap(), second);
+
+        database.set_last_board_id(second.id).unwrap();
+        assert_eq!(database.load_last_board_id().unwrap(), Some(second.id));
+        drop(database);
+
+        let database = Database::open(&path).unwrap();
+        assert_eq!(database.load_last_board_id().unwrap(), Some(second.id));
+        assert_eq!(database.load_board().unwrap().id, second.id);
+    }
+
+    #[test]
+    fn creates_boards_with_non_overlapping_item_ids() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("board.sqlite3");
+        let mut database = Database::open(&path).unwrap();
+        let mut first = database.load_board().unwrap();
+        let mut second = database.create_board("別のボード").unwrap();
+
+        let first_card = first.add_card(1, "一枚目", "").unwrap();
+        let second_card = second.add_card(second.columns[0].id, "二枚目", "").unwrap();
+        assert_ne!(first_card, second_card);
+
+        database.save_board(&mut first).unwrap();
+        database.save_board(&mut second).unwrap();
+        assert_eq!(
+            database.load_board_by_id(first.id).unwrap().columns[0]
+                .cards
+                .len(),
+            3
+        );
+        assert_eq!(
+            database.load_board_by_id(second.id).unwrap().columns[0]
+                .cards
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn refuses_to_delete_the_last_board() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("board.sqlite3");
+        let mut database = Database::open(&path).unwrap();
+        let first = database.load_board().unwrap();
+        let second = database.create_board("削除対象").unwrap();
+
+        database.delete_board(first.id).unwrap();
+        assert!(matches!(
+            database.load_board_by_id(first.id),
+            Err(super::DbError::NoBoard)
+        ));
+        assert!(matches!(
+            database.delete_board(second.id),
+            Err(super::DbError::LastBoard)
+        ));
+    }
+
+    #[test]
+    fn does_not_reuse_deleted_board_ids() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("board.sqlite3");
+        let mut database = Database::open(&path).unwrap();
+        let first = database.load_board().unwrap();
+        let second = database.create_board("一時ボード").unwrap();
+
+        database.delete_board(second.id).unwrap();
+        let replacement = database.create_board("新しいボード").unwrap();
+
+        assert_eq!(first.id, 1);
+        assert_eq!(second.id, 2);
+        assert_eq!(replacement.id, 3);
+    }
+
+    #[test]
+    fn rejects_empty_board_names() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("board.sqlite3");
+        let mut database = Database::open(&path).unwrap();
+
+        assert!(matches!(
+            database.create_board("  "),
+            Err(super::DbError::EmptyBoardName)
+        ));
     }
 
     #[test]
@@ -1003,7 +1296,7 @@ mod tests {
                 row.get::<_, i64>(0)
             })
             .unwrap();
-        assert_eq!(version, 7);
+        assert_eq!(version, 8);
         assert_eq!(board.columns[0].cards[0].id, 34);
         assert_eq!(board.columns[0].cards[0].due_date, None);
         assert_eq!(

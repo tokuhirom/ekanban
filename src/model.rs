@@ -8,6 +8,14 @@ pub type TagId = i64;
 
 pub const SOON_THRESHOLD_DAYS: i64 = 3;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BoardSummary {
+    pub id: BoardId,
+    pub name: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CardEventKind {
     Created,
@@ -231,6 +239,8 @@ impl Eq for Board {}
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum BoardError {
+    #[error("a board name cannot be empty")]
+    EmptyBoardName,
     #[error("column {0} was not found")]
     ColumnNotFound(ColumnId),
     #[error("card {0} was not found")]
@@ -321,6 +331,44 @@ pub fn card_matches_search(card: &Card, query: &str) -> bool {
 }
 
 impl Board {
+    pub(crate) fn new_empty(
+        id: BoardId,
+        name: impl Into<String>,
+        next_card_id: CardId,
+        first_column_id: ColumnId,
+        next_tag_id: TagId,
+        now: i64,
+    ) -> Self {
+        Self {
+            id,
+            name: name.into(),
+            created_at: now,
+            updated_at: now,
+            next_card_id,
+            next_column_id: first_column_id + 1,
+            next_tag_id,
+            tags: Vec::new(),
+            archived_cards: Vec::new(),
+            columns: vec![Column::new(first_column_id, id, "やること", 0, now)],
+            pending_events: Vec::new(),
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
+        }
+    }
+
+    pub fn rename(&mut self, name: impl Into<String>) -> Result<bool, BoardError> {
+        let name = name.into();
+        if name.trim().is_empty() {
+            return Err(BoardError::EmptyBoardName);
+        }
+        if self.name == name {
+            return Ok(false);
+        }
+        self.name = name;
+        self.updated_at = timestamp();
+        Ok(true)
+    }
+
     pub fn demo() -> Self {
         let now = timestamp();
         let mut board = Self {
@@ -1948,6 +1996,16 @@ mod tests {
             board.rename_column(1, "\n"),
             Err(BoardError::EmptyColumnName)
         );
+    }
+
+    #[test]
+    fn renames_a_board_and_rejects_empty_names() {
+        let mut board = Board::demo();
+
+        assert!(!board.rename("個人 Kanban").unwrap());
+        assert!(board.rename("仕事").unwrap());
+        assert_eq!(board.name, "仕事");
+        assert_eq!(board.rename("  "), Err(BoardError::EmptyBoardName));
     }
 
     #[test]
