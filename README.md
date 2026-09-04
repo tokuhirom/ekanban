@@ -177,12 +177,24 @@ src/
 21. 常用に耐えるボード表示（カラム内の縦スクロール、端での自動スクロール、カラムごとのカード追加、ウィンドウ状態とフィルターの復元、システム外観に追従する配色）
 22. チェックリスト、カードのコピー、カードのコンテキストメニュー、カード番号表示
 23. ボードの JSON / Markdown 書き出し、SQLite バックアップ、データベース場所の表示
+24. カラム・カード操作のオーバーフローメニュー、ダブルクリック編集、危険操作の確認、macOS 用アイコン
 
 次に実装するもの:
 
-ロードマップ上のフェーズ 0〜7 は完了しています。次の追加は、利用状況を見てから決めます。
+ロードマップ上のフェーズ 0〜8 の実装は完了しています。macOS のライト / ダーク表示、IME、Finder・Dock のアイコン表示は実機で確認してください。
 
 フェーズごとの作業内容、設計判断、受け入れ条件は [実装ロードマップ](docs/ROADMAP.md) にまとめています。
+
+### キーボードショートカット
+
+| 操作 | macOS | その他の OS |
+| --- | --- | --- |
+| カードを追加 | `Cmd+N` | `Ctrl+N` |
+| カードを選択 | 矢印キー | 矢印キー |
+| 選択カードを編集 | `Enter` | `Enter` |
+| 選択カードを削除 | `Delete` | `Delete` |
+| 選択カードをカラム間・カラム内で移動 | `Cmd+Option+矢印` | `Ctrl+Alt+矢印` |
+| 元に戻す / やり直す | `Cmd+Z` / `Cmd+Shift+Z` | `Ctrl+Z` / `Ctrl+Shift+Z` |
 
 最初のプロトタイプは、3 カラムと数枚のカードを表示し、カードとカラムをドラッグ＆ドロップしてローカル SQLite に保存できるところまで実装しています。
 
@@ -199,13 +211,14 @@ src/
 | --- | --- |
 | `make run` | ターミナルから直接起動する (デバッグビルド) |
 | `make check` | CI と同じ fmt / clippy / test を走らせる |
+| `make icon` | macOS 用の `assets/icon.icns` を `assets/icon.png` から生成する |
 | `make bundle` | リリースビルドから `target/release/bundle/Ekanban.app` を作る |
 | `make open` | `.app` を作って起動する |
 | `make install` | `.app` を `/Applications` にコピーする |
 
 `cargo build` が作るのは実行ファイルだけで、`.app` バンドルにはなりません。Dock のアイコンやアプリ名、Launchpad からの起動を正しく扱うには `make bundle` を使ってください。バンドル生成の実体は `script/bundle-mac` です。
 
-`assets/icon.icns` を置くと、アイコンとして自動的に取り込まれます。
+`make bundle` は `assets/icon.png` から `assets/icon.icns` を生成し、アイコンとして取り込みます。生成には macOS の `sips` と `iconutil` が必要です。
 
 ### データベースの置き場所
 

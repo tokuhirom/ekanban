@@ -12,7 +12,10 @@ use gpui_kit::{
     component::Disableable as _,
     component::Sizable,
     component::WindowExt as _,
-    component::{button::Button, button::ButtonVariants as _, ActiveTheme, Theme, ThemeMode},
+    component::{
+        button::{Button, ButtonVariant, ButtonVariants as _},
+        ActiveTheme, Theme, ThemeMode,
+    },
     div, point,
     prelude::*,
     px, rgb, App, Bounds, Context, DragMoveEvent, Entity, FocusHandle, Focusable as _, Half,
@@ -292,6 +295,7 @@ pub struct BoardView {
     show_archived: bool,
     selected_card: Option<CardId>,
     context_menu_card: Option<CardId>,
+    context_menu_column: Option<ColumnId>,
     board_scroll_handle: ScrollHandle,
     column_scroll_handles: HashMap<ColumnId, ScrollHandle>,
     window_bounds: WindowBoundsState,
@@ -383,6 +387,7 @@ impl BoardView {
             show_archived: false,
             selected_card: None,
             context_menu_card: None,
+            context_menu_column: None,
             board_scroll_handle: ScrollHandle::new(),
             column_scroll_handles: HashMap::new(),
             window_bounds,
@@ -510,6 +515,7 @@ impl BoardView {
         self.editing_board = None;
         self.selected_card = None;
         self.context_menu_card = None;
+        self.context_menu_column = None;
         self.due_filter = DueFilter::None;
         self.tag_filter = None;
         self.show_archived = false;
@@ -683,6 +689,7 @@ impl BoardView {
                 .description(format!("「{board_name}」と、その中のカードを削除します。"))
                 .button_props(
                     DialogButtonProps::default()
+                        .ok_variant(ButtonVariant::Danger)
                         .ok_text("削除")
                         .cancel_text("キャンセル")
                         .show_cancel(true),
@@ -851,6 +858,8 @@ impl BoardView {
             return;
         }
         self.selected_card = Some(card_id);
+        self.context_menu_card = None;
+        self.context_menu_column = None;
         self.focus_handle.focus(window, cx);
         cx.notify();
     }
@@ -1419,8 +1428,19 @@ impl BoardView {
         }
         cx.stop_propagation();
         self.selected_card = Some(card_id);
+        self.context_menu_column = None;
         self.focus_handle.focus(window, cx);
         self.context_menu_card = Some(card_id);
+        cx.notify();
+    }
+
+    fn toggle_column_context_menu(&mut self, column_id: ColumnId, cx: &mut Context<Self>) {
+        self.context_menu_card = None;
+        self.context_menu_column = if self.context_menu_column == Some(column_id) {
+            None
+        } else {
+            Some(column_id)
+        };
         cx.notify();
     }
 
@@ -1456,6 +1476,7 @@ impl BoardView {
     }
 
     fn archive_column(&mut self, column_id: ColumnId, cx: &mut Context<Self>) {
+        self.context_menu_column = None;
         let next_selection = if self.selected_card.is_some_and(|card_id| {
             self.board.columns.iter().any(|column| {
                 column.id == column_id && column.cards.iter().any(|card| card.id == card_id)
@@ -1494,6 +1515,52 @@ impl BoardView {
         cx.notify();
     }
 
+    fn request_archive_column(
+        &mut self,
+        column_id: ColumnId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(column) = self
+            .board
+            .columns
+            .iter()
+            .find(|column| column.id == column_id)
+        else {
+            self.present_board_error(ErrorContext::Column, BoardError::ColumnNotFound(column_id));
+            cx.notify();
+            return;
+        };
+        let card_count = column.cards.len();
+        if card_count == 0 {
+            self.archive_column(column_id, cx);
+            return;
+        }
+
+        self.context_menu_column = None;
+        let board_view = cx.entity();
+        window.open_alert_dialog(cx, move |alert, _, _| {
+            let board_view = board_view.clone();
+            alert
+                .confirm()
+                .title("カラムをアーカイブしますか？")
+                .description(format!(
+                    "このカラムの {card_count} 枚のカードをアーカイブします。"
+                ))
+                .button_props(
+                    DialogButtonProps::default()
+                        .ok_variant(ButtonVariant::Danger)
+                        .ok_text("アーカイブ")
+                        .cancel_text("キャンセル")
+                        .show_cancel(true),
+                )
+                .on_ok(move |_, _, cx| {
+                    board_view.update(cx, |this, cx| this.archive_column(column_id, cx));
+                    true
+                })
+        });
+    }
+
     fn restore_card(&mut self, card_id: CardId, cx: &mut Context<Self>) {
         let before = self.board.clone();
         match self.board.restore_card(card_id) {
@@ -1510,6 +1577,7 @@ impl BoardView {
         self.editing_column = None;
         self.selected_card = None;
         self.context_menu_card = None;
+        self.context_menu_column = None;
         self.set_info(if self.show_archived {
             "アーカイブを表示しています"
         } else {
@@ -1717,6 +1785,7 @@ impl BoardView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.context_menu_column = None;
         let Some((column_name, wip_limit)) = self
             .board
             .columns
@@ -1829,6 +1898,7 @@ impl BoardView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.context_menu_column = None;
         let Some(column) = self
             .board
             .columns
@@ -1856,6 +1926,7 @@ impl BoardView {
                 ))
                 .button_props(
                     DialogButtonProps::default()
+                        .ok_variant(ButtonVariant::Danger)
                         .ok_text("削除")
                         .cancel_text("キャンセル")
                         .show_cancel(true),
@@ -1868,6 +1939,7 @@ impl BoardView {
     }
 
     fn delete_column(&mut self, column_id: ColumnId, cx: &mut Context<Self>) {
+        self.context_menu_column = None;
         let next_selection = if self.selected_card.is_some_and(|card_id| {
             self.board.columns.iter().any(|column| {
                 column.id == column_id && column.cards.iter().any(|card| card.id == card_id)
@@ -1907,6 +1979,7 @@ impl BoardView {
     }
 
     fn sort_column_by_due_date(&mut self, column_id: ColumnId, cx: &mut Context<Self>) {
+        self.context_menu_column = None;
         let before = self.board.clone();
         match self.board.sort_column_by_due_date(column_id) {
             Ok(false) => {
@@ -2187,7 +2260,7 @@ impl BoardView {
                     _ => {}
                 }
             }))
-            .child(Input::new(&editor.name).small())
+            .child(themed_input(Input::new(&editor.name).small(), cx))
             .when_some(name_error, |this, message| {
                 this.child(field_error_note(
                     message,
@@ -2311,7 +2384,7 @@ impl BoardView {
                     )
                     .child(
                         Button::new("delete-board")
-                            .danger()
+                            .secondary()
                             .disabled(self.boards.len() <= 1)
                             .label("ボードを削除")
                             .on_click(cx.listener(|this, _, window, cx| {
@@ -2340,7 +2413,7 @@ impl BoardView {
                     _ => {}
                 }
             }))
-            .child(Input::new(&self.search).small())
+            .child(themed_input(Input::new(&self.search).small(), cx))
             .when(!self.search_query.is_empty(), |this| {
                 this.child(
                     Button::new("clear-search")
@@ -2391,14 +2464,14 @@ impl BoardView {
                     _ => {}
                 }
             }))
-            .child(Input::new(&editor.name).small())
+            .child(themed_input(Input::new(&editor.name).small(), cx))
             .when_some(name_error, |this, message| {
                 this.child(field_error_note(
                     message,
                     theme_color(cx, UiColor::DangerForeground),
                 ))
             })
-            .child(Input::new(&editor.wip_limit).small())
+            .child(themed_input(Input::new(&editor.wip_limit).small(), cx))
             .when_some(wip_limit_error, |this, message| {
                 this.child(field_error_note(
                     message,
@@ -2445,14 +2518,14 @@ impl BoardView {
                     _ => {}
                 }
             }))
-            .child(Input::new(&editor.name).small())
+            .child(themed_input(Input::new(&editor.name).small(), cx))
             .when_some(name_error, |this, message| {
                 this.child(field_error_note(
                     message,
                     theme_color(cx, UiColor::DangerForeground),
                 ))
             })
-            .child(Input::new(&editor.color).small())
+            .child(themed_input(Input::new(&editor.color).small(), cx))
             .child(
                 Button::new(("save-tag", editor_kind.unwrap_or(0) as u64))
                     .primary()
@@ -2505,7 +2578,7 @@ impl BoardView {
                     )
                     .child(
                         Button::new(("delete-tag", tag_id as u64))
-                            .danger()
+                            .secondary()
                             .label("削除")
                             .on_click(
                                 cx.listener(move |this, _, _, cx| this.delete_tag(tag_id, cx)),
@@ -2698,6 +2771,9 @@ impl BoardView {
                 })
                 .child(
                     div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
                         .text_sm()
                         .font_weight(gpui_kit::FontWeight::BOLD)
                         .text_color(theme_color(cx, UiColor::Foreground))
@@ -2756,36 +2832,14 @@ impl BoardView {
                             )
                             .when(!is_editing, |this| {
                                 this.child(
-                                    Button::new(("sort-column", column_id as u64))
+                                    Button::new(("column-menu", column_id as u64))
                                         .ghost()
-                                        .label("期限順")
+                                        .compact()
+                                        .label("…")
+                                        .accessibility_label("カラムメニュー")
+                                        .tooltip("カラムメニュー")
                                         .on_click(cx.listener(move |this, _, _, cx| {
-                                            this.sort_column_by_due_date(column_id, cx)
-                                        })),
-                                )
-                                .child(
-                                    Button::new(("archive-column", column_id as u64))
-                                        .ghost()
-                                        .label("アーカイブ")
-                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                            this.archive_column(column_id, cx)
-                                        })),
-                                )
-                                .child(
-                                    Button::new(("edit-column", column_id as u64))
-                                        .ghost()
-                                        .label("編集")
-                                        .on_click(cx.listener(move |this, _, window, cx| {
-                                            this.begin_column_edit(column_id, window, cx)
-                                        })),
-                                )
-                                .child(
-                                    Button::new(("delete-column", column_id as u64))
-                                        .danger()
-                                        .disabled(last_column)
-                                        .label("削除")
-                                        .on_click(cx.listener(move |this, _, window, cx| {
-                                            this.request_delete_column(column_id, window, cx)
+                                            this.toggle_column_context_menu(column_id, cx)
                                         })),
                                 )
                             }),
@@ -2859,6 +2913,66 @@ impl BoardView {
                     .label("＋ カードを追加")
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.add_card_to_column(column_id, window, cx)
+                    })),
+            )
+            .when(self.context_menu_column == Some(column_id), |this| {
+                this.child(self.render_column_context_menu(column_id, last_column, cx))
+            })
+    }
+
+    fn render_column_context_menu(
+        &self,
+        column_id: ColumnId,
+        last_column: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        div()
+            .id(("column-context-menu", column_id as u64))
+            .absolute()
+            .top(px(44.))
+            .right(px(8.))
+            .w(px(180.))
+            .flex()
+            .flex_col()
+            .gap_1()
+            .p_2()
+            .rounded_md()
+            .border_1()
+            .border_color(theme_color(cx, UiColor::Border))
+            .bg(theme_color(cx, UiColor::Popover))
+            .shadow_lg()
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .child(
+                Button::new(("context-sort-column", column_id as u64))
+                    .ghost()
+                    .label("期限順")
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.sort_column_by_due_date(column_id, cx)
+                    })),
+            )
+            .child(
+                Button::new(("context-archive-column", column_id as u64))
+                    .ghost()
+                    .label("アーカイブ")
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.request_archive_column(column_id, window, cx)
+                    })),
+            )
+            .child(
+                Button::new(("context-edit-column", column_id as u64))
+                    .ghost()
+                    .label("編集")
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.begin_column_edit(column_id, window, cx)
+                    })),
+            )
+            .child(
+                Button::new(("context-delete-column", column_id as u64))
+                    .danger()
+                    .disabled(last_column)
+                    .label("削除")
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.request_delete_column(column_id, window, cx)
                     })),
             )
     }
@@ -3100,6 +3214,15 @@ impl BoardView {
             .when(dimmed, |this| this.opacity(0.35))
             .on_click(cx.listener(move |this, _, window, cx| this.select_card(card_id, window, cx)))
             .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                    if event.click_count >= 2 {
+                        cx.stop_propagation();
+                        this.begin_card_edit(card_id, window, cx);
+                    }
+                }),
+            )
+            .on_mouse_down(
                 MouseButton::Right,
                 cx.listener(move |this, event: &MouseDownEvent, window, cx| {
                     this.open_card_context_menu(card_id, event, window, cx)
@@ -3153,40 +3276,6 @@ impl BoardView {
                             .child(card.description.clone()),
                     )
                     .into_any_element()
-            })
-            .when(!is_editing, |this| {
-                this.child(
-                    div()
-                        .flex()
-                        .justify_end()
-                        .gap_1()
-                        .child(
-                            Button::new(("edit-card", card_id as u64))
-                                .ghost()
-                                .label("編集")
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.begin_card_edit(card_id, window, cx)
-                                })),
-                        )
-                        .child(
-                            Button::new(("archive-card", card_id as u64))
-                                .ghost()
-                                .label("アーカイブ")
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.archive_card(card_id, cx)
-                                })),
-                        )
-                        .child(
-                            Button::new(("delete-card", card_id as u64))
-                                .danger()
-                                .label("削除")
-                                .on_click(
-                                    cx.listener(move |this, _, _, cx| {
-                                        this.delete_card(card_id, cx)
-                                    }),
-                                ),
-                        ),
-                )
             })
             .when(context_menu_open, |this| {
                 this.child(self.render_card_context_menu(card_id, cx))
@@ -3247,7 +3336,7 @@ impl BoardView {
                     .text_color(theme_color(cx, UiColor::MutedForeground))
                     .child("タイトル"),
             )
-            .child(Input::new(&editor.title).small())
+            .child(themed_input(Input::new(&editor.title).small(), cx))
             .when_some(title_error, |this, message| {
                 this.child(field_error_note(
                     message,
@@ -3260,14 +3349,17 @@ impl BoardView {
                     .text_color(theme_color(cx, UiColor::MutedForeground))
                     .child("説明"),
             )
-            .child(Textarea::new(&editor.description).h(px(96.)))
+            .child(themed_textarea(
+                Textarea::new(&editor.description).h(px(96.)),
+                cx,
+            ))
             .child(
                 div()
                     .text_xs()
                     .text_color(theme_color(cx, UiColor::MutedForeground))
                     .child("期限"),
             )
-            .child(Input::new(&editor.due_date).small())
+            .child(themed_input(Input::new(&editor.due_date).small(), cx))
             .when_some(due_date_error, |this, message| {
                 this.child(field_error_note(
                     message,
@@ -3343,7 +3435,7 @@ impl BoardView {
                                         this.toggle_checklist_item(index, cx)
                                     })),
                             )
-                            .child(Input::new(&item.text).small())
+                            .child(themed_input(Input::new(&item.text).small(), cx))
                             .child(
                                 Button::new(format!("checklist-up-{}-{index}", editor.card_id))
                                     .ghost()
@@ -3372,7 +3464,7 @@ impl BoardView {
                             )
                             .child(
                                 Button::new(format!("checklist-delete-{}-{index}", editor.card_id))
-                                    .danger()
+                                    .secondary()
                                     .label("削除")
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         this.delete_checklist_item_editor(index, cx)
@@ -3581,6 +3673,7 @@ impl Render for BoardView {
 #[derive(Clone, Copy)]
 enum UiColor {
     Background,
+    InputBackground,
     Surface,
     SurfaceHover,
     Foreground,
@@ -3602,6 +3695,7 @@ fn theme_color(cx: &gpui_kit::App, color: UiColor) -> gpui_kit::Hsla {
     let theme = cx.theme();
     match color {
         UiColor::Background => theme.background,
+        UiColor::InputBackground => theme.input_background(),
         UiColor::Surface => theme.colors.list,
         UiColor::SurfaceHover => theme.colors.list_hover,
         UiColor::Foreground => theme.foreground,
@@ -3618,6 +3712,18 @@ fn theme_color(cx: &gpui_kit::App, color: UiColor) -> gpui_kit::Hsla {
         UiColor::SidebarAccent => theme.sidebar_accent,
         UiColor::Popover => theme.popover,
     }
+}
+
+fn themed_input(input: Input, cx: &gpui_kit::App) -> Input {
+    input
+        .bg(theme_color(cx, UiColor::InputBackground))
+        .text_color(theme_color(cx, UiColor::Foreground))
+}
+
+fn themed_textarea(textarea: Textarea, cx: &gpui_kit::App) -> Textarea {
+    textarea
+        .bg(theme_color(cx, UiColor::InputBackground))
+        .text_color(theme_color(cx, UiColor::Foreground))
 }
 
 fn auto_scroll_horizontal(handle: &ScrollHandle, position: Point<Pixels>, bounds: Bounds<Pixels>) {
