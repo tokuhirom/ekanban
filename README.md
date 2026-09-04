@@ -90,7 +90,10 @@ D&D のカード操作は GPUI の `on_drag` / `on_drop` を使い、カード�
 ```text
 src/
   main.rs
+  lib.rs
   model.rs
+  paths.rs
+  diagnostics.rs
   db/
     mod.rs
   views/
@@ -101,6 +104,8 @@ src/
 - `model.rs`: Board、Column、Card などのドメインモデル
 - `db/mod.rs`: SQLite の読み書きとスキーマのマイグレーション
 - `views/`: GPUI による表示、入力、ドラッグ＆ドロップ
+- `paths.rs`: OS ごとのデータベースとログの配置の解決
+- `diagnostics.rs`: 起動失敗とパニックのログ記録、ダイアログ表示
 - UI から SQL を直接実行しない
 
 カード移動やカラム移動の保存は、必ず 1 つのトランザクションで行います。保存処理は今後、データ量が増えた場合に UI スレッドをブロックしない実行方式へ分離します。
