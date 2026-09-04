@@ -1,5 +1,7 @@
+pub mod actions;
 pub mod db;
 pub mod diagnostics;
+pub mod menu;
 pub mod model;
 pub mod paths;
 pub mod views;
@@ -50,6 +52,11 @@ pub fn run() {
 
     gpui_kit::application().run(move |cx: &mut App| {
         gpui_kit::init(cx);
+        cx.on_action(|_: &actions::Quit, cx| cx.quit());
+        cx.on_action(|_: &actions::HideApplication, cx| cx.hide());
+        cx.on_action(|_: &actions::HideOtherApplications, cx| cx.hide_other_apps());
+        cx.on_action(|_: &actions::ShowAllApplications, cx| cx.unhide_other_apps());
+        menu::install(cx);
         let bounds = Bounds::centered(None, size(px(1200.), px(800.)), cx);
         cx.open_window(
             WindowOptions {

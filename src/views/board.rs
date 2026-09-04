@@ -13,6 +13,11 @@ use gpui_kit::{
 };
 
 use crate::{
+    actions::{
+        About, AddCard, AddColumn, AddTag, CancelEdit, ClearSearch, CloseWindow, FocusSearch,
+        SaveEdit, ShowAllCards, ShowOverdueCards, ShowThisWeekCards, ToggleArchiveView,
+        ToggleFullscreen,
+    },
     db::Database,
     model::{
         card_matches_search, due_status, parse_due_date, parse_wip_limit, Board, BoardError, Card,
@@ -196,6 +201,11 @@ impl BoardView {
     }
 
     fn add_card(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.show_archived {
+            self.status = Some("アーカイブ表示中はカードを追加できません".to_string());
+            cx.notify();
+            return;
+        }
         let Some(column_id) = self.board.columns.first().map(|column| column.id) else {
             return;
         };
@@ -606,6 +616,11 @@ impl BoardView {
     }
 
     fn begin_add_column(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.show_archived {
+            self.status = Some("アーカイブ表示中はカラムを追加できません".to_string());
+            cx.notify();
+            return;
+        }
         let name = cx.new(|cx| InputState::new(window, cx).placeholder("カラム名"));
         name.update(cx, |state, cx| state.focus(window, cx));
         self.editing_column = Some(ColumnEditor {
@@ -840,6 +855,35 @@ impl BoardView {
         self.search_query.clear();
         self.status = Some("検索をクリアしました".to_string());
         cx.notify();
+    }
+
+    fn save_active_edit(&mut self, cx: &mut Context<Self>) {
+        if self.editing_card.is_some() {
+            self.save_card_edit(cx);
+        } else if self.editing_column.is_some() {
+            self.save_column_edit(cx);
+        } else if self.editing_tag.is_some() {
+            self.save_tag_edit(cx);
+        }
+    }
+
+    fn cancel_active_edit(&mut self, cx: &mut Context<Self>) {
+        if self.editing_card.is_some() {
+            self.cancel_card_edit(cx);
+        } else if self.editing_column.is_some() {
+            self.cancel_column_edit(cx);
+        } else if self.editing_tag.is_some() {
+            self.cancel_tag_edit(cx);
+        }
+    }
+
+    fn show_about(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        window.open_alert_dialog(cx, |alert, _, _| {
+            alert
+                .title("ekanbanについて")
+                .description("ローカル SQLite で動作する Kanban アプリです。")
+                .button_props(DialogButtonProps::default().ok_text("OK"))
+        });
     }
 
     fn render_search(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1590,6 +1634,39 @@ impl Render for BoardView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let column_count = self.board.columns.len();
         div()
+            .key_context("Board")
+            .on_action(cx.listener(|this, _: &About, window, cx| this.show_about(window, cx)))
+            .on_action(cx.listener(|this, _: &AddCard, window, cx| this.add_card(window, cx)))
+            .on_action(
+                cx.listener(|this, _: &AddColumn, window, cx| this.begin_add_column(window, cx)),
+            )
+            .on_action(cx.listener(|this, _: &AddTag, window, cx| this.begin_add_tag(window, cx)))
+            .on_action(cx.listener(|this, _: &CancelEdit, _, cx| this.cancel_active_edit(cx)))
+            .on_action(
+                cx.listener(|this, _: &ClearSearch, window, cx| this.clear_search(window, cx)),
+            )
+            .on_action(cx.listener(|_, _: &CloseWindow, window, _| window.remove_window()))
+            .on_action(cx.listener(|this, _: &FocusSearch, window, cx| {
+                this.search.update(cx, |state, cx| state.focus(window, cx));
+            }))
+            .on_action(cx.listener(|this, _: &SaveEdit, _, cx| this.save_active_edit(cx)))
+            .on_action(
+                cx.listener(|this, _: &ShowAllCards, _, cx| {
+                    this.set_due_filter(DueFilter::None, cx)
+                }),
+            )
+            .on_action(
+                cx.listener(|this, _: &ToggleArchiveView, _, cx| this.toggle_archive_view(cx)),
+            )
+            .on_action(cx.listener(|this, _: &ShowOverdueCards, _, cx| {
+                this.set_due_filter(DueFilter::Overdue, cx)
+            }))
+            .on_action(cx.listener(|this, _: &ShowThisWeekCards, _, cx| {
+                this.set_due_filter(DueFilter::ThroughThisWeek, cx)
+            }))
+            .on_action(cx.listener(|_, _: &ToggleFullscreen, window, _| {
+                window.toggle_fullscreen();
+            }))
             .size_full()
             .flex()
             .flex_col()
