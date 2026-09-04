@@ -2,14 +2,20 @@ use std::path::Path;
 
 use chrono::NaiveDate;
 use rusqlite::{params, Connection, OptionalExtension};
+use serde_json::json;
 use thiserror::Error;
 
-use crate::model::{Board, BoardId, BoardSummary, Card, Column, Tag};
+use crate::model::{Board, BoardId, BoardSummary, Card, ChecklistItem, Column, Tag};
 
-const CURRENT_SCHEMA_VERSION: i64 = 8;
+const CURRENT_SCHEMA_VERSION: i64 = 9;
 
 const LAST_BOARD_STATE_KEY: &str = "last_board_id";
 const NEXT_BOARD_STATE_KEY: &str = "next_board_id";
+const WINDOW_BOUNDS_STATE_KEY: &str = "window_bounds";
+const FILTER_SEARCH_STATE_KEY: &str = "filter_search";
+const FILTER_TAG_STATE_KEY: &str = "filter_tag_id";
+const FILTER_DUE_STATE_KEY: &str = "filter_due";
+const THEME_PREFERENCE_STATE_KEY: &str = "theme_preference";
 const BOARD_ID_NAMESPACE_SHIFT: u32 = 32;
 
 #[derive(Debug, Error)]
@@ -24,10 +30,27 @@ pub enum DbError {
     EmptyBoardName,
     #[error("invalid saved application state")]
     InvalidAppState,
+    #[error("could not encode board export: {0}")]
+    Json(#[from] serde_json::Error),
 }
 
 pub struct Database {
     connection: Connection,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WindowBoundsState {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct FilterState {
+    pub search: String,
+    pub tag_id: Option<i64>,
+    pub due_filter: i64,
 }
 
 /// Opens the database on the caller's thread and persists a board snapshot.
@@ -117,12 +140,229 @@ impl Database {
         Ok(())
     }
 
+    pub fn load_window_bounds(&self) -> Result<Option<WindowBoundsState>, DbError> {
+        let value = self.load_app_state(WINDOW_BOUNDS_STATE_KEY)?;
+        value
+            .map(|value| {
+                let values = value
+                    .split(',')
+                    .map(str::parse::<f32>)
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|_| DbError::InvalidAppState)?;
+                match values.as_slice() {
+                    [x, y, width, height] if *width > 0.0 && *height > 0.0 => {
+                        Ok(WindowBoundsState {
+                            x: *x,
+                            y: *y,
+                            width: *width,
+                            height: *height,
+                        })
+                    }
+                    _ => Err(DbError::InvalidAppState),
+                }
+            })
+            .transpose()
+    }
+
+    pub fn set_window_bounds(&self, bounds: WindowBoundsState) -> Result<(), DbError> {
+        self.set_app_state(
+            WINDOW_BOUNDS_STATE_KEY,
+            format!(
+                "{},{},{},{}",
+                bounds.x, bounds.y, bounds.width, bounds.height
+            ),
+        )
+    }
+
+    pub fn load_filter_state(&self) -> Result<FilterState, DbError> {
+        let search = self
+            .load_app_state(FILTER_SEARCH_STATE_KEY)?
+            .unwrap_or_default();
+        let tag_id = self
+            .load_app_state(FILTER_TAG_STATE_KEY)?
+            .map(|value| value.parse::<i64>().map_err(|_| DbError::InvalidAppState))
+            .transpose()?;
+        let due_filter = self
+            .load_app_state(FILTER_DUE_STATE_KEY)?
+            .map(|value| value.parse::<i64>().map_err(|_| DbError::InvalidAppState))
+            .transpose()?
+            .unwrap_or_default();
+        if !matches!(due_filter, 0..=2) {
+            return Err(DbError::InvalidAppState);
+        }
+        Ok(FilterState {
+            search,
+            tag_id,
+            due_filter,
+        })
+    }
+
+    pub fn set_filter_state(&self, state: &FilterState) -> Result<(), DbError> {
+        self.set_app_state(FILTER_SEARCH_STATE_KEY, state.search.clone())?;
+        match state.tag_id {
+            Some(tag_id) => self.set_app_state(FILTER_TAG_STATE_KEY, tag_id.to_string())?,
+            None => self.delete_app_state(FILTER_TAG_STATE_KEY)?,
+        }
+        self.set_app_state(FILTER_DUE_STATE_KEY, state.due_filter.to_string())
+    }
+
+    pub fn load_theme_preference(&self) -> Result<Option<String>, DbError> {
+        self.load_app_state(THEME_PREFERENCE_STATE_KEY)
+    }
+
+    pub fn set_theme_preference(&self, preference: &str) -> Result<(), DbError> {
+        if !matches!(preference, "system" | "light" | "dark") {
+            return Err(DbError::InvalidAppState);
+        }
+        self.set_app_state(THEME_PREFERENCE_STATE_KEY, preference)
+    }
+
+    pub fn export_board_json(&self, board: &Board) -> Result<String, DbError> {
+        let mut event_statement = self.connection.prepare(
+            "SELECT id, card_id, kind, from_column_id, to_column_id, at
+             FROM card_events WHERE board_id = ?1 ORDER BY id",
+        )?;
+        let events = event_statement
+            .query_map(params![board.id], |row| {
+                Ok(json!({
+                    "id": row.get::<_, i64>(0)?,
+                    "board_id": board.id,
+                    "card_id": row.get::<_, i64>(1)?,
+                    "kind": row.get::<_, String>(2)?,
+                    "from_column_id": row.get::<_, Option<i64>>(3)?,
+                    "to_column_id": row.get::<_, Option<i64>>(4)?,
+                    "at": row.get::<_, i64>(5)?,
+                }))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let card_json = |card: &Card| {
+            json!({
+                "id": card.id,
+                "column_id": card.column_id,
+                "title": card.title,
+                "description": card.description,
+                "position": card.position,
+                "created_at": card.created_at,
+                "updated_at": card.updated_at,
+                "due_date": card.due_date.map(|date| date.format("%Y-%m-%d").to_string()),
+                "tag_ids": card.tag_ids,
+                "archived_at": card.archived_at,
+                "checklist_items": card.checklist_items.iter().map(|item| json!({
+                    "id": item.id,
+                    "card_id": item.card_id,
+                    "text": item.text,
+                    "checked": item.checked,
+                    "position": item.position,
+                    "created_at": item.created_at,
+                    "updated_at": item.updated_at,
+                })).collect::<Vec<_>>(),
+            })
+        };
+        let columns = board
+            .columns
+            .iter()
+            .map(|column| {
+                json!({
+                    "id": column.id,
+                    "board_id": column.board_id,
+                    "name": column.name,
+                    "position": column.position,
+                    "created_at": column.created_at,
+                    "updated_at": column.updated_at,
+                    "wip_limit": column.wip_limit,
+                    "cards": column.cards.iter().map(card_json).collect::<Vec<_>>(),
+                })
+            })
+            .collect::<Vec<_>>();
+        let tags = board
+            .tags
+            .iter()
+            .map(|tag| {
+                json!({
+                    "id": tag.id,
+                    "board_id": tag.board_id,
+                    "name": tag.name,
+                    "color": tag.color,
+                    "created_at": tag.created_at,
+                    "updated_at": tag.updated_at,
+                })
+            })
+            .collect::<Vec<_>>();
+        let archived_cards = board
+            .archived_cards
+            .iter()
+            .map(card_json)
+            .collect::<Vec<_>>();
+
+        serde_json::to_string_pretty(&json!({
+            "format": "ekanban-board",
+            "version": 1,
+            "board": {
+                "id": board.id,
+                "name": board.name,
+                "created_at": board.created_at,
+                "updated_at": board.updated_at,
+                "next_card_id": board.next_card_id,
+                "next_column_id": board.next_column_id,
+                "next_tag_id": board.next_tag_id,
+                "next_checklist_item_id": board.next_checklist_item_id,
+            },
+            "columns": columns,
+            "tags": tags,
+            "archived_cards": archived_cards,
+            "card_events": events,
+        }))
+        .map_err(DbError::from)
+    }
+
+    pub fn backup_to(&self, destination: &Path) -> Result<(), DbError> {
+        self.connection
+            .execute("VACUUM INTO ?1", params![destination.to_string_lossy()])?;
+        Ok(())
+    }
+
+    fn load_app_state(&self, key: &str) -> Result<Option<String>, DbError> {
+        self.connection
+            .query_row(
+                "SELECT value FROM app_state WHERE key = ?1",
+                params![key],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(DbError::from)
+    }
+
+    fn set_app_state(&self, key: &str, value: impl Into<String>) -> Result<(), DbError> {
+        self.connection.execute(
+            "INSERT INTO app_state (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![key, value.into()],
+        )?;
+        Ok(())
+    }
+
+    fn delete_app_state(&self, key: &str) -> Result<(), DbError> {
+        self.connection
+            .execute("DELETE FROM app_state WHERE key = ?1", params![key])?;
+        Ok(())
+    }
+
     pub fn load_board_by_id(&self, id: BoardId) -> Result<Board, DbError> {
-        let (id, name, created_at, updated_at, next_card_id, next_column_id, next_tag_id) = self
+        let (
+            id,
+            name,
+            created_at,
+            updated_at,
+            next_card_id,
+            next_column_id,
+            next_tag_id,
+            next_checklist_item_id,
+        ) = self
             .connection
             .query_row(
                 "SELECT id, name, created_at, updated_at, next_card_id, next_column_id,
-                        next_tag_id
+                        next_tag_id, next_checklist_item_id
                  FROM boards WHERE id = ?1",
                 params![id],
                 |row| {
@@ -134,6 +374,7 @@ impl Database {
                         row.get(4)?,
                         row.get(5)?,
                         row.get(6)?,
+                        row.get(7)?,
                     ))
                 },
             )
@@ -207,6 +448,7 @@ impl Database {
                         updated_at: row.get(6)?,
                         due_date,
                         tag_ids: Vec::new(),
+                        checklist_items: Vec::new(),
                         archived_at: row.get(8)?,
                     })
                 })?
@@ -218,6 +460,7 @@ impl Database {
                 card.tag_ids = card_tag_statement
                     .query_map(params![card.id], |row| row.get(0))?
                     .collect::<Result<Vec<_>, _>>()?;
+                card.checklist_items = self.load_checklist_items(card.id)?;
             }
             columns.push(column);
         }
@@ -254,6 +497,7 @@ impl Database {
                 updated_at: row.get(6)?,
                 due_date,
                 tag_ids: Vec::new(),
+                checklist_items: Vec::new(),
                 archived_at: row.get(8)?,
             })
         })?;
@@ -265,6 +509,7 @@ impl Database {
             card.tag_ids = card_tag_statement
                 .query_map(params![card.id], |row| row.get(0))?
                 .collect::<Result<Vec<_>, _>>()?;
+            card.checklist_items = self.load_checklist_items(card.id)?;
         }
 
         Ok(Board {
@@ -275,6 +520,7 @@ impl Database {
             next_card_id,
             next_column_id,
             next_tag_id,
+            next_checklist_item_id,
             tags,
             archived_cards,
             columns,
@@ -282,6 +528,28 @@ impl Database {
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
         })
+    }
+
+    fn load_checklist_items(&self, card_id: i64) -> Result<Vec<ChecklistItem>, DbError> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, card_id, text, checked, position, created_at, updated_at
+             FROM checklist_items WHERE card_id = ?1 ORDER BY position, id",
+        )?;
+        let items = statement
+            .query_map(params![card_id], |row| {
+                Ok(ChecklistItem {
+                    id: row.get(0)?,
+                    card_id: row.get(1)?,
+                    text: row.get(2)?,
+                    checked: row.get(3)?,
+                    position: row.get(4)?,
+                    created_at: row.get(5)?,
+                    updated_at: row.get(6)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(DbError::from);
+        items
     }
 
     pub fn create_board(&mut self, name: impl Into<String>) -> Result<Board, DbError> {
@@ -318,11 +586,13 @@ impl Database {
         let next_card_id = board_scoped_id(board_id);
         let first_column_id = board_scoped_id(board_id);
         let next_tag_id = board_scoped_id(board_id);
+        let next_checklist_item_id = board_scoped_id(board_id);
 
         transaction.execute(
             "INSERT INTO boards
-             (id, name, created_at, updated_at, next_card_id, next_column_id, next_tag_id)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+             (id, name, created_at, updated_at, next_card_id, next_column_id, next_tag_id,
+              next_checklist_item_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 board_id,
                 name,
@@ -330,7 +600,8 @@ impl Database {
                 now,
                 next_card_id,
                 first_column_id + 1,
-                next_tag_id
+                next_tag_id,
+                next_checklist_item_id
             ],
         )?;
         transaction.execute(
@@ -352,6 +623,7 @@ impl Database {
             next_card_id,
             first_column_id,
             next_tag_id,
+            next_checklist_item_id,
             now,
         ))
     }
@@ -386,15 +658,17 @@ impl Database {
         let transaction = self.connection.transaction()?;
         transaction.execute(
             "INSERT INTO boards
-             (id, name, created_at, updated_at, next_card_id, next_column_id, next_tag_id)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             (id, name, created_at, updated_at, next_card_id, next_column_id, next_tag_id,
+              next_checklist_item_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
              ON CONFLICT(id) DO UPDATE SET
                name = excluded.name,
                created_at = excluded.created_at,
                updated_at = excluded.updated_at,
                next_card_id = excluded.next_card_id,
                next_column_id = excluded.next_column_id,
-               next_tag_id = excluded.next_tag_id",
+               next_tag_id = excluded.next_tag_id,
+               next_checklist_item_id = excluded.next_checklist_item_id",
             params![
                 board.id,
                 board.name,
@@ -402,7 +676,8 @@ impl Database {
                 board.updated_at,
                 board.next_card_id,
                 board.next_column_id,
-                board.next_tag_id
+                board.next_tag_id,
+                board.next_checklist_item_id
             ],
         )?;
 
@@ -557,6 +832,72 @@ impl Database {
                     card.archived_at
                 ],
             )?;
+        }
+
+        let checklist_item_ids = board
+            .columns
+            .iter()
+            .flat_map(|column| column.cards.iter())
+            .chain(board.archived_cards.iter())
+            .flat_map(|card| card.checklist_items.iter().map(|item| item.id))
+            .collect::<Vec<_>>();
+        if checklist_item_ids.is_empty() {
+            transaction.execute(
+                "DELETE FROM checklist_items
+                 WHERE card_id IN (
+                     SELECT cards.id FROM cards
+                     JOIN columns ON columns.id = cards.column_id
+                     WHERE columns.board_id = ?1
+                 )",
+                params![board.id],
+            )?;
+        } else {
+            let placeholders = std::iter::repeat_n("?", checklist_item_ids.len())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let sql = format!(
+                "DELETE FROM checklist_items
+                 WHERE card_id IN (
+                     SELECT cards.id FROM cards
+                     JOIN columns ON columns.id = cards.column_id
+                     WHERE columns.board_id = ?1
+                 )
+                   AND id NOT IN ({placeholders})"
+            );
+            let mut values = vec![board.id];
+            values.extend(checklist_item_ids);
+            transaction.execute(&sql, rusqlite::params_from_iter(values))?;
+        }
+
+        for card in board
+            .columns
+            .iter()
+            .flat_map(|column| column.cards.iter())
+            .chain(board.archived_cards.iter())
+        {
+            for item in &card.checklist_items {
+                transaction.execute(
+                    "INSERT INTO checklist_items
+                     (id, card_id, text, checked, position, created_at, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                     ON CONFLICT(id) DO UPDATE SET
+                       card_id = excluded.card_id,
+                       text = excluded.text,
+                       checked = excluded.checked,
+                       position = excluded.position,
+                       created_at = excluded.created_at,
+                       updated_at = excluded.updated_at",
+                    params![
+                        item.id,
+                        card.id,
+                        item.text,
+                        item.checked,
+                        item.position,
+                        item.created_at,
+                        item.updated_at
+                    ],
+                )?;
+            }
         }
 
         for tag in &board.tags {
@@ -812,6 +1153,41 @@ impl Database {
             )?;
             transaction.execute(
                 "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, ?2)",
+                params![8, now()],
+            )?;
+            transaction.commit()?;
+        }
+
+        if version < 9 {
+            let transaction = self.connection.transaction()?;
+            transaction.execute_batch(
+                "ALTER TABLE boards ADD COLUMN next_checklist_item_id INTEGER NOT NULL DEFAULT 1;
+                 CREATE TABLE IF NOT EXISTS checklist_items (
+                    id INTEGER PRIMARY KEY,
+                    card_id INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
+                    text TEXT NOT NULL,
+                    checked INTEGER NOT NULL DEFAULT 0,
+                    position INTEGER NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                 );
+                 CREATE INDEX IF NOT EXISTS idx_checklist_items_card
+                     ON checklist_items(card_id, position);",
+            )?;
+            transaction.execute(
+                "UPDATE boards
+                 SET next_checklist_item_id = COALESCE(
+                     (SELECT MAX(checklist_items.id) + 1
+                      FROM checklist_items
+                      JOIN cards ON cards.id = checklist_items.card_id
+                      JOIN columns ON columns.id = cards.column_id
+                      WHERE columns.board_id = boards.id),
+                     1
+                 );",
+                [],
+            )?;
+            transaction.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, ?2)",
                 params![CURRENT_SCHEMA_VERSION, now()],
             )?;
             transaction.commit()?;
@@ -852,10 +1228,11 @@ fn board_scoped_id(board_id: BoardId) -> i64 {
 mod tests {
     use chrono::NaiveDate;
     use rusqlite::Connection;
+    use serde_json::Value;
     use tempfile::tempdir;
 
-    use super::{save_board_snapshot, Database};
-    use crate::model::Board;
+    use super::{save_board_snapshot, Database, FilterState, WindowBoundsState};
+    use crate::model::{Board, ChecklistItemDraft};
 
     #[test]
     fn creates_schema_and_round_trips_a_board() {
@@ -937,6 +1314,89 @@ mod tests {
         let database = Database::open(&path).unwrap();
         assert_eq!(database.load_last_board_id().unwrap(), Some(second.id));
         assert_eq!(database.load_board().unwrap().id, second.id);
+    }
+
+    #[test]
+    fn persists_window_bounds_and_filter_state_in_app_state() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("board.sqlite3");
+        let database = Database::open(&path).unwrap();
+        let bounds = WindowBoundsState {
+            x: -120.5,
+            y: 42.25,
+            width: 1280.0,
+            height: 720.0,
+        };
+        let filters = FilterState {
+            search: "日本語".to_string(),
+            tag_id: Some(42),
+            due_filter: 2,
+        };
+
+        database.set_window_bounds(bounds).unwrap();
+        database.set_filter_state(&filters).unwrap();
+
+        assert_eq!(database.load_window_bounds().unwrap(), Some(bounds));
+        assert_eq!(database.load_filter_state().unwrap(), filters);
+
+        let cleared = FilterState::default();
+        database.set_filter_state(&cleared).unwrap();
+        assert_eq!(database.load_filter_state().unwrap(), cleared);
+    }
+
+    #[test]
+    fn exports_board_state_and_card_events_as_json() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("board.sqlite3");
+        let mut database = Database::open(&path).unwrap();
+        let mut board = database.load_board().unwrap();
+        let card_id = board.columns[0].cards[0].id;
+        let tag_id = board.add_tag("書き出し", "#ef4444").unwrap();
+
+        board
+            .update_card_details_with_checklist(
+                card_id,
+                "書き出し対象",
+                "日本語の説明",
+                Some(NaiveDate::from_ymd_opt(2026, 12, 24).unwrap()),
+                vec![tag_id],
+                vec![ChecklistItemDraft {
+                    id: None,
+                    text: "確認する".to_string(),
+                    checked: true,
+                }],
+            )
+            .unwrap();
+        board.archive_card(card_id).unwrap();
+        database.save_board(&mut board).unwrap();
+
+        let document: Value =
+            serde_json::from_str(&database.export_board_json(&board).unwrap()).unwrap();
+        assert_eq!(document["format"], "ekanban-board");
+        assert_eq!(document["board"]["name"], board.name);
+        assert_eq!(document["tags"][0]["name"], "書き出し");
+        assert_eq!(document["archived_cards"][0]["title"], "書き出し対象");
+        assert_eq!(document["archived_cards"][0]["due_date"], "2026-12-24");
+        assert_eq!(document["archived_cards"][0]["tag_ids"][0], tag_id);
+        assert_eq!(
+            document["archived_cards"][0]["checklist_items"][0]["text"],
+            "確認する"
+        );
+        assert!(document["card_events"].is_array());
+        assert!(!document["card_events"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn backs_up_database_to_a_new_sqlite_file() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("board.sqlite3");
+        let backup_path = directory.path().join("backup.sqlite3");
+        let database = Database::open(&path).unwrap();
+
+        database.backup_to(&backup_path).unwrap();
+
+        let backup = Database::open(&backup_path).unwrap();
+        assert_eq!(backup.load_board().unwrap(), database.load_board().unwrap());
     }
 
     #[test]
@@ -1289,6 +1749,7 @@ mod tests {
 
         assert_eq!(board.next_card_id, 35);
         assert_eq!(board.next_column_id, 13);
+        assert_eq!(board.next_checklist_item_id, 1);
 
         let version = database
             .connection
@@ -1296,7 +1757,7 @@ mod tests {
                 row.get::<_, i64>(0)
             })
             .unwrap();
-        assert_eq!(version, 8);
+        assert_eq!(version, 9);
         assert_eq!(board.columns[0].cards[0].id, 34);
         assert_eq!(board.columns[0].cards[0].due_date, None);
         assert_eq!(
@@ -1368,6 +1829,58 @@ mod tests {
         let reloaded = database.load_board().unwrap();
         assert_eq!(reloaded.tags[0].name, "重要");
         assert_eq!(reloaded.columns[0].cards[0].tag_ids, vec![tag_id]);
+    }
+
+    #[test]
+    fn round_trips_checklist_items_and_removes_deleted_items() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("board.sqlite3");
+        let mut database = Database::open(&path).unwrap();
+        let mut board = database.load_board().unwrap();
+        let card_id = board.columns[0].cards[0].id;
+        board
+            .update_card_details_with_checklist(
+                card_id,
+                "チェックリスト付き",
+                "説明",
+                None,
+                Vec::new(),
+                vec![
+                    ChecklistItemDraft {
+                        id: None,
+                        text: "一つ目".to_string(),
+                        checked: false,
+                    },
+                    ChecklistItemDraft {
+                        id: None,
+                        text: "二つ目".to_string(),
+                        checked: true,
+                    },
+                ],
+            )
+            .unwrap();
+        database.save_board(&mut board).unwrap();
+
+        let reloaded = database.load_board().unwrap();
+        let card = &reloaded.columns[0].cards[0];
+        assert_eq!(card.checklist_items.len(), 2);
+        assert_eq!(card.checklist_items[1].text, "二つ目");
+        assert!(card.checklist_items[1].checked);
+
+        let mut reloaded = reloaded;
+        reloaded.delete_card(card_id).unwrap();
+        database.save_board(&mut reloaded).unwrap();
+        assert_eq!(
+            database
+                .connection
+                .query_row(
+                    "SELECT COUNT(*) FROM checklist_items WHERE card_id = ?1",
+                    [card_id],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            0
+        );
     }
 
     #[test]

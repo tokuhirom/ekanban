@@ -1,6 +1,6 @@
 use std::{
-    collections::VecDeque,
-    path::PathBuf,
+    collections::{HashMap, VecDeque},
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
 
@@ -12,23 +12,26 @@ use gpui_kit::{
     component::Disableable as _,
     component::Sizable,
     component::WindowExt as _,
-    component::{button::Button, button::ButtonVariants as _},
-    div,
+    component::{button::Button, button::ButtonVariants as _, ActiveTheme, Theme, ThemeMode},
+    div, point,
     prelude::*,
-    px, rgb, rgba, Context, Entity, FocusHandle, Focusable as _, Half, IntoElement, KeyDownEvent,
-    Pixels, Point, Render, SharedString, Window,
+    px, rgb, App, Bounds, Context, DragMoveEvent, Entity, FocusHandle, Focusable as _, Half,
+    IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, Pixels, Point, Render, ScrollHandle,
+    SharedString, Subscription, Window,
 };
 
 use crate::{
     actions::{
-        About, AddBoard, AddCard, AddColumn, AddTag, CancelEdit, ClearSearch, CloseWindow,
-        DeleteBoard, FocusSearch, Redo, RenameBoard, SaveEdit, ShowAllCards, ShowOverdueCards,
-        ShowThisWeekCards, ToggleArchiveView, ToggleFullscreen, Undo,
+        About, AddBoard, AddCard, AddColumn, AddTag, BackupDatabase, CancelEdit, ClearSearch,
+        CloseWindow, DeleteBoard, ExportBoardJson, ExportBoardMarkdown, FocusSearch, Redo,
+        RenameBoard, RevealDatabase, SaveEdit, ShowAllCards, ShowOverdueCards, ShowThisWeekCards,
+        ToggleArchiveView, ToggleFullscreen, Undo, UseDarkTheme, UseLightTheme, UseSystemTheme,
     },
-    db::{save_board_snapshot, Database, DbError},
+    db::{save_board_snapshot, Database, DbError, FilterState, WindowBoundsState},
     model::{
         card_matches_search, due_status, parse_due_date, parse_wip_limit, Board, BoardError,
-        BoardId, BoardSummary, Card, CardId, Column, ColumnId, DueStatus, Tag, TagId,
+        BoardId, BoardSummary, Card, CardId, ChecklistItem, ChecklistItemDraft, ChecklistItemId,
+        Column, ColumnId, DueStatus, Tag, TagId,
     },
 };
 
@@ -48,7 +51,7 @@ struct CardDragPreview {
 }
 
 impl Render for CardDragPreview {
-    fn render(&mut self, _: &mut Window, _: &mut Context<'_, Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let preview_width = px(250.);
         let preview_height = px(64.);
         div()
@@ -61,12 +64,12 @@ impl Render for CardDragPreview {
                     .p_3()
                     .flex()
                     .items_center()
-                    .bg(rgba(0x334155f0))
+                    .bg(theme_color(cx, UiColor::SurfaceHover))
                     .border_1()
-                    .border_color(rgb(0x93c5fd))
+                    .border_color(theme_color(cx, UiColor::Accent))
                     .rounded_lg()
                     .shadow_lg()
-                    .text_color(rgb(0xf8fafc))
+                    .text_color(theme_color(cx, UiColor::Foreground))
                     .child(self.title.clone()),
             )
     }
@@ -83,7 +86,14 @@ struct CardEditor {
     description: Entity<TextareaState>,
     due_date: Entity<InputState>,
     tag_ids: Vec<TagId>,
+    checklist_items: Vec<ChecklistEditorItem>,
     error: Option<FieldError>,
+}
+
+struct ChecklistEditorItem {
+    id: Option<ChecklistItemId>,
+    text: Entity<InputState>,
+    checked: bool,
 }
 
 struct ColumnEditor {
@@ -150,6 +160,7 @@ impl ErrorContext {
 enum EditorField {
     CardTitle,
     DueDate,
+    ChecklistItem,
     ColumnName,
     WipLimit,
     TagName,
@@ -199,6 +210,30 @@ enum DueFilter {
     ThroughThisWeek,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ThemePreference {
+    System,
+    Light,
+    Dark,
+}
+
+pub(crate) fn parse_theme_preference(value: Option<&str>) -> ThemePreference {
+    match value {
+        Some("light") => ThemePreference::Light,
+        Some("dark") => ThemePreference::Dark,
+        _ => ThemePreference::System,
+    }
+}
+
+fn apply_theme_preference(preference: ThemePreference, window: Option<&mut Window>, cx: &mut App) {
+    match preference {
+        ThemePreference::System => Theme::sync_system_appearance(window, cx),
+        ThemePreference::Light => Theme::change(ThemeMode::Light, window, cx),
+        ThemePreference::Dark => Theme::change(ThemeMode::Dark, window, cx),
+    }
+    Theme::sync_scrollbar_appearance(cx);
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CardDirection {
     Up,
@@ -207,8 +242,14 @@ enum CardDirection {
     Right,
 }
 
+#[derive(Clone, Copy)]
+enum ExportFormat {
+    Json,
+    Markdown,
+}
+
 impl Render for ColumnDragPreview {
-    fn render(&mut self, _: &mut Window, _: &mut Context<'_, Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let preview_width = px(220.);
         let preview_height = px(48.);
         div()
@@ -221,12 +262,12 @@ impl Render for ColumnDragPreview {
                     .p_3()
                     .flex()
                     .items_center()
-                    .bg(rgba(0x1d4ed8f0))
+                    .bg(theme_color(cx, UiColor::Accent))
                     .border_1()
-                    .border_color(rgb(0x93c5fd))
+                    .border_color(theme_color(cx, UiColor::Accent))
                     .rounded_lg()
                     .shadow_lg()
-                    .text_color(rgb(0xf8fafc))
+                    .text_color(theme_color(cx, UiColor::Foreground))
                     .child(self.name.clone()),
             )
     }
@@ -250,19 +291,79 @@ pub struct BoardView {
     tag_filter: Option<TagId>,
     show_archived: bool,
     selected_card: Option<CardId>,
+    context_menu_card: Option<CardId>,
+    board_scroll_handle: ScrollHandle,
+    column_scroll_handles: HashMap<ColumnId, ScrollHandle>,
+    window_bounds: WindowBoundsState,
+    _window_bounds_subscription: Subscription,
+    _appearance_subscription: Subscription,
+    _app_quit_subscription: Subscription,
+    theme_preference: ThemePreference,
     search: Entity<InputState>,
     search_query: String,
 }
 
 impl BoardView {
-    pub fn new(
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new(
         board: Board,
         boards: Vec<BoardSummary>,
         database_path: PathBuf,
+        filter_state: FilterState,
+        window_bounds: WindowBoundsState,
+        theme_preference: ThemePreference,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("タイトル・説明を検索"));
+        let due_filter = match filter_state.due_filter {
+            1 => DueFilter::Overdue,
+            2 => DueFilter::ThroughThisWeek,
+            _ => DueFilter::None,
+        };
+        let search_query = filter_state.search;
+        let search_query_for_input = search_query.clone();
+        search.update(cx, |state, cx| {
+            state.set_value(search_query_for_input, window, cx)
+        });
+
+        apply_theme_preference(theme_preference, Some(window), cx);
+        Theme::sync_scrollbar_appearance(cx);
+        let bounds_path = database_path.clone();
+        let window_bounds_subscription =
+            cx.observe_window_bounds(window, move |this, window, cx| {
+                if !window.is_fullscreen() {
+                    let bounds = window.bounds();
+                    this.window_bounds = WindowBoundsState {
+                        x: bounds.origin.x.as_f32(),
+                        y: bounds.origin.y.as_f32(),
+                        width: bounds.size.width.as_f32(),
+                        height: bounds.size.height.as_f32(),
+                    };
+                    let path = bounds_path.clone();
+                    let saved_bounds = this.window_bounds;
+                    cx.background_spawn(async move {
+                        let _ = Database::open(path)
+                            .and_then(|database| database.set_window_bounds(saved_bounds));
+                    })
+                    .detach();
+                }
+            });
+        let appearance_subscription = cx.observe_window_appearance(window, |this, window, cx| {
+            if this.theme_preference == ThemePreference::System {
+                apply_theme_preference(ThemePreference::System, Some(window), cx);
+            }
+        });
+        let quit_path = database_path.clone();
+        let app_quit_subscription = cx.on_app_quit(move |this, _| {
+            let path = quit_path.clone();
+            let bounds = this.window_bounds;
+            async move {
+                let _ =
+                    Database::open(path).and_then(|database| database.set_window_bounds(bounds));
+            }
+        });
+
         Self {
             board,
             boards,
@@ -277,12 +378,20 @@ impl BoardView {
             editing_column: None,
             editing_tag: None,
             editing_board: None,
-            due_filter: DueFilter::None,
-            tag_filter: None,
+            due_filter,
+            tag_filter: filter_state.tag_id,
             show_archived: false,
             selected_card: None,
+            context_menu_card: None,
+            board_scroll_handle: ScrollHandle::new(),
+            column_scroll_handles: HashMap::new(),
+            window_bounds,
+            _window_bounds_subscription: window_bounds_subscription,
+            _appearance_subscription: appearance_subscription,
+            _app_quit_subscription: app_quit_subscription,
+            theme_preference,
             search,
-            search_query: String::new(),
+            search_query,
         }
     }
 
@@ -303,6 +412,52 @@ impl BoardView {
 
     fn set_error(&mut self, text: impl Into<String>) {
         self.set_status(StatusLevel::Error, text);
+    }
+
+    fn persist_filter_state(&self, cx: &mut Context<Self>) {
+        let state = FilterState {
+            search: self.search_query.clone(),
+            tag_id: self.tag_filter,
+            due_filter: match self.due_filter {
+                DueFilter::None => 0,
+                DueFilter::Overdue => 1,
+                DueFilter::ThroughThisWeek => 2,
+            },
+        };
+        let path = self.database_path.clone();
+        cx.background_spawn(async move {
+            let _ = Database::open(path).and_then(|database| database.set_filter_state(&state));
+        })
+        .detach();
+    }
+
+    fn set_theme_preference(
+        &mut self,
+        preference: ThemePreference,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.theme_preference == preference {
+            return;
+        }
+        self.theme_preference = preference;
+        apply_theme_preference(preference, Some(window), cx);
+        let value = match preference {
+            ThemePreference::System => "system",
+            ThemePreference::Light => "light",
+            ThemePreference::Dark => "dark",
+        };
+        let path = self.database_path.clone();
+        cx.background_spawn(async move {
+            let _ = Database::open(path).and_then(|database| database.set_theme_preference(value));
+        })
+        .detach();
+        self.set_info(match preference {
+            ThemePreference::System => "システムの外観に合わせます",
+            ThemePreference::Light => "ライトモードに変更しました",
+            ThemePreference::Dark => "ダークモードに変更しました",
+        });
+        cx.notify();
     }
 
     fn present_board_error(&mut self, context: ErrorContext, error: BoardError) {
@@ -354,12 +509,14 @@ impl BoardView {
         self.editing_tag = None;
         self.editing_board = None;
         self.selected_card = None;
+        self.context_menu_card = None;
         self.due_filter = DueFilter::None;
         self.tag_filter = None;
         self.show_archived = false;
         self.search
             .update(cx, |state, cx| state.set_value("", window, cx));
         self.search_query.clear();
+        self.persist_filter_state(cx);
     }
 
     fn switch_board(&mut self, board_id: BoardId, window: &mut Window, cx: &mut Context<Self>) {
@@ -707,9 +864,22 @@ impl BoardView {
         let next_card = next_card_id(&self.board.columns, self.selected_card, direction);
         if let Some(card_id) = next_card {
             self.selected_card = Some(card_id);
+            self.reveal_selected_card();
             self.focus_handle.focus(window, cx);
             cx.notify();
         }
+    }
+
+    fn reveal_selected_card(&self) {
+        let Some((column_index, card_index)) = self.selected_card_location() else {
+            return;
+        };
+        if let Some(column) = self.board.columns.get(column_index) {
+            if let Some(handle) = self.column_scroll_handles.get(&column.id) {
+                handle.scroll_to_item(card_index);
+            }
+        }
+        self.board_scroll_handle.scroll_to_item(column_index);
     }
 
     fn selected_card_location(&self) -> Option<(usize, usize)> {
@@ -745,14 +915,19 @@ impl BoardView {
                 let next = source_column_index + 1;
                 (next < self.board.columns.len()).then_some(next)
             }
-            CardDirection::Up | CardDirection::Down => None,
+            CardDirection::Up | CardDirection::Down => Some(source_column_index),
         };
         let Some(target_column_index) = target_column_index else {
             return;
         };
         let target_column_id = self.board.columns[target_column_index].id;
-        let target_index =
-            source_card_index.min(self.board.columns[target_column_index].cards.len());
+        let target_index = match direction {
+            CardDirection::Up => source_card_index.saturating_sub(1),
+            CardDirection::Down => source_card_index + 2,
+            CardDirection::Left | CardDirection::Right => {
+                source_card_index.min(self.board.columns[target_column_index].cards.len())
+            }
+        };
         self.move_card(card_id, target_column_id, target_index, cx);
     }
 
@@ -812,7 +987,7 @@ impl BoardView {
 
         let key = event.keystroke.key.as_str();
         let modifiers = &event.keystroke.modifiers;
-        if modifiers.control && !modifiers.alt && !modifiers.shift && !modifiers.platform {
+        if modifiers.platform && modifiers.alt && !modifiers.shift && !modifiers.control {
             match key {
                 "left" => {
                     cx.stop_propagation();
@@ -821,6 +996,14 @@ impl BoardView {
                 "right" => {
                     cx.stop_propagation();
                     self.move_selected_card_between_columns(CardDirection::Right, cx);
+                }
+                "up" => {
+                    cx.stop_propagation();
+                    self.move_selected_card_between_columns(CardDirection::Up, cx);
+                }
+                "down" => {
+                    cx.stop_propagation();
+                    self.move_selected_card_between_columns(CardDirection::Down, cx);
                 }
                 _ => {}
             }
@@ -877,7 +1060,10 @@ impl BoardView {
             .move_card(card_id, target_column_id, target_index)
         {
             Ok(false) => return,
-            Ok(true) => self.enqueue_save(before, "保存しました", SaveFailure::None, cx),
+            Ok(true) => {
+                self.reveal_selected_card();
+                self.enqueue_save(before, "保存しました", SaveFailure::None, cx)
+            }
             Err(error) => self.present_board_error(ErrorContext::MoveCard, error),
         }
         cx.notify();
@@ -894,14 +1080,28 @@ impl BoardView {
     }
 
     fn add_card(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let column_id = self
+            .selected_card_location()
+            .and_then(|(column_index, _)| self.board.columns.get(column_index))
+            .map(|column| column.id)
+            .or_else(|| self.board.columns.first().map(|column| column.id));
+        let Some(column_id) = column_id else {
+            return;
+        };
+        self.add_card_to_column(column_id, window, cx);
+    }
+
+    fn add_card_to_column(
+        &mut self,
+        column_id: ColumnId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.show_archived {
             self.set_info("アーカイブ表示中はカードを追加できません");
             cx.notify();
             return;
         }
-        let Some(column_id) = self.board.columns.first().map(|column| column.id) else {
-            return;
-        };
         let before = self.board.clone();
         let result = self
             .board
@@ -922,7 +1122,7 @@ impl BoardView {
     }
 
     fn begin_card_edit(&mut self, card_id: CardId, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((title, description, due_date, tag_ids)) = self
+        let Some((title, description, due_date, tag_ids, checklist_items)) = self
             .board
             .columns
             .iter()
@@ -936,6 +1136,7 @@ impl BoardView {
                         .map(|date| date.format("%Y-%m-%d").to_string())
                         .unwrap_or_default(),
                     card.tag_ids.clone(),
+                    card.checklist_items.clone(),
                 )
             })
         else {
@@ -960,6 +1161,18 @@ impl BoardView {
                 .placeholder("YYYY-MM-DD（任意）")
                 .default_value(due_date)
         });
+        let checklist_items = checklist_items
+            .into_iter()
+            .map(|item| {
+                let text =
+                    cx.new(|cx| InputState::new(window, cx).default_value(item.text.clone()));
+                ChecklistEditorItem {
+                    id: Some(item.id),
+                    text,
+                    checked: item.checked,
+                }
+            })
+            .collect();
         title_input.update(cx, |state, cx| state.focus(window, cx));
         self.editing_card = Some(CardEditor {
             card_id,
@@ -967,9 +1180,67 @@ impl BoardView {
             description: description_input,
             due_date: due_date_input,
             tag_ids,
+            checklist_items,
             error: None,
         });
         cx.notify();
+    }
+
+    fn add_checklist_item_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(editor) = self.editing_card.as_mut() else {
+            return;
+        };
+        let text = cx.new(|cx| InputState::new(window, cx).placeholder("チェック項目"));
+        let item = ChecklistEditorItem {
+            id: None,
+            text,
+            checked: false,
+        };
+        editor.checklist_items.push(item);
+        if let Some(item) = editor.checklist_items.last() {
+            item.text.update(cx, |state, cx| state.focus(window, cx));
+        }
+        cx.notify();
+    }
+
+    fn toggle_checklist_item(&mut self, index: usize, cx: &mut Context<Self>) {
+        if let Some(item) = self
+            .editing_card
+            .as_mut()
+            .and_then(|editor| editor.checklist_items.get_mut(index))
+        {
+            item.checked = !item.checked;
+            cx.notify();
+        }
+    }
+
+    fn delete_checklist_item_editor(&mut self, index: usize, cx: &mut Context<Self>) {
+        if let Some(editor) = self.editing_card.as_mut() {
+            if index < editor.checklist_items.len() {
+                editor.checklist_items.remove(index);
+                cx.notify();
+            }
+        }
+    }
+
+    fn move_checklist_item_editor(
+        &mut self,
+        index: usize,
+        direction: CardDirection,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(editor) = self.editing_card.as_mut() else {
+            return;
+        };
+        let target = match direction {
+            CardDirection::Up => index.checked_sub(1),
+            CardDirection::Down => (index + 1 < editor.checklist_items.len()).then_some(index + 1),
+            CardDirection::Left | CardDirection::Right => None,
+        };
+        if let Some(target) = target {
+            editor.checklist_items.swap(index, target);
+            cx.notify();
+        }
     }
 
     fn cancel_card_edit(&mut self, cx: &mut Context<Self>) {
@@ -987,6 +1258,27 @@ impl BoardView {
         let description = editor.description.read(cx).value().to_string();
         let due_date_text = editor.due_date.read(cx).value().to_string();
         let tag_ids = editor.tag_ids.clone();
+        let checklist_drafts = editor
+            .checklist_items
+            .iter()
+            .map(|item| ChecklistItemDraft {
+                id: item.id,
+                text: item.text.read(cx).value().to_string(),
+                checked: item.checked,
+            })
+            .collect::<Vec<_>>();
+        if checklist_drafts
+            .iter()
+            .any(|item| item.text.trim().is_empty())
+        {
+            self.editing_card = Some(editor);
+            if let Some(editor) = self.editing_card.as_mut() {
+                editor.error = field_error_for(&BoardError::EmptyChecklistItemText);
+            }
+            self.present_board_error(ErrorContext::Card, BoardError::EmptyChecklistItemText);
+            cx.notify();
+            return;
+        }
         let due_date = match parse_due_date(&due_date_text) {
             Ok(due_date) => due_date,
             Err(error) => {
@@ -1001,12 +1293,13 @@ impl BoardView {
         };
         let before = self.board.clone();
 
-        let changed = match self.board.update_card_details(
+        let changed = match self.board.update_card_details_with_checklist(
             editor.card_id,
             title,
             description,
             due_date,
             tag_ids,
+            checklist_drafts,
         ) {
             Ok(changed) => changed,
             Err(error) => {
@@ -1043,6 +1336,7 @@ impl BoardView {
         match self.board.delete_card(card_id) {
             Ok(()) => {
                 self.selected_card = next_selection;
+                self.context_menu_card = None;
                 let on_failure = if self
                     .editing_card
                     .as_ref()
@@ -1062,6 +1356,74 @@ impl BoardView {
         cx.notify();
     }
 
+    fn copy_card(&mut self, card_id: CardId, cx: &mut Context<Self>) {
+        if self.show_archived {
+            return;
+        }
+        let before = self.board.clone();
+        match self.board.copy_card(card_id) {
+            Ok(new_card_id) => {
+                self.selected_card = Some(new_card_id);
+                self.context_menu_card = None;
+                self.enqueue_save(before, "カードをコピーしました", SaveFailure::None, cx);
+            }
+            Err(error) => self.present_board_error(ErrorContext::Card, error),
+        }
+        cx.notify();
+    }
+
+    fn toggle_card_tag_from_menu(
+        &mut self,
+        card_id: CardId,
+        tag_id: TagId,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(card) = self
+            .board
+            .columns
+            .iter()
+            .flat_map(|column| column.cards.iter())
+            .find(|card| card.id == card_id)
+        else {
+            self.present_board_error(ErrorContext::Card, BoardError::CardNotFound(card_id));
+            cx.notify();
+            return;
+        };
+        let mut tag_ids = card.tag_ids.clone();
+        if let Some(index) = tag_ids.iter().position(|id| *id == tag_id) {
+            tag_ids.remove(index);
+        } else {
+            tag_ids.push(tag_id);
+        }
+        let before = self.board.clone();
+        match self.board.set_card_tags(card_id, tag_ids) {
+            Ok(false) => {}
+            Ok(true) => {
+                self.context_menu_card = None;
+                self.enqueue_save(before, "タグを更新しました", SaveFailure::None, cx);
+            }
+            Err(error) => self.present_board_error(ErrorContext::Card, error),
+        }
+        cx.notify();
+    }
+
+    fn open_card_context_menu(
+        &mut self,
+        card_id: CardId,
+        event: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if event.button != MouseButton::Right {
+            return;
+        }
+        cx.stop_propagation();
+        self.selected_card = Some(card_id);
+        self.focus_handle.focus(window, cx);
+        self.context_menu_card = Some(card_id);
+        cx.notify();
+    }
+
     fn archive_card(&mut self, card_id: CardId, cx: &mut Context<Self>) {
         let next_selection = if self.selected_card == Some(card_id) {
             self.selection_after_removing(card_id)
@@ -1072,6 +1434,7 @@ impl BoardView {
         match self.board.archive_card(card_id) {
             Ok(true) => {
                 self.selected_card = next_selection;
+                self.context_menu_card = None;
                 let on_failure = if self
                     .editing_card
                     .as_ref()
@@ -1113,6 +1476,7 @@ impl BoardView {
             Ok(0) => self.set_info("アーカイブするカードがありません"),
             Ok(count) => {
                 self.selected_card = next_selection;
+                self.context_menu_card = None;
                 let on_failure = self
                     .editing_card
                     .take()
@@ -1145,6 +1509,7 @@ impl BoardView {
         self.editing_card = None;
         self.editing_column = None;
         self.selected_card = None;
+        self.context_menu_card = None;
         self.set_info(if self.show_archived {
             "アーカイブを表示しています"
         } else {
@@ -1300,6 +1665,7 @@ impl BoardView {
                 };
                 if filter_was_selected {
                     self.tag_filter = None;
+                    self.persist_filter_state(cx);
                 }
                 self.enqueue_save(
                     before,
@@ -1323,6 +1689,7 @@ impl BoardView {
         } else {
             Some(tag_id)
         };
+        self.persist_filter_state(cx);
         self.set_info("タグフィルターを変更しました");
         cx.notify();
     }
@@ -1557,6 +1924,7 @@ impl BoardView {
         } else {
             filter
         };
+        self.persist_filter_state(cx);
         self.set_info("表示フィルターを変更しました");
         cx.notify();
     }
@@ -1568,6 +1936,7 @@ impl BoardView {
         } else {
             self.set_info(format!("「{}」で検索中", self.search_query));
         }
+        self.persist_filter_state(cx);
         cx.notify();
     }
 
@@ -1575,6 +1944,7 @@ impl BoardView {
         self.search
             .update(cx, |state, cx| state.set_value("", window, cx));
         self.search_query.clear();
+        self.persist_filter_state(cx);
         self.set_info("検索をクリアしました");
         cx.notify();
     }
@@ -1645,6 +2015,141 @@ impl BoardView {
         cx.notify();
     }
 
+    fn choose_export_path(&mut self, format: ExportFormat, cx: &mut Context<Self>) {
+        let directory = self
+            .database_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+        let suggested_name = match format {
+            ExportFormat::Json => suggested_export_name(&self.board.name, "json"),
+            ExportFormat::Markdown => suggested_export_name(&self.board.name, "md"),
+        };
+        let receiver = cx.prompt_for_new_path(&directory, Some(&suggested_name));
+        let board = self.board.clone();
+        let database_path = self.database_path.clone();
+        let save_lock = self.save_lock.clone();
+
+        cx.spawn(async move |this, cx| {
+            let mut destination = match receiver.await {
+                Ok(Ok(Some(path))) => path,
+                Ok(Ok(None)) => return,
+                Ok(Err(error)) => {
+                    let _ = this.update(cx, |view, cx| {
+                        view.set_error(format!("保存先を選択できませんでした: {error}"));
+                        cx.notify();
+                    });
+                    return;
+                }
+                Err(_) => {
+                    let _ = this.update(cx, |view, cx| {
+                        view.set_error("保存先の選択が中断されました");
+                        cx.notify();
+                    });
+                    return;
+                }
+            };
+            if destination.extension().is_none() {
+                destination.set_extension(match format {
+                    ExportFormat::Json => "json",
+                    ExportFormat::Markdown => "md",
+                });
+            }
+
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    let _guard = save_lock.lock().expect("save worker mutex was poisoned");
+                    let content = match format {
+                        ExportFormat::Json => Database::open(&database_path)
+                            .and_then(|database| database.export_board_json(&board))
+                            .map_err(|error| error.to_string()),
+                        ExportFormat::Markdown => Ok(render_board_markdown(&board)),
+                    }?;
+                    std::fs::write(&destination, content).map_err(|error| error.to_string())
+                })
+                .await;
+
+            let _ = this.update(cx, |view, cx| {
+                match result {
+                    Ok(()) => view.set_success("ボードを書き出しました"),
+                    Err(error) => view.set_error(format!("ボードを書き出せませんでした: {error}")),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn backup_database(&mut self, cx: &mut Context<Self>) {
+        let directory = self
+            .database_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+        let receiver = cx.prompt_for_new_path(&directory, Some("ekanban-backup.sqlite3"));
+        let source = self.database_path.clone();
+        let save_lock = self.save_lock.clone();
+
+        cx.spawn(async move |this, cx| {
+            let mut destination = match receiver.await {
+                Ok(Ok(Some(path))) => path,
+                Ok(Ok(None)) => return,
+                Ok(Err(error)) => {
+                    let _ = this.update(cx, |view, cx| {
+                        view.set_error(format!("保存先を選択できませんでした: {error}"));
+                        cx.notify();
+                    });
+                    return;
+                }
+                Err(_) => {
+                    let _ = this.update(cx, |view, cx| {
+                        view.set_error("保存先の選択が中断されました");
+                        cx.notify();
+                    });
+                    return;
+                }
+            };
+            if destination.extension().is_none() {
+                destination.set_extension("sqlite3");
+            }
+            if destination == source {
+                let _ = this.update(cx, |view, cx| {
+                    view.set_error("バックアップ先には別のファイルを指定してください");
+                    cx.notify();
+                });
+                return;
+            }
+
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    let _guard = save_lock.lock().expect("save worker mutex was poisoned");
+                    Database::open(&source)
+                        .and_then(|database| database.backup_to(&destination))
+                        .map_err(|error| error.to_string())
+                })
+                .await;
+
+            let _ = this.update(cx, |view, cx| {
+                match result {
+                    Ok(()) => view.set_success("データベースをバックアップしました"),
+                    Err(error) => view.set_error(format!(
+                        "データベースをバックアップできませんでした: {error}"
+                    )),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn reveal_database(&mut self, cx: &mut Context<Self>) {
+        cx.reveal_path(&self.database_path);
+        self.set_info("データベースの場所を開きました");
+        cx.notify();
+    }
+
     fn show_about(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         window.open_alert_dialog(cx, |alert, _, _| {
             alert
@@ -1684,7 +2189,10 @@ impl BoardView {
             }))
             .child(Input::new(&editor.name).small())
             .when_some(name_error, |this, message| {
-                this.child(field_error_note(message))
+                this.child(field_error_note(
+                    message,
+                    theme_color(cx, UiColor::DangerForeground),
+                ))
             })
             .child(
                 div()
@@ -1719,8 +2227,8 @@ impl BoardView {
             .gap_3()
             .p_4()
             .border_r_1()
-            .border_color(rgb(0x253047))
-            .bg(rgb(0x111827))
+            .border_color(theme_color(cx, UiColor::Border))
+            .bg(theme_color(cx, UiColor::Sidebar))
             .child(
                 div()
                     .flex()
@@ -1754,15 +2262,15 @@ impl BoardView {
                             .rounded_md()
                             .cursor_pointer()
                             .bg(if selected {
-                                rgb(0x1d4ed8)
+                                theme_color(cx, UiColor::SidebarAccent)
                             } else {
-                                rgb(0x1e293b)
+                                theme_color(cx, UiColor::Surface)
                             })
                             .hover(|this| {
                                 this.bg(if selected {
-                                    rgb(0x2563eb)
+                                    theme_color(cx, UiColor::Accent)
                                 } else {
-                                    rgb(0x334155)
+                                    theme_color(cx, UiColor::SurfaceHover)
                                 })
                             })
                             .on_click(cx.listener(move |this, _, window, cx| {
@@ -1771,7 +2279,7 @@ impl BoardView {
                             .child(
                                 div()
                                     .text_sm()
-                                    .text_color(rgb(0xf8fafc))
+                                    .text_color(theme_color(cx, UiColor::Foreground))
                                     .child(summary.name.clone()),
                             )
                     }))
@@ -1779,7 +2287,7 @@ impl BoardView {
                         this.child(
                             div()
                                 .text_xs()
-                                .text_color(rgb(0x94a3b8))
+                                .text_color(theme_color(cx, UiColor::MutedForeground))
                                 .child("ボードがありません"),
                         )
                     }),
@@ -1885,11 +2393,17 @@ impl BoardView {
             }))
             .child(Input::new(&editor.name).small())
             .when_some(name_error, |this, message| {
-                this.child(field_error_note(message))
+                this.child(field_error_note(
+                    message,
+                    theme_color(cx, UiColor::DangerForeground),
+                ))
             })
             .child(Input::new(&editor.wip_limit).small())
             .when_some(wip_limit_error, |this, message| {
-                this.child(field_error_note(message))
+                this.child(field_error_note(
+                    message,
+                    theme_color(cx, UiColor::DangerForeground),
+                ))
             })
             .child(
                 Button::new(("save-column", editor_kind.unwrap_or(0) as u64))
@@ -1933,7 +2447,10 @@ impl BoardView {
             }))
             .child(Input::new(&editor.name).small())
             .when_some(name_error, |this, message| {
-                this.child(field_error_note(message))
+                this.child(field_error_note(
+                    message,
+                    theme_color(cx, UiColor::DangerForeground),
+                ))
             })
             .child(Input::new(&editor.color).small())
             .child(
@@ -1957,7 +2474,12 @@ impl BoardView {
             .flex()
             .items_center()
             .gap_1()
-            .child(div().text_xs().text_color(rgb(0x94a3b8)).child("タグ"))
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme_color(cx, UiColor::MutedForeground))
+                    .child("タグ"),
+            )
             .children(self.board.tags.iter().map(|tag| {
                 let tag_id = tag.id;
                 let selected = self.tag_filter == Some(tag_id);
@@ -2005,11 +2527,31 @@ impl BoardView {
         let (status_icon, status_color, status_background, status_text) = match self.status.as_ref()
         {
             Some(status) => match status.level {
-                StatusLevel::Info => ("ⓘ", 0xbfdbfe, 0x1e3a8a, status.text.clone()),
-                StatusLevel::Success => ("✓", 0xbbf7d0, 0x14532d, status.text.clone()),
-                StatusLevel::Error => ("⚠", 0xfecaca, 0x7f1d1d, status.text.clone()),
+                StatusLevel::Info => (
+                    "ⓘ",
+                    theme_color(cx, UiColor::InfoForeground),
+                    theme_color(cx, UiColor::Info),
+                    status.text.clone(),
+                ),
+                StatusLevel::Success => (
+                    "✓",
+                    theme_color(cx, UiColor::SuccessForeground),
+                    theme_color(cx, UiColor::Success),
+                    status.text.clone(),
+                ),
+                StatusLevel::Error => (
+                    "⚠",
+                    theme_color(cx, UiColor::DangerForeground),
+                    theme_color(cx, UiColor::Danger),
+                    status.text.clone(),
+                ),
             },
-            None => ("●", 0x94a3b8, 0x1e293b, "ローカル SQLite".to_string()),
+            None => (
+                "●",
+                theme_color(cx, UiColor::MutedForeground),
+                theme_color(cx, UiColor::Surface),
+                "ローカル SQLite".to_string(),
+            ),
         };
         div()
             .w_full()
@@ -2018,8 +2560,8 @@ impl BoardView {
             .justify_between()
             .p_4()
             .border_b_1()
-            .border_color(rgb(0x253047))
-            .bg(rgb(0x111827))
+            .border_color(theme_color(cx, UiColor::Border))
+            .bg(theme_color(cx, UiColor::Background))
             .child(
                 div()
                     .flex()
@@ -2039,9 +2581,9 @@ impl BoardView {
                             .px_2()
                             .py_1()
                             .rounded_sm()
-                            .bg(rgb(status_background))
+                            .bg(status_background)
                             .text_xs()
-                            .text_color(rgb(status_color))
+                            .text_color(status_color)
                             .child(format!("{status_icon} {status_text}")),
                     )
                     .child(self.render_search(cx))
@@ -2055,7 +2597,11 @@ impl BoardView {
                     .child(
                         Button::new("filter-none")
                             .secondary()
-                            .label("すべて")
+                            .label(if self.due_filter == DueFilter::None {
+                                "✓ すべて"
+                            } else {
+                                "すべて"
+                            })
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.set_due_filter(DueFilter::None, cx)
                             })),
@@ -2063,7 +2609,11 @@ impl BoardView {
                     .child(
                         Button::new("filter-overdue")
                             .secondary()
-                            .label("期限切れ")
+                            .label(if self.due_filter == DueFilter::Overdue {
+                                "✓ 期限切れ"
+                            } else {
+                                "期限切れ"
+                            })
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.set_due_filter(DueFilter::Overdue, cx)
                             })),
@@ -2071,7 +2621,11 @@ impl BoardView {
                     .child(
                         Button::new("filter-week")
                             .secondary()
-                            .label("今週まで")
+                            .label(if self.due_filter == DueFilter::ThroughThisWeek {
+                                "✓ 今週まで"
+                            } else {
+                                "今週まで"
+                            })
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.set_due_filter(DueFilter::ThroughThisWeek, cx)
                             })),
@@ -2106,6 +2660,11 @@ impl BoardView {
     ) -> impl IntoElement {
         let column_id = column.id;
         let end_index = column.cards.len();
+        let scroll_handle = self
+            .column_scroll_handles
+            .get(&column_id)
+            .cloned()
+            .expect("column scroll handle initialized before rendering");
         let column_name = SharedString::from(column.name.clone());
         let is_editing = self
             .editing_column
@@ -2141,7 +2700,7 @@ impl BoardView {
                     div()
                         .text_sm()
                         .font_weight(gpui_kit::FontWeight::BOLD)
-                        .text_color(rgb(0xe2e8f0))
+                        .text_color(theme_color(cx, UiColor::Foreground))
                         .child(column.name.clone()),
                 )
                 .into_any_element()
@@ -2155,17 +2714,23 @@ impl BoardView {
             .gap_3()
             .p_3()
             .rounded_lg()
-            .bg(rgb(0x1e293b))
+            .bg(theme_color(cx, UiColor::Surface))
             .border_1()
-            .border_color(rgb(0x334155))
+            .border_color(theme_color(cx, UiColor::Border))
             .on_drop(cx.listener(move |this, drag: &CardDrag, _, cx| {
                 this.move_card(drag.card_id, column_id, end_index, cx);
             }))
             .on_drop(cx.listener(move |this, drag: &ColumnDrag, _, cx| {
                 this.move_column(drag.column_id, column_index, cx);
             }))
-            .drag_over::<CardDrag>(|style, _, _, _| style.border_color(rgb(0x60a5fa)))
-            .drag_over::<ColumnDrag>(|style, _, _, _| style.border_color(rgb(0x818cf8)))
+            .drag_over::<CardDrag>({
+                let color = theme_color(cx, UiColor::Accent);
+                move |style, _, _, _| style.border_color(color)
+            })
+            .drag_over::<ColumnDrag>({
+                let color = theme_color(cx, UiColor::Accent);
+                move |style, _, _, _| style.border_color(color)
+            })
             .child(
                 div()
                     .id(("column-header", column_id as u64))
@@ -2183,9 +2748,9 @@ impl BoardView {
                                 div()
                                     .text_xs()
                                     .text_color(if wip_over {
-                                        rgb(0xf87171)
+                                        theme_color(cx, UiColor::DangerForeground)
                                     } else {
-                                        rgb(0x94a3b8)
+                                        theme_color(cx, UiColor::MutedForeground)
                                     })
                                     .child(card_count_label),
                             )
@@ -2226,33 +2791,75 @@ impl BoardView {
                             }),
                     ),
             )
-            .children(column.cards.iter().enumerate().map(|(index, card)| {
-                self.render_card(
-                    column_id,
-                    index,
-                    card,
-                    !card_matches_filter(card, self.due_filter, Local::now().date_naive())
-                        || (!self.search_query.is_empty()
-                            && !card_matches_search(card, &self.search_query))
-                        || self
-                            .tag_filter
-                            .is_some_and(|tag_id| !card.tag_ids.contains(&tag_id)),
-                    cx,
-                )
-            }))
+            .h_full()
             .child(
                 div()
-                    .h(px(40.))
+                    .id(("column-cards", column_id as u64))
+                    .flex_1()
+                    .min_h_0()
                     .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded_md()
-                    .border_1()
-                    .border_dashed()
-                    .border_color(rgb(0x475569))
-                    .text_xs()
-                    .text_color(rgb(0x64748b))
-                    .child("ここにドロップ"),
+                    .flex_col()
+                    .gap_3()
+                    .overflow_y_scroll()
+                    .track_scroll(&scroll_handle)
+                    .vertical_scrollbar(&scroll_handle)
+                    .on_drag_move({
+                        let scroll_handle = scroll_handle.clone();
+                        move |event: &DragMoveEvent<CardDrag>, _, _| {
+                            let position = event.event.position;
+                            if position.y < event.bounds.top() + px(48.)
+                                || position.y > event.bounds.bottom() - px(48.)
+                            {
+                                // GPUI reports the current content offset in the
+                                // handle, so this remains smooth while the drag
+                                // pointer is held near an edge.
+                                let offset = scroll_handle.offset();
+                                let max_offset = scroll_handle.max_offset();
+                                let y = if position.y < event.bounds.top() + px(48.) {
+                                    (offset.y + px(20.)).min(px(0.))
+                                } else {
+                                    (offset.y - px(20.)).max(-max_offset.y)
+                                };
+                                scroll_handle.set_offset(point(offset.x, y));
+                            }
+                        }
+                    })
+                    .children(column.cards.iter().enumerate().map(|(index, card)| {
+                        self.render_card(
+                            column_id,
+                            index,
+                            card,
+                            !card_matches_filter(card, self.due_filter, Local::now().date_naive())
+                                || (!self.search_query.is_empty()
+                                    && !card_matches_search(card, &self.search_query))
+                                || self
+                                    .tag_filter
+                                    .is_some_and(|tag_id| !card.tag_ids.contains(&tag_id)),
+                            cx,
+                        )
+                    }))
+                    .child(
+                        div()
+                            .h(px(40.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded_md()
+                            .border_1()
+                            .border_dashed()
+                            .border_color(theme_color(cx, UiColor::Border))
+                            .text_xs()
+                            .text_color(theme_color(cx, UiColor::MutedForeground))
+                            .child("ここにドロップ"),
+                    ),
+            )
+            .child(
+                Button::new(("add-card-to-column", column_id as u64))
+                    .secondary()
+                    .label("＋ カードを追加")
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.add_card_to_column(column_id, window, cx)
+                    })),
             )
     }
 
@@ -2276,7 +2883,7 @@ impl BoardView {
                 this.child(
                     div()
                         .text_sm()
-                        .text_color(rgb(0x94a3b8))
+                        .text_color(theme_color(cx, UiColor::MutedForeground))
                         .child("アーカイブ済みのカードはありません"),
                 )
             })
@@ -2310,9 +2917,9 @@ impl BoardView {
             .justify_between()
             .gap_3()
             .rounded_md()
-            .bg(rgb(0x334155))
+            .bg(theme_color(cx, UiColor::Surface))
             .border_1()
-            .border_color(rgb(0x475569))
+            .border_color(theme_color(cx, UiColor::Border))
             .when(dimmed, |this| this.opacity(0.35))
             .child(
                 div()
@@ -2323,12 +2930,13 @@ impl BoardView {
                     .child(
                         div()
                             .text_sm()
-                            .text_color(rgb(0xf8fafc))
+                            .text_color(theme_color(cx, UiColor::Foreground))
                             .child(card.title.clone()),
                     )
                     .when_some(
-                        card.due_date
-                            .map(|due_date| render_due_badge(due_date, today).into_any_element()),
+                        card.due_date.map(|due_date| {
+                            render_due_badge(due_date, today, cx.theme()).into_any_element()
+                        }),
                         |this, badge| this.child(badge),
                     )
                     .children(
@@ -2337,12 +2945,12 @@ impl BoardView {
                             .filter_map(|tag_id| {
                                 self.board.tags.iter().find(|tag| tag.id == *tag_id)
                             })
-                            .map(render_tag_chip),
+                            .map(|tag| render_tag_chip(tag, theme_color(cx, UiColor::Foreground))),
                     )
                     .child(
                         div()
                             .text_xs()
-                            .text_color(rgb(0x94a3b8))
+                            .text_color(theme_color(cx, UiColor::MutedForeground))
                             .child(card.description.clone()),
                     ),
             )
@@ -2371,7 +2979,7 @@ impl BoardView {
             .rounded_lg()
             .border_1()
             .border_dashed()
-            .border_color(rgb(0x475569))
+            .border_color(theme_color(cx, UiColor::Border))
             .child(if let Some(editor) = editor {
                 self.render_column_editor(editor, cx).into_any_element()
             } else {
@@ -2381,6 +2989,71 @@ impl BoardView {
                     .on_click(cx.listener(|this, _, window, cx| this.begin_add_column(window, cx)))
                     .into_any_element()
             })
+    }
+
+    fn render_card_context_menu(
+        &self,
+        card_id: CardId,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let card = self
+            .board
+            .columns
+            .iter()
+            .flat_map(|column| column.cards.iter())
+            .find(|card| card.id == card_id);
+        let tag_ids = card.map(|card| card.tag_ids.clone()).unwrap_or_default();
+        div()
+            .absolute()
+            .top(px(8.))
+            .left(px(8.))
+            .w(px(190.))
+            .flex()
+            .flex_col()
+            .gap_1()
+            .p_2()
+            .rounded_md()
+            .border_1()
+            .border_color(theme_color(cx, UiColor::Border))
+            .bg(theme_color(cx, UiColor::Popover))
+            .child(
+                Button::new(("context-copy", card_id as u64))
+                    .secondary()
+                    .label("コピー")
+                    .on_click(cx.listener(move |this, _, _, cx| this.copy_card(card_id, cx))),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme_color(cx, UiColor::MutedForeground))
+                    .child("タグ"),
+            )
+            .children(self.board.tags.iter().map(|tag| {
+                let tag_id = tag.id;
+                let selected = tag_ids.contains(&tag_id);
+                Button::new(format!("context-tag-{card_id}-{tag_id}"))
+                    .ghost()
+                    .label(format!(
+                        "{}{}",
+                        if selected { "✓ " } else { "□ " },
+                        tag.name
+                    ))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.toggle_card_tag_from_menu(card_id, tag_id, cx)
+                    }))
+            }))
+            .child(
+                Button::new(("context-archive", card_id as u64))
+                    .ghost()
+                    .label("アーカイブ")
+                    .on_click(cx.listener(move |this, _, _, cx| this.archive_card(card_id, cx))),
+            )
+            .child(
+                Button::new(("context-delete", card_id as u64))
+                    .danger()
+                    .label("削除")
+                    .on_click(cx.listener(move |this, _, _, cx| this.delete_card(card_id, cx))),
+            )
     }
 
     fn render_card(
@@ -2397,12 +3070,13 @@ impl BoardView {
         let today = Local::now().date_naive();
         let due_badge = card
             .due_date
-            .map(|due_date| render_due_badge(due_date, today).into_any_element());
+            .map(|due_date| render_due_badge(due_date, today, cx.theme()).into_any_element());
         let is_editing = self
             .editing_card
             .as_ref()
             .is_some_and(|editor| editor.card_id == card_id);
         let is_selected = self.selected_card == Some(card_id);
+        let context_menu_open = self.context_menu_card == Some(card_id);
         let editor = self.editing_card.as_ref();
         div()
             .id(("card", card_id as u64))
@@ -2411,17 +3085,33 @@ impl BoardView {
             .flex_col()
             .gap_2()
             .rounded_md()
-            .bg(rgb(0x334155))
+            .relative()
+            .bg(theme_color(cx, UiColor::Surface))
             .border_1()
-            .border_color(rgb(0x475569))
-            .hover(|this| this.bg(rgb(0x3f4f66)))
-            .when(is_selected, |this| this.border_color(rgb(0x93c5fd)))
+            .border_color(theme_color(cx, UiColor::Border))
+            .hover({
+                let color = theme_color(cx, UiColor::SurfaceHover);
+                move |this| this.bg(color)
+            })
+            .when(is_selected, {
+                let color = theme_color(cx, UiColor::Accent);
+                move |this| this.border_color(color)
+            })
             .when(dimmed, |this| this.opacity(0.35))
             .on_click(cx.listener(move |this, _, window, cx| this.select_card(card_id, window, cx)))
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                    this.open_card_context_menu(card_id, event, window, cx)
+                }),
+            )
             .on_drop(cx.listener(move |this, drag: &CardDrag, _, cx| {
                 this.move_card(drag.card_id, column_id, index, cx);
             }))
-            .drag_over::<CardDrag>(|style, _, _, _| style.border_color(rgb(0x60a5fa)))
+            .drag_over::<CardDrag>({
+                let color = theme_color(cx, UiColor::Accent);
+                move |style, _, _, _| style.border_color(color)
+            })
             .child(if is_editing {
                 self.render_card_editor(editor.expect("editing card exists"), cx)
                     .into_any_element()
@@ -2435,20 +3125,31 @@ impl BoardView {
                             position,
                         })
                     })
-                    .child(div().text_sm().text_color(rgb(0xf8fafc)).child(title))
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(theme_color(cx, UiColor::Foreground))
+                            .child(title),
+                    )
                     .when_some(due_badge, |this, badge| this.child(badge))
+                    .when(!card.checklist_items.is_empty(), |this| {
+                        this.child(render_checklist_progress(
+                            &card.checklist_items,
+                            theme_color(cx, UiColor::MutedForeground),
+                        ))
+                    })
                     .children(
                         card.tag_ids
                             .iter()
                             .filter_map(|tag_id| {
                                 self.board.tags.iter().find(|tag| tag.id == *tag_id)
                             })
-                            .map(render_tag_chip),
+                            .map(|tag| render_tag_chip(tag, theme_color(cx, UiColor::Foreground))),
                     )
                     .child(
                         div()
                             .text_xs()
-                            .text_color(rgb(0x94a3b8))
+                            .text_color(theme_color(cx, UiColor::MutedForeground))
                             .child(card.description.clone()),
                     )
                     .into_any_element()
@@ -2487,6 +3188,9 @@ impl BoardView {
                         ),
                 )
             })
+            .when(context_menu_open, |this| {
+                this.child(self.render_card_context_menu(card_id, cx))
+            })
     }
 
     fn render_card_editor(&self, editor: &CardEditor, cx: &mut Context<Self>) -> impl IntoElement {
@@ -2503,6 +3207,10 @@ impl BoardView {
         } else {
             field_error_message(editor.error.as_ref(), EditorField::DueDate, &due_date_value)
         };
+        let checklist_invalid = editor
+            .checklist_items
+            .iter()
+            .any(|item| item.text.read(cx).value().trim().is_empty());
         let today = Local::now().date_naive();
         let tomorrow = today + Duration::days(1);
         let days_until_saturday = (Weekday::Sat.num_days_from_monday() as i64
@@ -2515,17 +3223,56 @@ impl BoardView {
             .flex()
             .flex_col()
             .gap_2()
-            .child(div().text_xs().text_color(rgb(0x94a3b8)).child("タイトル"))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme_color(cx, UiColor::MutedForeground))
+                            .child("カード"),
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(gpui_kit::FontWeight::BOLD)
+                            .child(format!("#{}", editor.card_id)),
+                    ),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme_color(cx, UiColor::MutedForeground))
+                    .child("タイトル"),
+            )
             .child(Input::new(&editor.title).small())
             .when_some(title_error, |this, message| {
-                this.child(field_error_note(message))
+                this.child(field_error_note(
+                    message,
+                    theme_color(cx, UiColor::DangerForeground),
+                ))
             })
-            .child(div().text_xs().text_color(rgb(0x94a3b8)).child("説明"))
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme_color(cx, UiColor::MutedForeground))
+                    .child("説明"),
+            )
             .child(Textarea::new(&editor.description).h(px(96.)))
-            .child(div().text_xs().text_color(rgb(0x94a3b8)).child("期限"))
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme_color(cx, UiColor::MutedForeground))
+                    .child("期限"),
+            )
             .child(Input::new(&editor.due_date).small())
             .when_some(due_date_error, |this, message| {
-                this.child(field_error_note(message))
+                this.child(field_error_note(
+                    message,
+                    theme_color(cx, UiColor::DangerForeground),
+                ))
             })
             .child(
                 div()
@@ -2572,7 +3319,87 @@ impl BoardView {
                             })),
                     ),
             )
-            .child(div().text_xs().text_color(rgb(0x94a3b8)).child("タグ"))
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme_color(cx, UiColor::MutedForeground))
+                    .child("チェックリスト"),
+            )
+            .children(
+                editor
+                    .checklist_items
+                    .iter()
+                    .enumerate()
+                    .map(|(index, item)| {
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_1()
+                            .child(
+                                Button::new(format!("checklist-toggle-{}-{index}", editor.card_id))
+                                    .secondary()
+                                    .label(if item.checked { "☑" } else { "□" })
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.toggle_checklist_item(index, cx)
+                                    })),
+                            )
+                            .child(Input::new(&item.text).small())
+                            .child(
+                                Button::new(format!("checklist-up-{}-{index}", editor.card_id))
+                                    .ghost()
+                                    .disabled(index == 0)
+                                    .label("↑")
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.move_checklist_item_editor(
+                                            index,
+                                            CardDirection::Up,
+                                            cx,
+                                        )
+                                    })),
+                            )
+                            .child(
+                                Button::new(format!("checklist-down-{}-{index}", editor.card_id))
+                                    .ghost()
+                                    .disabled(index + 1 >= editor.checklist_items.len())
+                                    .label("↓")
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.move_checklist_item_editor(
+                                            index,
+                                            CardDirection::Down,
+                                            cx,
+                                        )
+                                    })),
+                            )
+                            .child(
+                                Button::new(format!("checklist-delete-{}-{index}", editor.card_id))
+                                    .danger()
+                                    .label("削除")
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.delete_checklist_item_editor(index, cx)
+                                    })),
+                            )
+                            .when(item.text.read(cx).value().trim().is_empty(), |this| {
+                                this.child(field_error_note(
+                                    "項目名を入力してください".to_string(),
+                                    theme_color(cx, UiColor::DangerForeground),
+                                ))
+                            })
+                    }),
+            )
+            .child(
+                Button::new(("checklist-add", editor.card_id as u64))
+                    .secondary()
+                    .label("＋ 項目を追加")
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.add_checklist_item_editor(window, cx)
+                    })),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme_color(cx, UiColor::MutedForeground))
+                    .child("タグ"),
+            )
             .child(
                 div()
                     .flex()
@@ -2603,7 +3430,11 @@ impl BoardView {
                     .child(
                         Button::new("save-card-edit")
                             .primary()
-                            .disabled(due_date_invalid || title_value.trim().is_empty())
+                            .disabled(
+                                due_date_invalid
+                                    || checklist_invalid
+                                    || title_value.trim().is_empty(),
+                            )
                             .label("保存")
                             .on_click(cx.listener(|this, _, _, cx| this.save_card_edit(cx))),
                     ),
@@ -2613,7 +3444,11 @@ impl BoardView {
 
 impl Render for BoardView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        for column in &self.board.columns {
+            self.column_scroll_handles.entry(column.id).or_default();
+        }
         let column_count = self.board.columns.len();
+        let board_scroll_handle = self.board_scroll_handle.clone();
         div()
             .key_context("Board")
             .track_focus(&self.focus_handle)
@@ -2648,6 +3483,23 @@ impl Render for BoardView {
             }))
             .on_action(cx.listener(|this, _: &Undo, window, cx| this.undo(window, cx)))
             .on_action(cx.listener(|this, _: &Redo, window, cx| this.redo(window, cx)))
+            .on_action(cx.listener(|this, _: &ExportBoardJson, _, cx| {
+                this.choose_export_path(ExportFormat::Json, cx)
+            }))
+            .on_action(cx.listener(|this, _: &ExportBoardMarkdown, _, cx| {
+                this.choose_export_path(ExportFormat::Markdown, cx)
+            }))
+            .on_action(cx.listener(|this, _: &BackupDatabase, _, cx| this.backup_database(cx)))
+            .on_action(cx.listener(|this, _: &RevealDatabase, _, cx| this.reveal_database(cx)))
+            .on_action(cx.listener(|this, _: &UseLightTheme, window, cx| {
+                this.set_theme_preference(ThemePreference::Light, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &UseDarkTheme, window, cx| {
+                this.set_theme_preference(ThemePreference::Dark, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &UseSystemTheme, window, cx| {
+                this.set_theme_preference(ThemePreference::System, window, cx)
+            }))
             .on_action(
                 cx.listener(|this, _: &ShowAllCards, _, cx| {
                     this.set_due_filter(DueFilter::None, cx)
@@ -2667,8 +3519,8 @@ impl Render for BoardView {
             }))
             .size_full()
             .flex()
-            .bg(rgb(0x0f172a))
-            .text_color(rgb(0xf8fafc))
+            .bg(theme_color(cx, UiColor::Background))
+            .text_color(theme_color(cx, UiColor::Foreground))
             .child(self.render_sidebar(cx))
             .child(
                 div()
@@ -2687,6 +3539,28 @@ impl Render for BoardView {
                             .gap_4()
                             .p_6()
                             .overflow_x_scroll()
+                            .track_scroll(&board_scroll_handle)
+                            .horizontal_scrollbar(&board_scroll_handle)
+                            .on_drag_move({
+                                let board_scroll_handle = board_scroll_handle.clone();
+                                move |event: &DragMoveEvent<CardDrag>, _, _| {
+                                    auto_scroll_horizontal(
+                                        &board_scroll_handle,
+                                        event.event.position,
+                                        event.bounds,
+                                    );
+                                }
+                            })
+                            .on_drag_move({
+                                let board_scroll_handle = board_scroll_handle.clone();
+                                move |event: &DragMoveEvent<ColumnDrag>, _, _| {
+                                    auto_scroll_horizontal(
+                                        &board_scroll_handle,
+                                        event.event.position,
+                                        event.bounds,
+                                    );
+                                }
+                            })
                             .on_drop(cx.listener(move |this, drag: &ColumnDrag, _, cx| {
                                 this.move_column(drag.column_id, column_count, cx);
                             }))
@@ -2702,6 +3576,62 @@ impl Render for BoardView {
                     }),
             )
     }
+}
+
+#[derive(Clone, Copy)]
+enum UiColor {
+    Background,
+    Surface,
+    SurfaceHover,
+    Foreground,
+    MutedForeground,
+    Border,
+    Accent,
+    Danger,
+    DangerForeground,
+    Success,
+    SuccessForeground,
+    Info,
+    InfoForeground,
+    Sidebar,
+    SidebarAccent,
+    Popover,
+}
+
+fn theme_color(cx: &gpui_kit::App, color: UiColor) -> gpui_kit::Hsla {
+    let theme = cx.theme();
+    match color {
+        UiColor::Background => theme.background,
+        UiColor::Surface => theme.colors.list,
+        UiColor::SurfaceHover => theme.colors.list_hover,
+        UiColor::Foreground => theme.foreground,
+        UiColor::MutedForeground => theme.muted_foreground,
+        UiColor::Border => theme.border,
+        UiColor::Accent => theme.accent,
+        UiColor::Danger => theme.danger,
+        UiColor::DangerForeground => theme.danger_foreground,
+        UiColor::Success => theme.success,
+        UiColor::SuccessForeground => theme.success_foreground,
+        UiColor::Info => theme.info,
+        UiColor::InfoForeground => theme.info_foreground,
+        UiColor::Sidebar => theme.sidebar,
+        UiColor::SidebarAccent => theme.sidebar_accent,
+        UiColor::Popover => theme.popover,
+    }
+}
+
+fn auto_scroll_horizontal(handle: &ScrollHandle, position: Point<Pixels>, bounds: Bounds<Pixels>) {
+    let edge = px(48.);
+    let offset = handle.offset();
+    let max_offset = handle.max_offset();
+    let next_x = if position.x < bounds.left() + edge {
+        (offset.x + px(20.)).min(px(0.))
+    } else if position.x > bounds.right() - edge {
+        (offset.x - px(20.)).max(-max_offset.x)
+    } else {
+        return;
+    };
+    handle.set_offset(point(next_x, offset.y));
 }
 
 fn next_card_id(
@@ -2765,31 +3695,151 @@ fn next_card_id(
     }
 }
 
-fn render_due_badge(due_date: NaiveDate, today: NaiveDate) -> impl IntoElement {
+fn render_board_markdown(board: &Board) -> String {
+    let mut markdown = format!("# {}\n\n", markdown_inline(&board.name));
+    for column in &board.columns {
+        markdown.push_str(&format!("## {}\n\n", markdown_inline(&column.name)));
+        if column.cards.is_empty() {
+            markdown.push_str("カードはありません。\n\n");
+            continue;
+        }
+        for card in &column.cards {
+            append_markdown_card(&mut markdown, card, board, None);
+        }
+    }
+
+    if !board.archived_cards.is_empty() {
+        markdown.push_str("## アーカイブ\n\n");
+        for card in &board.archived_cards {
+            let column_name = board
+                .columns
+                .iter()
+                .find(|column| column.id == card.column_id)
+                .map(|column| column.name.as_str());
+            append_markdown_card(&mut markdown, card, board, column_name);
+        }
+    }
+
+    markdown
+}
+
+fn suggested_export_name(board_name: &str, extension: &str) -> String {
+    let stem = board_name
+        .chars()
+        .map(|character| {
+            if character.is_control() || matches!(character, '/' | '\\') {
+                '_'
+            } else {
+                character
+            }
+        })
+        .collect::<String>();
+    let stem = stem.trim().trim_matches('.');
+    let stem = if stem.is_empty() { "board" } else { stem };
+    format!("{stem}.{extension}")
+}
+
+fn append_markdown_card(
+    markdown: &mut String,
+    card: &Card,
+    board: &Board,
+    column_name: Option<&str>,
+) {
+    markdown.push_str(&format!("- **{}**\n", markdown_inline(&card.title)));
+
+    let mut metadata = Vec::new();
+    if let Some(column_name) = column_name {
+        metadata.push(format!("カラム: {}", markdown_inline(column_name)));
+    }
+    if let Some(due_date) = card.due_date {
+        metadata.push(format!("期限: {due_date}"));
+    }
+    let tag_names = card
+        .tag_ids
+        .iter()
+        .filter_map(|tag_id| board.tags.iter().find(|tag| tag.id == *tag_id))
+        .map(|tag| markdown_inline(&tag.name))
+        .collect::<Vec<_>>();
+    if !tag_names.is_empty() {
+        metadata.push(format!("タグ: {}", tag_names.join(", ")));
+    }
+    if card.archived_at.is_some() {
+        metadata.push("アーカイブ済み".to_string());
+    }
+    for line in metadata {
+        markdown.push_str(&format!("  - {line}\n"));
+    }
+
+    if !card.description.trim().is_empty() {
+        for line in card.description.lines() {
+            markdown.push_str(&format!("  > {}\n", markdown_inline(line)));
+        }
+    }
+    for item in &card.checklist_items {
+        let marker = if item.checked { 'x' } else { ' ' };
+        markdown.push_str(&format!("  - [{marker}] {}\n", markdown_inline(&item.text)));
+    }
+    markdown.push('\n');
+}
+
+fn markdown_inline(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace(['\r', '\n'], " ")
+        .replace('*', "\\*")
+        .replace('_', "\\_")
+        .replace('`', "\\`")
+        .replace('[', "\\[")
+        .replace(']', "\\]")
+}
+
+fn render_due_badge(due_date: NaiveDate, today: NaiveDate, theme: &Theme) -> impl IntoElement {
     let status = due_status(Some(due_date), today);
     let (label, color) = match status {
         DueStatus::Overdue(days) => (
             format!("期限切れ {days}日 ({})", short_date(due_date)),
-            0xf87171,
+            theme.danger_foreground,
         ),
-        DueStatus::Today => (format!("期限 今日 ({})", short_date(due_date)), 0xfbbf24),
+        DueStatus::Today => (
+            format!("期限 今日 ({})", short_date(due_date)),
+            theme.warning,
+        ),
         DueStatus::Soon(days) => (
             format!("期限 あと {days}日 ({})", short_date(due_date)),
-            0x60a5fa,
+            theme.accent,
         ),
-        DueStatus::Upcoming(_) => (format!("期限 {}", display_date(due_date, today)), 0x94a3b8),
+        DueStatus::Upcoming(_) => (
+            format!("期限 {}", display_date(due_date, today)),
+            theme.muted_foreground,
+        ),
         DueStatus::None => return div(),
     };
-    div().text_xs().text_color(rgb(color)).child(label)
+    div().text_xs().text_color(color).child(label)
 }
 
-fn render_tag_chip(tag: &Tag) -> impl IntoElement {
+fn render_checklist_progress(
+    items: &[ChecklistItem],
+    text_color: gpui_kit::Hsla,
+) -> impl IntoElement {
+    let checked = items.iter().filter(|item| item.checked).count();
+    let progress = format!(
+        "{} {checked}/{}",
+        items
+            .iter()
+            .map(|item| if item.checked { '■' } else { '□' })
+            .collect::<String>(),
+        items.len()
+    );
+    div().text_xs().text_color(text_color).child(progress)
+}
+
+fn render_tag_chip(tag: &Tag, text_color: gpui_kit::Hsla) -> impl IntoElement {
     div()
         .px_1()
         .rounded_sm()
         .bg(rgb(tag_color_value(&tag.color)))
         .text_xs()
-        .text_color(rgb(0xf8fafc))
+        .text_color(text_color)
         .child(tag.name.clone())
 }
 
@@ -2852,6 +3902,10 @@ fn board_error_detail(error: &BoardError) -> String {
         BoardError::DuplicateTagName(name) => {
             format!("タグ「{name}」はすでに存在します。別の名前を入力してください")
         }
+        BoardError::EmptyChecklistItemText => "チェック項目を入力してください".to_string(),
+        BoardError::ChecklistItemNotFound(item_id, card_id) => {
+            format!("カード #{card_id} のチェック項目 #{item_id} が見つかりません")
+        }
         BoardError::LastColumn => "最後のカラムは削除できません".to_string(),
     }
 }
@@ -2889,6 +3943,7 @@ fn db_error_detail(error: &DbError) -> String {
         DbError::InvalidAppState => {
             "保存されたアプリ状態を読み取れません。ボードを選び直してください".to_string()
         }
+        DbError::Json(error) => format!("ボードデータの変換に失敗しました（{error}）"),
     }
 }
 
@@ -2924,6 +3979,11 @@ fn field_error_for(error: &BoardError) -> Option<FieldError> {
             "タグ名を確認してください",
             Some(name.clone()),
         ),
+        BoardError::EmptyChecklistItemText => (
+            EditorField::ChecklistItem,
+            "チェック項目を入力してください",
+            Some(String::new()),
+        ),
         BoardError::EmptyBoardName => (
             EditorField::BoardName,
             "ボード名を入力してください",
@@ -2932,6 +3992,7 @@ fn field_error_for(error: &BoardError) -> Option<FieldError> {
         BoardError::ColumnNotFound(_)
         | BoardError::CardNotFound(_)
         | BoardError::TagNotFound(_)
+        | BoardError::ChecklistItemNotFound(_, _)
         | BoardError::LastColumn => return None,
     };
     Some(FieldError {
@@ -2966,18 +4027,18 @@ fn field_error_message(
         .map(|error| error.message.clone())
 }
 
-fn field_error_note(message: String) -> impl IntoElement {
+fn field_error_note(message: String, color: gpui_kit::Hsla) -> impl IntoElement {
     div()
         .text_xs()
-        .text_color(rgb(0xfca5a5))
+        .text_color(color)
         .child(format!("⚠ {message}"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        board_error_detail, db_error_detail, field_error_for, next_card_id, CardDirection,
-        EditorField,
+        board_error_detail, db_error_detail, field_error_for, next_card_id, render_board_markdown,
+        CardDirection, EditorField,
     };
     use crate::{
         db::DbError,
@@ -3072,5 +4133,31 @@ mod tests {
             message,
             "タグ「bug」はすでに存在します。別の名前を入力してください"
         );
+    }
+
+    #[test]
+    fn renders_board_markdown_with_descriptions_and_checklists() {
+        let mut board = Board::demo();
+        let card_id = board.columns[0].cards[0].id;
+        board
+            .update_card_details_with_checklist(
+                card_id,
+                "Markdownカード",
+                "説明の一行目\n説明の二行目",
+                None,
+                Vec::new(),
+                vec![crate::model::ChecklistItemDraft {
+                    id: None,
+                    text: "確認済み".to_string(),
+                    checked: true,
+                }],
+            )
+            .unwrap();
+
+        let markdown = render_board_markdown(&board);
+        assert!(markdown.contains("# 個人 Kanban"));
+        assert!(markdown.contains("- **Markdownカード**"));
+        assert!(markdown.contains("> 説明の一行目"));
+        assert!(markdown.contains("- [x] 確認済み"));
     }
 }

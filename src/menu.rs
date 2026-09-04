@@ -1,10 +1,11 @@
 use gpui_kit::{App, KeyBinding, Menu, MenuItem, OsAction, SystemMenuType};
 
 use crate::actions::{
-    About, AddBoard, AddCard, AddColumn, AddTag, CancelEdit, ClearSearch, CloseWindow, DeleteBoard,
-    FocusSearch, HideApplication, HideOtherApplications, Quit, Redo, RenameBoard, SaveEdit,
-    ShowAllApplications, ShowAllCards, ShowOverdueCards, ShowThisWeekCards, ToggleArchiveView,
-    ToggleFullscreen, Undo,
+    About, AddBoard, AddCard, AddColumn, AddTag, BackupDatabase, CancelEdit, ClearSearch,
+    CloseWindow, DeleteBoard, ExportBoardJson, ExportBoardMarkdown, FocusSearch, HideApplication,
+    HideOtherApplications, Quit, Redo, RenameBoard, RevealDatabase, SaveEdit, ShowAllApplications,
+    ShowAllCards, ShowOverdueCards, ShowThisWeekCards, ToggleArchiveView, ToggleFullscreen, Undo,
+    UseDarkTheme, UseLightTheme, UseSystemTheme,
 };
 
 pub fn install(cx: &mut App) {
@@ -46,6 +47,8 @@ pub fn install(cx: &mut App) {
             MenuItem::action("カードを追加", AddCard),
             MenuItem::action("カラムを追加", AddColumn),
             MenuItem::action("タグを追加", AddTag),
+            MenuItem::action("ボードを書き出す（JSON）", ExportBoardJson),
+            MenuItem::action("ボードを書き出す（Markdown）", ExportBoardMarkdown),
             MenuItem::separator(),
             MenuItem::action("保存", SaveEdit),
             MenuItem::action("ウインドウを閉じる", CloseWindow),
@@ -73,9 +76,18 @@ pub fn install(cx: &mut App) {
             MenuItem::action("今週までのカード", ShowThisWeekCards),
             MenuItem::separator(),
             MenuItem::action("アーカイブ表示を切り替え", ToggleArchiveView),
+            MenuItem::separator(),
+            MenuItem::action("ライトモード", UseLightTheme),
+            MenuItem::action("ダークモード", UseDarkTheme),
+            MenuItem::action("システムに合わせる", UseSystemTheme),
             MenuItem::action("フルスクリーンにする", ToggleFullscreen),
         ]),
         Menu::new("ウインドウ").items([MenuItem::action("ウインドウを閉じる", CloseWindow)]),
-        Menu::new("ヘルプ").items([MenuItem::action("ekanbanについて", About)]),
+        Menu::new("ヘルプ").items([
+            MenuItem::action("データベースをコピー…", BackupDatabase),
+            MenuItem::action("データベースの場所をFinderで開く", RevealDatabase),
+            MenuItem::separator(),
+            MenuItem::action("ekanbanについて", About),
+        ]),
     ]);
 }

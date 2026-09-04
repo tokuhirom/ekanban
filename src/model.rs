@@ -5,6 +5,7 @@ pub type BoardId = i64;
 pub type ColumnId = i64;
 pub type CardId = i64;
 pub type TagId = i64;
+pub type ChecklistItemId = i64;
 
 pub const SOON_THRESHOLD_DAYS: i64 = 3;
 
@@ -47,6 +48,24 @@ pub struct CardEvent {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChecklistItem {
+    pub id: ChecklistItemId,
+    pub card_id: CardId,
+    pub text: String,
+    pub checked: bool,
+    pub position: i64,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChecklistItemDraft {
+    pub id: Option<ChecklistItemId>,
+    pub text: String,
+    pub checked: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Card {
     pub id: CardId,
     pub column_id: ColumnId,
@@ -57,6 +76,7 @@ pub struct Card {
     pub updated_at: i64,
     pub due_date: Option<NaiveDate>,
     pub tag_ids: Vec<TagId>,
+    pub checklist_items: Vec<ChecklistItem>,
     pub archived_at: Option<i64>,
 }
 
@@ -116,6 +136,39 @@ pub enum BoardOperation {
         after_description: String,
         after_due_date: Option<NaiveDate>,
         after_tag_ids: Vec<TagId>,
+        before_checklist_items: Vec<ChecklistItem>,
+        after_checklist_items: Vec<ChecklistItem>,
+    },
+    CopyCard {
+        card: Card,
+        index: usize,
+    },
+    AddChecklistItem {
+        card_id: CardId,
+        item: ChecklistItem,
+    },
+    UpdateChecklistItem {
+        card_id: CardId,
+        item_id: ChecklistItemId,
+        before_text: String,
+        after_text: String,
+    },
+    SetChecklistItemChecked {
+        card_id: CardId,
+        item_id: ChecklistItemId,
+        before: bool,
+        after: bool,
+    },
+    DeleteChecklistItem {
+        card_id: CardId,
+        item: ChecklistItem,
+        index: usize,
+    },
+    MoveChecklistItem {
+        card_id: CardId,
+        item_id: ChecklistItemId,
+        from_index: usize,
+        to_index: usize,
     },
     DeleteCard {
         card: Card,
@@ -210,6 +263,7 @@ pub struct Board {
     pub next_card_id: CardId,
     pub next_column_id: ColumnId,
     pub next_tag_id: TagId,
+    pub next_checklist_item_id: ChecklistItemId,
     pub tags: Vec<Tag>,
     pub archived_cards: Vec<Card>,
     pub columns: Vec<Column>,
@@ -228,6 +282,7 @@ impl PartialEq for Board {
             && self.next_card_id == other.next_card_id
             && self.next_column_id == other.next_column_id
             && self.next_tag_id == other.next_tag_id
+            && self.next_checklist_item_id == other.next_checklist_item_id
             && self.tags == other.tags
             && self.archived_cards == other.archived_cards
             && self.columns == other.columns
@@ -259,6 +314,10 @@ pub enum BoardError {
     TagNotFound(TagId),
     #[error("a tag named {0} already exists")]
     DuplicateTagName(String),
+    #[error("a checklist item cannot be empty")]
+    EmptyChecklistItemText,
+    #[error("checklist item {0} was not found on card {1}")]
+    ChecklistItemNotFound(ChecklistItemId, CardId),
     #[error("a board must have at least one column")]
     LastColumn,
 }
@@ -337,6 +396,7 @@ impl Board {
         next_card_id: CardId,
         first_column_id: ColumnId,
         next_tag_id: TagId,
+        next_checklist_item_id: ChecklistItemId,
         now: i64,
     ) -> Self {
         Self {
@@ -347,6 +407,7 @@ impl Board {
             next_card_id,
             next_column_id: first_column_id + 1,
             next_tag_id,
+            next_checklist_item_id,
             tags: Vec::new(),
             archived_cards: Vec::new(),
             columns: vec![Column::new(first_column_id, id, "やること", 0, now)],
@@ -379,6 +440,7 @@ impl Board {
             next_card_id: 1,
             next_column_id: 4,
             next_tag_id: 1,
+            next_checklist_item_id: 1,
             tags: Vec::new(),
             archived_cards: Vec::new(),
             columns: vec![
@@ -540,6 +602,7 @@ impl Board {
                 updated_at: now,
                 due_date: None,
                 tag_ids: Vec::new(),
+                checklist_items: Vec::new(),
                 archived_at: None,
             });
         }
@@ -612,6 +675,39 @@ impl Board {
         due_date: Option<NaiveDate>,
         tag_ids: Vec<TagId>,
     ) -> Result<bool, BoardError> {
+        let checklist_items = self
+            .columns
+            .iter()
+            .flat_map(|column| column.cards.iter())
+            .find(|card| card.id == card_id)
+            .ok_or(BoardError::CardNotFound(card_id))?
+            .checklist_items
+            .iter()
+            .map(|item| ChecklistItemDraft {
+                id: Some(item.id),
+                text: item.text.clone(),
+                checked: item.checked,
+            })
+            .collect();
+        self.update_card_details_with_checklist(
+            card_id,
+            title,
+            description,
+            due_date,
+            tag_ids,
+            checklist_items,
+        )
+    }
+
+    pub fn update_card_details_with_checklist(
+        &mut self,
+        card_id: CardId,
+        title: impl Into<String>,
+        description: impl Into<String>,
+        due_date: Option<NaiveDate>,
+        tag_ids: Vec<TagId>,
+        checklist_drafts: Vec<ChecklistItemDraft>,
+    ) -> Result<bool, BoardError> {
         let title = title.into();
         if title.trim().is_empty() {
             return Err(BoardError::EmptyCardTitle);
@@ -625,6 +721,60 @@ impl Board {
         tag_ids.sort_unstable();
         tag_ids.dedup();
         let description = description.into();
+        let before_card = self
+            .columns
+            .iter()
+            .flat_map(|column| column.cards.iter())
+            .find(|card| card.id == card_id)
+            .ok_or(BoardError::CardNotFound(card_id))?
+            .clone();
+        for draft in &checklist_drafts {
+            if draft.text.trim().is_empty() {
+                return Err(BoardError::EmptyChecklistItemText);
+            }
+            if let Some(item_id) = draft.id {
+                if !before_card
+                    .checklist_items
+                    .iter()
+                    .any(|item| item.id == item_id)
+                {
+                    return Err(BoardError::ChecklistItemNotFound(item_id, card_id));
+                }
+            }
+        }
+
+        let now = timestamp();
+        let mut checklist_items = Vec::with_capacity(checklist_drafts.len());
+        for (position, draft) in checklist_drafts.into_iter().enumerate() {
+            let existing = draft.id.and_then(|id| {
+                before_card
+                    .checklist_items
+                    .iter()
+                    .find(|item| item.id == id)
+            });
+            let id = existing
+                .map(|item| item.id)
+                .unwrap_or(self.next_checklist_item_id);
+            if existing.is_none() {
+                self.next_checklist_item_id += 1;
+            }
+            let changed = existing
+                .is_none_or(|item| item.text != draft.text || item.checked != draft.checked);
+            checklist_items.push(ChecklistItem {
+                id,
+                card_id,
+                text: draft.text,
+                checked: draft.checked,
+                position: position as i64,
+                created_at: existing.map(|item| item.created_at).unwrap_or(now),
+                updated_at: if changed {
+                    now
+                } else {
+                    existing.expect("existing item exists").updated_at
+                },
+            });
+        }
+
         let (
             before_title,
             before_description,
@@ -632,6 +782,8 @@ impl Board {
             before_tag_ids,
             after_title,
             after_description,
+            before_checklist_items,
+            after_checklist_items,
         ) = {
             let card = self
                 .columns
@@ -643,6 +795,7 @@ impl Board {
                 && card.description == description
                 && card.due_date == due_date
                 && card.tag_ids == tag_ids
+                && card.checklist_items == checklist_items
             {
                 return Ok(false);
             }
@@ -650,11 +803,12 @@ impl Board {
             let before_description = card.description.clone();
             let before_due_date = card.due_date;
             let before_tag_ids = card.tag_ids.clone();
-            let now = timestamp();
+            let before_checklist_items = card.checklist_items.clone();
             card.title = title.clone();
             card.description = description.clone();
             card.due_date = due_date;
             card.tag_ids = tag_ids.clone();
+            card.checklist_items = checklist_items.clone();
             card.updated_at = now;
             (
                 before_title,
@@ -663,9 +817,11 @@ impl Board {
                 before_tag_ids,
                 card.title.clone(),
                 card.description.clone(),
+                before_checklist_items,
+                card.checklist_items.clone(),
             )
         };
-        self.updated_at = timestamp();
+        self.updated_at = now;
         self.push_operation(BoardOperation::EditCard {
             card_id,
             before_title,
@@ -676,8 +832,202 @@ impl Board {
             after_description,
             after_due_date: due_date,
             after_tag_ids: tag_ids,
+            before_checklist_items,
+            after_checklist_items,
         });
         Ok(true)
+    }
+
+    pub fn add_checklist_item(
+        &mut self,
+        card_id: CardId,
+        text: impl Into<String>,
+    ) -> Result<ChecklistItemId, BoardError> {
+        let text = text.into();
+        if text.trim().is_empty() {
+            return Err(BoardError::EmptyChecklistItemText);
+        }
+        let card = self
+            .columns
+            .iter()
+            .flat_map(|column| column.cards.iter())
+            .find(|card| card.id == card_id)
+            .ok_or(BoardError::CardNotFound(card_id))?;
+        let id = self.next_checklist_item_id;
+        let now = timestamp();
+        let item = ChecklistItem {
+            id,
+            card_id,
+            text,
+            checked: false,
+            position: card.checklist_items.len() as i64,
+            created_at: now,
+            updated_at: now,
+        };
+        self.next_checklist_item_id += 1;
+        self.insert_checklist_item_raw(item.clone())?;
+        self.touch_active_card(card_id, now)?;
+        self.updated_at = now;
+        self.push_operation(BoardOperation::AddChecklistItem { card_id, item });
+        Ok(id)
+    }
+
+    pub fn update_checklist_item(
+        &mut self,
+        card_id: CardId,
+        item_id: ChecklistItemId,
+        text: impl Into<String>,
+    ) -> Result<bool, BoardError> {
+        let text = text.into();
+        if text.trim().is_empty() {
+            return Err(BoardError::EmptyChecklistItemText);
+        }
+        let item = self.find_checklist_item_mut(card_id, item_id)?;
+        if item.text == text {
+            return Ok(false);
+        }
+        let before = item.text.clone();
+        item.text = text.clone();
+        let now = timestamp();
+        item.updated_at = now;
+        self.touch_active_card(card_id, now)?;
+        self.updated_at = now;
+        self.push_operation(BoardOperation::UpdateChecklistItem {
+            card_id,
+            item_id,
+            before_text: before,
+            after_text: text,
+        });
+        Ok(true)
+    }
+
+    pub fn set_checklist_item_checked(
+        &mut self,
+        card_id: CardId,
+        item_id: ChecklistItemId,
+        checked: bool,
+    ) -> Result<bool, BoardError> {
+        let item = self.find_checklist_item_mut(card_id, item_id)?;
+        if item.checked == checked {
+            return Ok(false);
+        }
+        let before = item.checked;
+        item.checked = checked;
+        let now = timestamp();
+        item.updated_at = now;
+        self.touch_active_card(card_id, now)?;
+        self.updated_at = now;
+        self.push_operation(BoardOperation::SetChecklistItemChecked {
+            card_id,
+            item_id,
+            before,
+            after: checked,
+        });
+        Ok(true)
+    }
+
+    pub fn delete_checklist_item(
+        &mut self,
+        card_id: CardId,
+        item_id: ChecklistItemId,
+    ) -> Result<(), BoardError> {
+        let (index, item) = self.remove_checklist_item_raw(card_id, item_id)?;
+        let now = timestamp();
+        self.touch_active_card(card_id, now)?;
+        self.updated_at = now;
+        self.push_operation(BoardOperation::DeleteChecklistItem {
+            card_id,
+            item,
+            index,
+        });
+        Ok(())
+    }
+
+    pub fn move_checklist_item(
+        &mut self,
+        card_id: CardId,
+        item_id: ChecklistItemId,
+        target_index: usize,
+    ) -> Result<bool, BoardError> {
+        let items_len = self.find_active_card(card_id)?.checklist_items.len();
+        let index = self
+            .find_active_card(card_id)?
+            .checklist_items
+            .iter()
+            .position(|item| item.id == item_id)
+            .ok_or(BoardError::ChecklistItemNotFound(item_id, card_id))?;
+        let mut target_index = target_index.min(items_len);
+        if index < target_index {
+            target_index -= 1;
+        }
+        if index == target_index {
+            return Ok(false);
+        }
+        self.move_checklist_item_raw(card_id, index, target_index)?;
+        let now = timestamp();
+        self.touch_active_card(card_id, now)?;
+        self.updated_at = now;
+        self.push_operation(BoardOperation::MoveChecklistItem {
+            card_id,
+            item_id,
+            from_index: index,
+            to_index: target_index,
+        });
+        Ok(true)
+    }
+
+    pub fn copy_card(&mut self, card_id: CardId) -> Result<CardId, BoardError> {
+        let (column_index, card_index) = self
+            .active_card_location(card_id)
+            .ok_or(BoardError::CardNotFound(card_id))?;
+        let source = self.columns[column_index].cards[card_index].clone();
+        let new_card_id = self.next_card_id;
+        let now = timestamp();
+        let mut checklist_items = Vec::with_capacity(source.checklist_items.len());
+        for (position, item) in source.checklist_items.iter().enumerate() {
+            let id = self.next_checklist_item_id;
+            self.next_checklist_item_id += 1;
+            checklist_items.push(ChecklistItem {
+                id,
+                card_id: new_card_id,
+                text: item.text.clone(),
+                checked: false,
+                position: position as i64,
+                created_at: now,
+                updated_at: now,
+            });
+        }
+        let card = Card {
+            id: new_card_id,
+            column_id: source.column_id,
+            title: source.title,
+            description: source.description,
+            position: (card_index + 1) as i64,
+            created_at: now,
+            updated_at: now,
+            due_date: None,
+            tag_ids: source.tag_ids,
+            checklist_items,
+            archived_at: None,
+        };
+        self.next_card_id += 1;
+        self.columns[column_index]
+            .cards
+            .insert(card_index + 1, card.clone());
+        self.reindex();
+        self.updated_at = now;
+        self.record_event(
+            new_card_id,
+            CardEventKind::Created,
+            None,
+            Some(source.column_id),
+            now,
+        );
+        self.push_operation(BoardOperation::CopyCard {
+            card,
+            index: card_index + 1,
+        });
+        Ok(new_card_id)
     }
 
     pub fn remove_card(&mut self, card_id: CardId) -> Result<(), BoardError> {
@@ -1331,6 +1681,8 @@ impl Board {
                 after_description,
                 after_due_date,
                 after_tag_ids,
+                before_checklist_items,
+                after_checklist_items,
             } => {
                 self.update_card_raw(
                     *card_id,
@@ -1353,7 +1705,78 @@ impl Board {
                     *card_id,
                     if undo { before_tag_ids } else { after_tag_ids },
                 )?;
+                self.set_checklist_items_raw(
+                    *card_id,
+                    if undo {
+                        before_checklist_items
+                    } else {
+                        after_checklist_items
+                    },
+                )?;
             }
+            BoardOperation::CopyCard { card, index } => {
+                if undo {
+                    self.remove_active_card(card.id)?;
+                } else {
+                    self.insert_active_card(card.clone(), *index)?;
+                    self.next_card_id = self.next_card_id.max(card.id + 1);
+                    if let Some(next_item_id) =
+                        card.checklist_items.iter().map(|item| item.id).max()
+                    {
+                        self.next_checklist_item_id =
+                            self.next_checklist_item_id.max(next_item_id + 1);
+                    }
+                }
+            }
+            BoardOperation::AddChecklistItem { item, .. } => {
+                if undo {
+                    self.remove_checklist_item_raw(item.card_id, item.id)?;
+                } else {
+                    self.insert_checklist_item_raw(item.clone())?;
+                    self.next_checklist_item_id = self.next_checklist_item_id.max(item.id + 1);
+                }
+            }
+            BoardOperation::UpdateChecklistItem {
+                card_id,
+                item_id,
+                before_text,
+                after_text,
+            } => self.update_checklist_item_raw(
+                *card_id,
+                *item_id,
+                if undo { before_text } else { after_text },
+            )?,
+            BoardOperation::SetChecklistItemChecked {
+                card_id,
+                item_id,
+                before,
+                after,
+            } => self.set_checklist_item_checked_raw(
+                *card_id,
+                *item_id,
+                if undo { *before } else { *after },
+            )?,
+            BoardOperation::DeleteChecklistItem {
+                card_id,
+                item,
+                index,
+            } => {
+                if undo {
+                    self.insert_checklist_item_at_raw(*card_id, item.clone(), *index)?;
+                } else {
+                    self.remove_checklist_item_raw(*card_id, item.id)?;
+                }
+            }
+            BoardOperation::MoveChecklistItem {
+                card_id,
+                from_index,
+                to_index,
+                ..
+            } => self.move_checklist_item_raw(
+                *card_id,
+                if undo { *to_index } else { *from_index },
+                if undo { *from_index } else { *to_index },
+            )?,
             BoardOperation::DeleteCard { card, index } => {
                 if undo {
                     self.insert_active_card(card.clone(), *index)?;
@@ -1530,6 +1953,42 @@ impl Board {
             })
     }
 
+    fn find_active_card(&self, card_id: CardId) -> Result<&Card, BoardError> {
+        self.columns
+            .iter()
+            .flat_map(|column| column.cards.iter())
+            .find(|card| card.id == card_id)
+            .ok_or(BoardError::CardNotFound(card_id))
+    }
+
+    fn find_checklist_item_mut(
+        &mut self,
+        card_id: CardId,
+        item_id: ChecklistItemId,
+    ) -> Result<&mut ChecklistItem, BoardError> {
+        let card = self
+            .columns
+            .iter_mut()
+            .flat_map(|column| column.cards.iter_mut())
+            .find(|card| card.id == card_id)
+            .ok_or(BoardError::CardNotFound(card_id))?;
+        card.checklist_items
+            .iter_mut()
+            .find(|item| item.id == item_id)
+            .ok_or(BoardError::ChecklistItemNotFound(item_id, card_id))
+    }
+
+    fn touch_active_card(&mut self, card_id: CardId, now: i64) -> Result<(), BoardError> {
+        let card = self
+            .columns
+            .iter_mut()
+            .flat_map(|column| column.cards.iter_mut())
+            .find(|card| card.id == card_id)
+            .ok_or(BoardError::CardNotFound(card_id))?;
+        card.updated_at = now;
+        Ok(())
+    }
+
     fn remove_active_card(&mut self, card_id: CardId) -> Result<Card, BoardError> {
         let (column_index, card_index) = self
             .active_card_location(card_id)
@@ -1550,6 +2009,122 @@ impl Board {
         column.cards.insert(index, card);
         self.reindex();
         Ok(())
+    }
+
+    fn insert_checklist_item_raw(&mut self, item: ChecklistItem) -> Result<(), BoardError> {
+        self.insert_checklist_item_at_raw(item.card_id, item, usize::MAX)
+    }
+
+    fn insert_checklist_item_at_raw(
+        &mut self,
+        card_id: CardId,
+        mut item: ChecklistItem,
+        index: usize,
+    ) -> Result<(), BoardError> {
+        let card = self
+            .columns
+            .iter_mut()
+            .flat_map(|column| column.cards.iter_mut())
+            .find(|card| card.id == card_id)
+            .ok_or(BoardError::CardNotFound(card_id))?;
+        item.card_id = card_id;
+        let index = index.min(card.checklist_items.len());
+        card.checklist_items.insert(index, item);
+        Self::reindex_checklist_items(card);
+        Ok(())
+    }
+
+    fn remove_checklist_item_raw(
+        &mut self,
+        card_id: CardId,
+        item_id: ChecklistItemId,
+    ) -> Result<(usize, ChecklistItem), BoardError> {
+        let card = self
+            .columns
+            .iter_mut()
+            .flat_map(|column| column.cards.iter_mut())
+            .find(|card| card.id == card_id)
+            .ok_or(BoardError::CardNotFound(card_id))?;
+        let index = card
+            .checklist_items
+            .iter()
+            .position(|item| item.id == item_id)
+            .ok_or(BoardError::ChecklistItemNotFound(item_id, card_id))?;
+        let item = card.checklist_items.remove(index);
+        Self::reindex_checklist_items(card);
+        Ok((index, item))
+    }
+
+    fn move_checklist_item_raw(
+        &mut self,
+        card_id: CardId,
+        from_index: usize,
+        target_index: usize,
+    ) -> Result<(), BoardError> {
+        let card = self
+            .columns
+            .iter_mut()
+            .flat_map(|column| column.cards.iter_mut())
+            .find(|card| card.id == card_id)
+            .ok_or(BoardError::CardNotFound(card_id))?;
+        if from_index >= card.checklist_items.len() {
+            return Err(BoardError::ChecklistItemNotFound(
+                from_index as ChecklistItemId,
+                card_id,
+            ));
+        }
+        let item = card.checklist_items.remove(from_index);
+        let target_index = target_index.min(card.checklist_items.len());
+        card.checklist_items.insert(target_index, item);
+        Self::reindex_checklist_items(card);
+        Ok(())
+    }
+
+    fn update_checklist_item_raw(
+        &mut self,
+        card_id: CardId,
+        item_id: ChecklistItemId,
+        text: &str,
+    ) -> Result<(), BoardError> {
+        let item = self.find_checklist_item_mut(card_id, item_id)?;
+        item.text = text.to_string();
+        item.updated_at = timestamp();
+        Ok(())
+    }
+
+    fn set_checklist_item_checked_raw(
+        &mut self,
+        card_id: CardId,
+        item_id: ChecklistItemId,
+        checked: bool,
+    ) -> Result<(), BoardError> {
+        let item = self.find_checklist_item_mut(card_id, item_id)?;
+        item.checked = checked;
+        item.updated_at = timestamp();
+        Ok(())
+    }
+
+    fn set_checklist_items_raw(
+        &mut self,
+        card_id: CardId,
+        items: &[ChecklistItem],
+    ) -> Result<(), BoardError> {
+        let card = self
+            .columns
+            .iter_mut()
+            .flat_map(|column| column.cards.iter_mut())
+            .find(|card| card.id == card_id)
+            .ok_or(BoardError::CardNotFound(card_id))?;
+        card.checklist_items = items.to_vec();
+        Self::reindex_checklist_items(card);
+        Ok(())
+    }
+
+    fn reindex_checklist_items(card: &mut Card) {
+        for (position, item) in card.checklist_items.iter_mut().enumerate() {
+            item.card_id = card.id;
+            item.position = position as i64;
+        }
     }
 
     fn remove_archived_card(&mut self, card_id: CardId) -> Result<Card, BoardError> {
@@ -1764,6 +2339,7 @@ impl Board {
             for (card_index, card) in column.cards.iter_mut().enumerate() {
                 card.position = card_index as i64;
                 card.column_id = column.id;
+                Self::reindex_checklist_items(card);
             }
         }
     }
@@ -1824,7 +2400,7 @@ mod tests {
 
     use super::{
         card_matches_search, due_status, normalize_search_text, parse_due_date, Board, BoardError,
-        CardEventKind, DueStatus,
+        CardEventKind, ChecklistItemDraft, DueStatus,
     };
 
     #[test]
@@ -2286,6 +2862,155 @@ mod tests {
         assert_eq!(
             board.add_tag("仕事", "#ffffff"),
             Err(BoardError::DuplicateTagName("仕事".to_string()))
+        );
+    }
+
+    #[test]
+    fn manages_checklist_items_and_reindexes_them() {
+        let mut board = Board::demo();
+        let card_id = board.columns[0].cards[0].id;
+        let first_id = board.add_checklist_item(card_id, "テストを書く").unwrap();
+        let second_id = board.add_checklist_item(card_id, "fmt を通す").unwrap();
+
+        assert_eq!(board.columns[0].cards[0].checklist_items.len(), 2);
+        assert!(board
+            .set_checklist_item_checked(card_id, second_id, true)
+            .unwrap());
+        assert!(board.move_checklist_item(card_id, second_id, 0).unwrap());
+        assert_eq!(
+            board.columns[0].cards[0]
+                .checklist_items
+                .iter()
+                .map(|item| item.id)
+                .collect::<Vec<_>>(),
+            vec![second_id, first_id]
+        );
+        assert_eq!(board.columns[0].cards[0].checklist_items[0].position, 0);
+
+        board
+            .update_checklist_item(card_id, first_id, "テストを書く（完了）")
+            .unwrap();
+        board.delete_checklist_item(card_id, second_id).unwrap();
+        assert_eq!(board.columns[0].cards[0].checklist_items.len(), 1);
+        assert_eq!(
+            board.columns[0].cards[0].checklist_items[0].text,
+            "テストを書く（完了）"
+        );
+    }
+
+    #[test]
+    fn edits_checklist_items_with_card_details_as_one_undo_operation() {
+        let mut board = Board::demo();
+        let card_id = board.columns[0].cards[0].id;
+
+        board
+            .update_card_details_with_checklist(
+                card_id,
+                "PR を出す",
+                "手順を確認する",
+                None,
+                Vec::new(),
+                vec![
+                    ChecklistItemDraft {
+                        id: None,
+                        text: "テストを書く".to_string(),
+                        checked: false,
+                    },
+                    ChecklistItemDraft {
+                        id: None,
+                        text: "fmt を通す".to_string(),
+                        checked: true,
+                    },
+                ],
+            )
+            .unwrap();
+        assert_eq!(board.columns[0].cards[0].checklist_items.len(), 2);
+        assert!(board.columns[0].cards[0].checklist_items[1].checked);
+
+        board.undo().unwrap();
+        assert!(board.columns[0].cards[0].checklist_items.is_empty());
+        assert_eq!(board.columns[0].cards[0].title, "GPUI の画面を作る");
+        board.redo().unwrap();
+        assert_eq!(board.columns[0].cards[0].checklist_items.len(), 2);
+    }
+
+    #[test]
+    fn copies_card_content_and_resets_due_date_and_checks() {
+        let mut board = Board::demo();
+        let source_id = board.columns[0].cards[0].id;
+        let tag_id = board.add_tag("手順", "#60a5fa").unwrap();
+        board
+            .update_card_details_with_checklist(
+                source_id,
+                "元カード",
+                "説明",
+                Some(NaiveDate::from_ymd_opt(2026, 9, 30).unwrap()),
+                vec![tag_id],
+                vec![ChecklistItemDraft {
+                    id: None,
+                    text: "確認する".to_string(),
+                    checked: true,
+                }],
+            )
+            .unwrap();
+        board.pending_events.clear();
+
+        let copied_id = board.copy_card(source_id).unwrap();
+        let copied = board.columns[0]
+            .cards
+            .iter()
+            .find(|card| card.id == copied_id)
+            .unwrap();
+        let source = board.columns[0]
+            .cards
+            .iter()
+            .find(|card| card.id == source_id)
+            .unwrap();
+        assert_eq!(copied.title, source.title);
+        assert_eq!(copied.description, source.description);
+        assert_eq!(copied.tag_ids, source.tag_ids);
+        assert_eq!(copied.due_date, None);
+        assert_eq!(copied.archived_at, None);
+        assert_eq!(copied.checklist_items[0].text, "確認する");
+        assert!(!copied.checklist_items[0].checked);
+        assert_ne!(copied.checklist_items[0].id, source.checklist_items[0].id);
+        assert_eq!(board.pending_events.len(), 1);
+        assert_eq!(board.pending_events[0].kind, CardEventKind::Created);
+
+        board.undo().unwrap();
+        assert!(board.columns[0]
+            .cards
+            .iter()
+            .all(|card| card.id != copied_id));
+        board.redo().unwrap();
+        assert!(board.columns[0]
+            .cards
+            .iter()
+            .any(|card| card.id == copied_id));
+    }
+
+    #[test]
+    fn rejects_empty_checklist_items() {
+        let mut board = Board::demo();
+        let card_id = board.columns[0].cards[0].id;
+        assert_eq!(
+            board.add_checklist_item(card_id, "  "),
+            Err(BoardError::EmptyChecklistItemText)
+        );
+        assert_eq!(
+            board.update_card_details_with_checklist(
+                card_id,
+                "タイトル",
+                "",
+                None,
+                Vec::new(),
+                vec![ChecklistItemDraft {
+                    id: None,
+                    text: "".to_string(),
+                    checked: false,
+                }],
+            ),
+            Err(BoardError::EmptyChecklistItemText)
         );
     }
 }
