@@ -195,6 +195,7 @@ src/
 | 選択カードを削除 | `Delete` | `Delete` |
 | 選択カードをカラム間・カラム内で移動 | `Cmd+Option+矢印` | `Ctrl+Alt+矢印` |
 | 元に戻す / やり直す | `Cmd+Z` / `Cmd+Shift+Z` | `Ctrl+Z` / `Ctrl+Shift+Z` |
+| ボード一覧の表示を切り替え | `Cmd+Ctrl+S` | `Super+Ctrl+S` |
 
 最初のプロトタイプは、3 カラムと数枚のカードを表示し、カードとカラムをドラッグ＆ドロップしてローカル SQLite に保存できるところまで実装しています。
 
