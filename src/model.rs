@@ -41,6 +41,8 @@ pub enum BoardError {
     ColumnNotFound(ColumnId),
     #[error("card {0} was not found")]
     CardNotFound(CardId),
+    #[error("a card title cannot be empty")]
+    EmptyCardTitle,
     #[error("a board must have at least one column")]
     LastColumn,
 }
@@ -190,6 +192,56 @@ impl Board {
         Ok(id)
     }
 
+    pub fn update_card(
+        &mut self,
+        card_id: CardId,
+        title: impl Into<String>,
+        description: impl Into<String>,
+    ) -> Result<bool, BoardError> {
+        let title = title.into();
+        if title.trim().is_empty() {
+            return Err(BoardError::EmptyCardTitle);
+        }
+        let description = description.into();
+        let card = self
+            .columns
+            .iter_mut()
+            .flat_map(|column| column.cards.iter_mut())
+            .find(|card| card.id == card_id)
+            .ok_or(BoardError::CardNotFound(card_id))?;
+
+        if card.title == title && card.description == description {
+            return Ok(false);
+        }
+
+        let now = timestamp();
+        card.title = title;
+        card.description = description;
+        card.updated_at = now;
+        self.updated_at = now;
+        Ok(true)
+    }
+
+    pub fn remove_card(&mut self, card_id: CardId) -> Result<(), BoardError> {
+        let (column_index, card_index) = self
+            .columns
+            .iter()
+            .enumerate()
+            .find_map(|(column_index, column)| {
+                column
+                    .cards
+                    .iter()
+                    .position(|card| card.id == card_id)
+                    .map(|card_index| (column_index, card_index))
+            })
+            .ok_or(BoardError::CardNotFound(card_id))?;
+
+        self.columns[column_index].cards.remove(card_index);
+        self.reindex();
+        self.updated_at = timestamp();
+        Ok(())
+    }
+
     pub fn add_column(&mut self, name: impl Into<String>) -> ColumnId {
         let id = self
             .columns
@@ -333,5 +385,40 @@ mod tests {
             board.move_card(card_id, 999, 0),
             Err(BoardError::ColumnNotFound(999))
         );
+    }
+
+    #[test]
+    fn updates_card_content() {
+        let mut board = Board::demo();
+        let card_id = board.columns[0].cards[0].id;
+
+        assert!(board
+            .update_card(card_id, "更新したタイトル", "更新した説明")
+            .unwrap());
+        assert_eq!(board.columns[0].cards[0].title, "更新したタイトル");
+        assert_eq!(board.columns[0].cards[0].description, "更新した説明");
+    }
+
+    #[test]
+    fn rejects_empty_card_title() {
+        let mut board = Board::demo();
+        let card_id = board.columns[0].cards[0].id;
+
+        assert_eq!(
+            board.update_card(card_id, "  ", "説明"),
+            Err(BoardError::EmptyCardTitle)
+        );
+    }
+
+    #[test]
+    fn removes_card_and_reindexes_remaining_cards() {
+        let mut board = Board::demo();
+        let removed_id = board.columns[0].cards[0].id;
+
+        board.remove_card(removed_id).unwrap();
+
+        assert_eq!(board.columns[0].cards.len(), 1);
+        assert_eq!(board.columns[0].cards[0].position, 0);
+        assert_eq!(board.columns[0].cards[0].title, "D&D の操作を試す");
     }
 }

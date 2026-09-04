@@ -270,4 +270,26 @@ mod tests {
 
         assert_eq!(database.load_board().unwrap().name, "日本語ボード");
     }
+
+    #[test]
+    fn round_trips_edited_and_deleted_cards() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("board.sqlite3");
+        let mut database = Database::open(&path).unwrap();
+        let mut board = database.load_board().unwrap();
+        let edited_id = board.columns[0].cards[0].id;
+        let deleted_id = board.columns[0].cards[1].id;
+
+        board
+            .update_card(edited_id, "編集済み", "新しい説明")
+            .unwrap();
+        board.remove_card(deleted_id).unwrap();
+        database.save_board(&board).unwrap();
+
+        let reloaded = database.load_board().unwrap();
+        assert_eq!(reloaded.columns[0].cards.len(), 1);
+        assert_eq!(reloaded.columns[0].cards[0].id, edited_id);
+        assert_eq!(reloaded.columns[0].cards[0].title, "編集済み");
+        assert_eq!(reloaded.columns[0].cards[0].description, "新しい説明");
+    }
 }

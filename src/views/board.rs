@@ -1,8 +1,10 @@
 use gpui_kit::{
+    component::input::{Input, InputState, Textarea, TextareaState},
+    component::Sizable,
     component::{button::Button, button::ButtonVariants as _},
     div,
     prelude::*,
-    px, rgb, rgba, Context, Half, IntoElement, Pixels, Point, Render, SharedString, Window,
+    px, rgb, rgba, Context, Entity, Half, IntoElement, Pixels, Point, Render, SharedString, Window,
 };
 
 use crate::{
@@ -55,6 +57,12 @@ struct ColumnDragPreview {
     position: Point<Pixels>,
 }
 
+struct CardEditor {
+    card_id: CardId,
+    title: Entity<InputState>,
+    description: Entity<TextareaState>,
+}
+
 impl Render for ColumnDragPreview {
     fn render(&mut self, _: &mut Window, _: &mut Context<'_, Self>) -> impl IntoElement {
         let preview_width = px(220.);
@@ -84,6 +92,7 @@ pub struct BoardView {
     board: Board,
     database: Database,
     status: Option<String>,
+    editing_card: Option<CardEditor>,
 }
 
 impl BoardView {
@@ -92,6 +101,7 @@ impl BoardView {
             board,
             database,
             status: None,
+            editing_card: None,
         }
     }
 
@@ -136,7 +146,7 @@ impl BoardView {
         cx.notify();
     }
 
-    fn add_card(&mut self, cx: &mut Context<Self>) {
+    fn add_card(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(column_id) = self.board.columns.first().map(|column| column.id) else {
             return;
         };
@@ -145,14 +155,109 @@ impl BoardView {
             .board
             .add_card(column_id, "新しいカード", "説明を追加してください");
         match result {
-            Ok(_) => match self.database.save_board(&self.board) {
-                Ok(()) => self.status = Some("カードを追加しました".to_string()),
+            Ok(card_id) => match self.database.save_board(&self.board) {
+                Ok(()) => {
+                    self.status = Some("カードを追加しました".to_string());
+                    self.begin_card_edit(card_id, window, cx);
+                }
                 Err(error) => {
                     self.board = before;
                     self.status = Some(format!("保存に失敗しました: {error}"));
                 }
             },
             Err(error) => self.status = Some(format_move_error(error)),
+        }
+        cx.notify();
+    }
+
+    fn begin_card_edit(&mut self, card_id: CardId, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((title, description)) = self
+            .board
+            .columns
+            .iter()
+            .flat_map(|column| column.cards.iter())
+            .find(|card| card.id == card_id)
+            .map(|card| (card.title.clone(), card.description.clone()))
+        else {
+            self.status = Some(format_card_error(BoardError::CardNotFound(card_id)));
+            cx.notify();
+            return;
+        };
+
+        let title_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("カードのタイトル")
+                .default_value(title)
+        });
+        let description_input = cx.new(|cx| {
+            TextareaState::new(window, cx)
+                .placeholder("カードの説明")
+                .default_value(description)
+        });
+        title_input.update(cx, |state, cx| state.focus(window, cx));
+        self.editing_card = Some(CardEditor {
+            card_id,
+            title: title_input,
+            description: description_input,
+        });
+        cx.notify();
+    }
+
+    fn cancel_card_edit(&mut self, cx: &mut Context<Self>) {
+        if self.editing_card.take().is_some() {
+            self.status = Some("カードの編集をキャンセルしました".to_string());
+            cx.notify();
+        }
+    }
+
+    fn save_card_edit(&mut self, cx: &mut Context<Self>) {
+        let Some(editor) = self.editing_card.take() else {
+            return;
+        };
+        let title = editor.title.read(cx).value().to_string();
+        let description = editor.description.read(cx).value().to_string();
+        let before = self.board.clone();
+
+        match self.board.update_card(editor.card_id, title, description) {
+            Ok(false) => {
+                self.status = Some("カードに変更はありません".to_string());
+            }
+            Ok(true) => match self.database.save_board(&self.board) {
+                Ok(()) => self.status = Some("カードを更新しました".to_string()),
+                Err(error) => {
+                    self.board = before;
+                    self.editing_card = Some(editor);
+                    self.status = Some(format!("保存に失敗しました: {error}"));
+                }
+            },
+            Err(error) => {
+                self.editing_card = Some(editor);
+                self.status = Some(format_card_error(error));
+            }
+        }
+        cx.notify();
+    }
+
+    fn delete_card(&mut self, card_id: CardId, cx: &mut Context<Self>) {
+        let before = self.board.clone();
+        match self.board.remove_card(card_id) {
+            Ok(()) => match self.database.save_board(&self.board) {
+                Ok(()) => {
+                    if self
+                        .editing_card
+                        .as_ref()
+                        .is_some_and(|editor| editor.card_id == card_id)
+                    {
+                        self.editing_card = None;
+                    }
+                    self.status = Some("カードを削除しました".to_string());
+                }
+                Err(error) => {
+                    self.board = before;
+                    self.status = Some(format!("保存に失敗しました: {error}"));
+                }
+            },
+            Err(error) => self.status = Some(format_card_error(error)),
         }
         cx.notify();
     }
@@ -188,7 +293,7 @@ impl BoardView {
                 Button::new("add-card")
                     .primary()
                     .label("＋ カードを追加")
-                    .on_click(cx.listener(|this, _, _, cx| this.add_card(cx))),
+                    .on_click(cx.listener(|this, _, window, cx| this.add_card(window, cx))),
             )
     }
 
@@ -282,6 +387,11 @@ impl BoardView {
         let card_id = card.id;
         let title = card.title.clone();
         let drag_title = SharedString::from(card.title.clone());
+        let is_editing = self
+            .editing_card
+            .as_ref()
+            .is_some_and(|editor| editor.card_id == card_id);
+        let editor = self.editing_card.as_ref();
         div()
             .id(("card", card_id as u64))
             .p_3()
@@ -293,23 +403,86 @@ impl BoardView {
             .border_1()
             .border_color(rgb(0x475569))
             .hover(|this| this.bg(rgb(0x3f4f66)))
-            .cursor_move()
-            .on_drag(CardDrag { card_id }, move |_, position, _, cx| {
-                cx.new(|_| CardDragPreview {
-                    title: drag_title.clone(),
-                    position,
-                })
-            })
             .on_drop(cx.listener(move |this, drag: &CardDrag, _, cx| {
                 this.move_card(drag.card_id, column_id, index, cx);
             }))
             .drag_over::<CardDrag>(|style, _, _, _| style.border_color(rgb(0x60a5fa)))
-            .child(div().text_sm().text_color(rgb(0xf8fafc)).child(title))
+            .child(if is_editing {
+                self.render_card_editor(editor.expect("editing card exists"), cx)
+                    .into_any_element()
+            } else {
+                div()
+                    .id(("card-handle", card_id as u64))
+                    .cursor_move()
+                    .on_drag(CardDrag { card_id }, move |_, position, _, cx| {
+                        cx.new(|_| CardDragPreview {
+                            title: drag_title.clone(),
+                            position,
+                        })
+                    })
+                    .child(div().text_sm().text_color(rgb(0xf8fafc)).child(title))
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(rgb(0x94a3b8))
+                            .child(card.description.clone()),
+                    )
+                    .into_any_element()
+            })
+            .when(!is_editing, |this| {
+                this.child(
+                    div()
+                        .flex()
+                        .justify_end()
+                        .gap_1()
+                        .child(
+                            Button::new(("edit-card", card_id as u64))
+                                .ghost()
+                                .label("編集")
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.begin_card_edit(card_id, window, cx)
+                                })),
+                        )
+                        .child(
+                            Button::new(("delete-card", card_id as u64))
+                                .danger()
+                                .label("削除")
+                                .on_click(
+                                    cx.listener(move |this, _, _, cx| {
+                                        this.delete_card(card_id, cx)
+                                    }),
+                                ),
+                        ),
+                )
+            })
+    }
+
+    fn render_card_editor(&self, editor: &CardEditor, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(div().text_xs().text_color(rgb(0x94a3b8)).child("タイトル"))
+            .child(Input::new(&editor.title).small())
+            .child(div().text_xs().text_color(rgb(0x94a3b8)).child("説明"))
+            .child(Textarea::new(&editor.description).h(px(96.)))
             .child(
                 div()
-                    .text_xs()
-                    .text_color(rgb(0x94a3b8))
-                    .child(card.description.clone()),
+                    .flex()
+                    .justify_end()
+                    .gap_2()
+                    .child(
+                        Button::new("cancel-card-edit")
+                            .secondary()
+                            .label("キャンセル")
+                            .on_click(cx.listener(|this, _, _, cx| this.cancel_card_edit(cx))),
+                    )
+                    .child(
+                        Button::new("save-card-edit")
+                            .primary()
+                            .label("保存")
+                            .on_click(cx.listener(|this, _, _, cx| this.save_card_edit(cx))),
+                    ),
             )
     }
 }
@@ -348,4 +521,8 @@ impl Render for BoardView {
 
 fn format_move_error(error: BoardError) -> String {
     format!("移動できませんでした: {error}")
+}
+
+fn format_card_error(error: BoardError) -> String {
+    format!("カードを操作できませんでした: {error}")
 }
