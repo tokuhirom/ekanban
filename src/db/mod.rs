@@ -6,7 +6,7 @@ use thiserror::Error;
 
 use crate::model::{Board, Card, Column, Tag};
 
-const CURRENT_SCHEMA_VERSION: i64 = 6;
+const CURRENT_SCHEMA_VERSION: i64 = 7;
 
 #[derive(Debug, Error)]
 pub enum DbError {
@@ -193,10 +193,12 @@ impl Database {
             tags,
             archived_cards,
             columns,
+            pending_events: Vec::new(),
         })
     }
 
-    pub fn save_board(&mut self, board: &Board) -> Result<(), DbError> {
+    pub fn save_board(&mut self, board: &mut Board) -> Result<(), DbError> {
+        let pending_events = std::mem::take(&mut board.pending_events);
         let transaction = self.connection.transaction()?;
         transaction.execute(
             "INSERT INTO boards
@@ -423,6 +425,22 @@ impl Database {
             }
         }
 
+        for event in &pending_events {
+            transaction.execute(
+                "INSERT INTO card_events
+                 (board_id, card_id, kind, from_column_id, to_column_id, at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    board.id,
+                    event.card_id,
+                    event.kind.as_str(),
+                    event.from_column_id,
+                    event.to_column_id,
+                    event.at
+                ],
+            )?;
+        }
+
         transaction.commit()?;
         Ok(())
     }
@@ -571,6 +589,30 @@ impl Database {
             )?;
             transaction.execute(
                 "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, ?2)",
+                params![6, now()],
+            )?;
+            transaction.commit()?;
+        }
+
+        if version < 7 {
+            let transaction = self.connection.transaction()?;
+            transaction.execute_batch(
+                "CREATE TABLE IF NOT EXISTS card_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    board_id INTEGER NOT NULL,
+                    card_id INTEGER NOT NULL,
+                    kind TEXT NOT NULL,
+                    from_column_id INTEGER,
+                    to_column_id INTEGER,
+                    at INTEGER NOT NULL
+                 );
+                 CREATE INDEX IF NOT EXISTS idx_card_events_card
+                     ON card_events(card_id, at);
+                 CREATE INDEX IF NOT EXISTS idx_card_events_board
+                     ON card_events(board_id, at);",
+            )?;
+            transaction.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, ?2)",
                 params![CURRENT_SCHEMA_VERSION, now()],
             )?;
             transaction.commit()?;
@@ -585,8 +627,8 @@ impl Database {
                 row.get::<_, i64>(0)
             })?;
         if count == 0 {
-            let board = Board::demo();
-            self.save_board(&board)?;
+            let mut board = Board::demo();
+            self.save_board(&mut board)?;
         }
         Ok(())
     }
@@ -621,7 +663,7 @@ mod tests {
         let card_id = original.columns[0].cards[0].id;
         let mut changed = original.clone();
         changed.move_card(card_id, 3, 0).unwrap();
-        database.save_board(&changed).unwrap();
+        database.save_board(&mut changed).unwrap();
 
         assert_eq!(database.load_board().unwrap(), changed);
     }
@@ -645,7 +687,7 @@ mod tests {
         let mut database = Database::open(&path).unwrap();
         let mut board = Board::demo();
         board.name = "日本語ボード".to_string();
-        database.save_board(&board).unwrap();
+        database.save_board(&mut board).unwrap();
 
         assert_eq!(database.load_board().unwrap().name, "日本語ボード");
     }
@@ -663,7 +705,7 @@ mod tests {
             .update_card(edited_id, "編集済み", "新しい説明")
             .unwrap();
         board.remove_card(deleted_id).unwrap();
-        database.save_board(&board).unwrap();
+        database.save_board(&mut board).unwrap();
 
         let reloaded = database.load_board().unwrap();
         assert_eq!(reloaded.columns[0].cards.len(), 1);
@@ -682,7 +724,7 @@ mod tests {
         let created_at = board.columns[0].cards[0].created_at;
 
         board.move_card(card_id, 3, 0).unwrap();
-        database.save_board(&board).unwrap();
+        database.save_board(&mut board).unwrap();
 
         let reloaded = database.load_board().unwrap();
         let moved_card = reloaded.columns[2]
@@ -691,6 +733,146 @@ mod tests {
             .find(|card| card.id == card_id)
             .unwrap();
         assert_eq!(moved_card.created_at, created_at);
+    }
+
+    #[test]
+    fn saves_card_lifecycle_events_and_clears_pending_events() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("board.sqlite3");
+        let mut database = Database::open(&path).unwrap();
+        let mut board = database.load_board().unwrap();
+        let card_id = board.add_card(1, "履歴を記録", "").unwrap();
+        board.move_card(card_id, 2, 0).unwrap();
+        board.archive_card(card_id).unwrap();
+
+        database.save_board(&mut board).unwrap();
+        assert!(board.pending_events.is_empty());
+
+        let events = database
+            .connection
+            .prepare(
+                "SELECT kind, from_column_id, to_column_id
+                 FROM card_events WHERE card_id = ?1 ORDER BY id",
+            )
+            .unwrap()
+            .query_map([card_id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<i64>>(1)?,
+                    row.get::<_, Option<i64>>(2)?,
+                ))
+            })
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        assert_eq!(
+            events,
+            vec![
+                ("created".to_string(), None, Some(1)),
+                ("moved".to_string(), Some(1), Some(2)),
+                ("archived".to_string(), Some(2), None),
+            ]
+        );
+    }
+
+    #[test]
+    fn keeps_events_when_a_card_is_deleted() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("board.sqlite3");
+        let mut database = Database::open(&path).unwrap();
+        let mut board = database.load_board().unwrap();
+        let card_id = board.add_card(1, "削除するカード", "").unwrap();
+        board.delete_card(card_id).unwrap();
+
+        database.save_board(&mut board).unwrap();
+
+        let events = database
+            .connection
+            .prepare("SELECT kind FROM card_events WHERE card_id = ?1 ORDER BY id")
+            .unwrap()
+            .query_map([card_id], |row| row.get::<_, String>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(events, ["created", "deleted"]);
+        assert_eq!(
+            database
+                .connection
+                .query_row(
+                    "SELECT COUNT(*) FROM cards WHERE id = ?1",
+                    [card_id],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn archives_a_column_with_one_event_per_card() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("board.sqlite3");
+        let mut database = Database::open(&path).unwrap();
+        let mut board = database.load_board().unwrap();
+        let card_ids = board.columns[0]
+            .cards
+            .iter()
+            .map(|card| card.id)
+            .collect::<Vec<_>>();
+
+        assert_eq!(board.archive_column(1).unwrap(), card_ids.len());
+        database.save_board(&mut board).unwrap();
+
+        let event_count = database
+            .connection
+            .query_row(
+                "SELECT COUNT(*) FROM card_events
+                 WHERE kind = 'archived' AND card_id IN (?1, ?2)",
+                [card_ids[0], card_ids[1]],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap();
+        assert_eq!(event_count, 2);
+    }
+
+    #[test]
+    fn drops_pending_events_when_saving_fails() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("board.sqlite3");
+        let mut database = Database::open(&path).unwrap();
+        let mut board = database.load_board().unwrap();
+        let card_id = board.add_card(1, "保存に失敗するカード", "").unwrap();
+        board.columns[0]
+            .cards
+            .iter_mut()
+            .find(|card| card.id == card_id)
+            .unwrap()
+            .tag_ids
+            .push(999);
+
+        assert!(database.save_board(&mut board).is_err());
+        assert!(board.pending_events.is_empty());
+
+        board.columns[0]
+            .cards
+            .iter_mut()
+            .find(|card| card.id == card_id)
+            .unwrap()
+            .tag_ids
+            .clear();
+        database.save_board(&mut board).unwrap();
+        assert_eq!(
+            database
+                .connection
+                .query_row(
+                    "SELECT COUNT(*) FROM card_events WHERE card_id = ?1",
+                    [card_id],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            0
+        );
     }
 
     #[test]
@@ -752,9 +934,18 @@ mod tests {
                 row.get::<_, i64>(0)
             })
             .unwrap();
-        assert_eq!(version, 6);
+        assert_eq!(version, 7);
         assert_eq!(board.columns[0].cards[0].id, 34);
         assert_eq!(board.columns[0].cards[0].due_date, None);
+        assert_eq!(
+            database
+                .connection
+                .query_row("SELECT COUNT(*) FROM card_events", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .unwrap(),
+            0
+        );
     }
 
     #[test]
@@ -770,7 +961,7 @@ mod tests {
         board
             .set_card_due_date(card_with_due_date, Some(due_date))
             .unwrap();
-        database.save_board(&board).unwrap();
+        database.save_board(&mut board).unwrap();
         let reloaded = database.load_board().unwrap();
         assert_eq!(reloaded.columns[0].cards[0].due_date, Some(due_date));
         assert_eq!(reloaded.columns[0].cards[1].due_date, None);
@@ -782,7 +973,7 @@ mod tests {
         reloaded
             .set_card_due_date(card_without_due_date, Some(due_date))
             .unwrap();
-        database.save_board(&reloaded).unwrap();
+        database.save_board(&mut reloaded).unwrap();
         let final_board = database.load_board().unwrap();
         assert_eq!(final_board.columns[0].cards[0].due_date, None);
         assert_eq!(final_board.columns[0].cards[1].due_date, Some(due_date));
@@ -796,7 +987,7 @@ mod tests {
         let mut board = database.load_board().unwrap();
 
         board.set_column_wip_limit(1, Some(5)).unwrap();
-        database.save_board(&board).unwrap();
+        database.save_board(&mut board).unwrap();
 
         assert_eq!(database.load_board().unwrap().columns[0].wip_limit, Some(5));
     }
@@ -810,7 +1001,7 @@ mod tests {
         let tag_id = board.add_tag("重要", "#ef4444").unwrap();
         let card_id = board.columns[0].cards[0].id;
         board.set_card_tags(card_id, vec![tag_id]).unwrap();
-        database.save_board(&board).unwrap();
+        database.save_board(&mut board).unwrap();
 
         let reloaded = database.load_board().unwrap();
         assert_eq!(reloaded.tags[0].name, "重要");
@@ -828,7 +1019,7 @@ mod tests {
         board.set_card_tags(card_id, vec![tag_id]).unwrap();
 
         board.archive_card(card_id).unwrap();
-        database.save_board(&board).unwrap();
+        database.save_board(&mut board).unwrap();
 
         let mut reloaded = database.load_board().unwrap();
         assert_eq!(reloaded.columns[0].cards.len(), 1);
@@ -837,12 +1028,12 @@ mod tests {
         assert_eq!(reloaded.archived_cards[0].tag_ids, vec![tag_id]);
 
         reloaded.remove_tag(tag_id).unwrap();
-        database.save_board(&reloaded).unwrap();
+        database.save_board(&mut reloaded).unwrap();
         reloaded = database.load_board().unwrap();
         assert!(reloaded.archived_cards[0].tag_ids.is_empty());
 
         reloaded.restore_card(card_id).unwrap();
-        database.save_board(&reloaded).unwrap();
+        database.save_board(&mut reloaded).unwrap();
         let restored = database.load_board().unwrap();
         assert!(restored.archived_cards.is_empty());
         assert!(restored.columns[0]

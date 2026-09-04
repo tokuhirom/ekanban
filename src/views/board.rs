@@ -159,6 +159,11 @@ impl BoardView {
         }
     }
 
+    fn rollback_board(&mut self, before: Board) {
+        self.board = before;
+        self.board.discard_pending_events();
+    }
+
     fn move_card(
         &mut self,
         card_id: CardId,
@@ -172,10 +177,10 @@ impl BoardView {
             .move_card(card_id, target_column_id, target_index)
         {
             Ok(false) => return,
-            Ok(true) => match self.database.save_board(&self.board) {
+            Ok(true) => match self.database.save_board(&mut self.board) {
                 Ok(()) => self.status = Some("保存しました".to_string()),
                 Err(error) => {
-                    self.board = before;
+                    self.rollback_board(before);
                     self.status = Some(format!("保存に失敗しました: {error}"));
                 }
             },
@@ -188,10 +193,10 @@ impl BoardView {
         let before = self.board.clone();
         match self.board.move_column(column_id, target_index) {
             Ok(false) => return,
-            Ok(true) => match self.database.save_board(&self.board) {
+            Ok(true) => match self.database.save_board(&mut self.board) {
                 Ok(()) => self.status = Some("カラムを並べ替えました".to_string()),
                 Err(error) => {
-                    self.board = before;
+                    self.rollback_board(before);
                     self.status = Some(format!("保存に失敗しました: {error}"));
                 }
             },
@@ -214,13 +219,13 @@ impl BoardView {
             .board
             .add_card(column_id, "新しいカード", "説明を追加してください");
         match result {
-            Ok(card_id) => match self.database.save_board(&self.board) {
+            Ok(card_id) => match self.database.save_board(&mut self.board) {
                 Ok(()) => {
                     self.status = Some("カードを追加しました".to_string());
                     self.begin_card_edit(card_id, window, cx);
                 }
                 Err(error) => {
-                    self.board = before;
+                    self.rollback_board(before);
                     self.status = Some(format!("保存に失敗しました: {error}"));
                 }
             },
@@ -316,7 +321,7 @@ impl BoardView {
         let due_date_changed = match self.board.set_card_due_date(editor.card_id, due_date) {
             Ok(changed) => changed,
             Err(error) => {
-                self.board = before;
+                self.rollback_board(before);
                 self.editing_card = Some(editor);
                 self.status = Some(format_card_error(error));
                 cx.notify();
@@ -326,7 +331,7 @@ impl BoardView {
         let tags_changed = match self.board.set_card_tags(editor.card_id, tag_ids) {
             Ok(changed) => changed,
             Err(error) => {
-                self.board = before;
+                self.rollback_board(before);
                 self.editing_card = Some(editor);
                 self.status = Some(format_card_error(error));
                 cx.notify();
@@ -337,10 +342,10 @@ impl BoardView {
         if !content_changed && !due_date_changed && !tags_changed {
             self.status = Some("カードに変更はありません".to_string());
         } else {
-            match self.database.save_board(&self.board) {
+            match self.database.save_board(&mut self.board) {
                 Ok(()) => self.status = Some("カードを更新しました".to_string()),
                 Err(error) => {
-                    self.board = before;
+                    self.rollback_board(before);
                     self.editing_card = Some(editor);
                     self.status = Some(format!("保存に失敗しました: {error}"));
                 }
@@ -351,8 +356,8 @@ impl BoardView {
 
     fn delete_card(&mut self, card_id: CardId, cx: &mut Context<Self>) {
         let before = self.board.clone();
-        match self.board.remove_card(card_id) {
-            Ok(()) => match self.database.save_board(&self.board) {
+        match self.board.delete_card(card_id) {
+            Ok(()) => match self.database.save_board(&mut self.board) {
                 Ok(()) => {
                     if self
                         .editing_card
@@ -364,7 +369,7 @@ impl BoardView {
                     self.status = Some("カードを削除しました".to_string());
                 }
                 Err(error) => {
-                    self.board = before;
+                    self.rollback_board(before);
                     self.status = Some(format!("保存に失敗しました: {error}"));
                 }
             },
@@ -376,7 +381,7 @@ impl BoardView {
     fn archive_card(&mut self, card_id: CardId, cx: &mut Context<Self>) {
         let before = self.board.clone();
         match self.board.archive_card(card_id) {
-            Ok(true) => match self.database.save_board(&self.board) {
+            Ok(true) => match self.database.save_board(&mut self.board) {
                 Ok(()) => {
                     if self
                         .editing_card
@@ -388,7 +393,7 @@ impl BoardView {
                     self.status = Some("カードをアーカイブしました".to_string());
                 }
                 Err(error) => {
-                    self.board = before;
+                    self.rollback_board(before);
                     self.status = Some(format!("保存に失敗しました: {error}"));
                 }
             },
@@ -402,13 +407,13 @@ impl BoardView {
         let before = self.board.clone();
         match self.board.archive_column(column_id) {
             Ok(0) => self.status = Some("アーカイブするカードがありません".to_string()),
-            Ok(count) => match self.database.save_board(&self.board) {
+            Ok(count) => match self.database.save_board(&mut self.board) {
                 Ok(()) => {
                     self.editing_card = None;
                     self.status = Some(format!("{count} 枚をアーカイブしました"));
                 }
                 Err(error) => {
-                    self.board = before;
+                    self.rollback_board(before);
                     self.status = Some(format!("保存に失敗しました: {error}"));
                 }
             },
@@ -420,10 +425,10 @@ impl BoardView {
     fn restore_card(&mut self, card_id: CardId, cx: &mut Context<Self>) {
         let before = self.board.clone();
         match self.board.restore_card(card_id) {
-            Ok(true) => match self.database.save_board(&self.board) {
+            Ok(true) => match self.database.save_board(&mut self.board) {
                 Ok(()) => self.status = Some("カードを復元しました".to_string()),
                 Err(error) => {
-                    self.board = before;
+                    self.rollback_board(before);
                     self.status = Some(format!("保存に失敗しました: {error}"));
                 }
             },
@@ -552,7 +557,7 @@ impl BoardView {
 
         match result {
             Ok(false) => self.status = Some("タグに変更はありません".to_string()),
-            Ok(true) => match self.database.save_board(&self.board) {
+            Ok(true) => match self.database.save_board(&mut self.board) {
                 Ok(()) => {
                     self.status = Some(
                         if editor.tag_id.is_some() {
@@ -564,13 +569,13 @@ impl BoardView {
                     )
                 }
                 Err(error) => {
-                    self.board = before;
+                    self.rollback_board(before);
                     self.editing_tag = Some(editor);
                     self.status = Some(format!("保存に失敗しました: {error}"));
                 }
             },
             Err(error) => {
-                self.board = before;
+                self.rollback_board(before);
                 self.editing_tag = Some(editor);
                 self.status = Some(format_tag_error(error));
             }
@@ -581,7 +586,7 @@ impl BoardView {
     fn delete_tag(&mut self, tag_id: TagId, cx: &mut Context<Self>) {
         let before = self.board.clone();
         match self.board.remove_tag(tag_id) {
-            Ok(()) => match self.database.save_board(&self.board) {
+            Ok(()) => match self.database.save_board(&mut self.board) {
                 Ok(()) => {
                     if self.tag_filter == Some(tag_id) {
                         self.tag_filter = None;
@@ -596,7 +601,7 @@ impl BoardView {
                     self.status = Some("タグを削除しました".to_string());
                 }
                 Err(error) => {
-                    self.board = before;
+                    self.rollback_board(before);
                     self.status = Some(format!("保存に失敗しました: {error}"));
                 }
             },
@@ -718,7 +723,7 @@ impl BoardView {
             Ok(false) => {
                 self.status = Some("カラムに変更はありません".to_string());
             }
-            Ok(true) => match self.database.save_board(&self.board) {
+            Ok(true) => match self.database.save_board(&mut self.board) {
                 Ok(()) => {
                     self.status = Some(
                         if editor.column_id.is_some() {
@@ -730,7 +735,7 @@ impl BoardView {
                     )
                 }
                 Err(error) => {
-                    self.board = before;
+                    self.rollback_board(before);
                     self.editing_column = Some(editor);
                     self.status = Some(format!("保存に失敗しました: {error}"));
                 }
@@ -790,7 +795,7 @@ impl BoardView {
     fn delete_column(&mut self, column_id: ColumnId, cx: &mut Context<Self>) {
         let before = self.board.clone();
         match self.board.remove_column(column_id) {
-            Ok(()) => match self.database.save_board(&self.board) {
+            Ok(()) => match self.database.save_board(&mut self.board) {
                 Ok(()) => {
                     if self
                         .editing_column
@@ -802,7 +807,7 @@ impl BoardView {
                     self.status = Some("カラムを削除しました".to_string());
                 }
                 Err(error) => {
-                    self.board = before;
+                    self.rollback_board(before);
                     self.status = Some(format!("保存に失敗しました: {error}"));
                 }
             },
@@ -817,10 +822,10 @@ impl BoardView {
             Ok(false) => {
                 self.status = Some("期限順に変更はありません".to_string());
             }
-            Ok(true) => match self.database.save_board(&self.board) {
+            Ok(true) => match self.database.save_board(&mut self.board) {
                 Ok(()) => self.status = Some("期限順に並べ替えました".to_string()),
                 Err(error) => {
-                    self.board = before;
+                    self.rollback_board(before);
                     self.status = Some(format!("保存に失敗しました: {error}"));
                 }
             },

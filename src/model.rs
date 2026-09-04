@@ -8,6 +8,36 @@ pub type TagId = i64;
 
 pub const SOON_THRESHOLD_DAYS: i64 = 3;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CardEventKind {
+    Created,
+    Moved,
+    Archived,
+    Restored,
+    Deleted,
+}
+
+impl CardEventKind {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Created => "created",
+            Self::Moved => "moved",
+            Self::Archived => "archived",
+            Self::Restored => "restored",
+            Self::Deleted => "deleted",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CardEvent {
+    pub card_id: CardId,
+    pub kind: CardEventKind,
+    pub from_column_id: Option<ColumnId>,
+    pub to_column_id: Option<ColumnId>,
+    pub at: i64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Card {
     pub id: CardId,
@@ -56,6 +86,8 @@ pub struct Board {
     pub tags: Vec<Tag>,
     pub archived_cards: Vec<Card>,
     pub columns: Vec<Column>,
+    /// Events that are written by the next save and then cleared.
+    pub(crate) pending_events: Vec<CardEvent>,
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -167,6 +199,7 @@ impl Board {
                 Column::new(2, 1, "進行中", 1, now),
                 Column::new(3, 1, "完了", 2, now),
             ],
+            pending_events: Vec::new(),
         };
 
         board
@@ -210,6 +243,7 @@ impl Board {
             .ok_or(BoardError::ColumnNotFound(target_column_id))?;
 
         let same_column = source_column_index == target_column_index;
+        let source_column_id = self.columns[source_column_index].id;
         let mut insert_index = target_index.min(self.columns[target_column_index].cards.len());
         if same_column && source_card_index < insert_index {
             insert_index -= 1;
@@ -219,12 +253,13 @@ impl Board {
             return Ok(false);
         }
 
+        let now = timestamp();
         let card = self.columns[source_column_index]
             .cards
             .remove(source_card_index);
         let card = Card {
             column_id: target_column_id,
-            updated_at: timestamp(),
+            updated_at: now,
             ..card
         };
 
@@ -233,7 +268,16 @@ impl Board {
             .cards
             .insert(insert_index, card);
         self.reindex();
-        self.updated_at = timestamp();
+        self.updated_at = now;
+        if !same_column {
+            self.record_event(
+                card_id,
+                CardEventKind::Moved,
+                Some(source_column_id),
+                Some(target_column_id),
+                now,
+            );
+        }
         Ok(true)
     }
 
@@ -272,26 +316,31 @@ impl Board {
         title: impl Into<String>,
         description: impl Into<String>,
     ) -> Result<CardId, BoardError> {
-        let column = self
-            .columns
-            .iter_mut()
-            .find(|column| column.id == column_id)
-            .ok_or(BoardError::ColumnNotFound(column_id))?;
         let id = self.next_card_id;
-        self.next_card_id += 1;
+        let title = title.into();
+        let description = description.into();
         let now = timestamp();
-        column.cards.push(Card {
-            id,
-            column_id,
-            title: title.into(),
-            description: description.into(),
-            position: column.cards.len() as i64,
-            created_at: now,
-            updated_at: now,
-            due_date: None,
-            tag_ids: Vec::new(),
-            archived_at: None,
-        });
+        {
+            let column = self
+                .columns
+                .iter_mut()
+                .find(|column| column.id == column_id)
+                .ok_or(BoardError::ColumnNotFound(column_id))?;
+            column.cards.push(Card {
+                id,
+                column_id,
+                title,
+                description,
+                position: column.cards.len() as i64,
+                created_at: now,
+                updated_at: now,
+                due_date: None,
+                tag_ids: Vec::new(),
+                archived_at: None,
+            });
+        }
+        self.next_card_id += 1;
+        self.record_event(id, CardEventKind::Created, None, Some(column_id), now);
         self.updated_at = now;
         Ok(id)
     }
@@ -327,6 +376,10 @@ impl Board {
     }
 
     pub fn remove_card(&mut self, card_id: CardId) -> Result<(), BoardError> {
+        self.delete_card(card_id)
+    }
+
+    pub fn delete_card(&mut self, card_id: CardId) -> Result<(), BoardError> {
         let (column_index, card_index) = self
             .columns
             .iter()
@@ -340,9 +393,12 @@ impl Board {
             })
             .ok_or(BoardError::CardNotFound(card_id))?;
 
+        let column_id = self.columns[column_index].id;
         self.columns[column_index].cards.remove(card_index);
         self.reindex();
-        self.updated_at = timestamp();
+        let now = timestamp();
+        self.updated_at = now;
+        self.record_event(card_id, CardEventKind::Deleted, Some(column_id), None, now);
         Ok(())
     }
 
@@ -359,6 +415,7 @@ impl Board {
                     .map(|card_index| (column_index, card_index))
             })
             .ok_or(BoardError::CardNotFound(card_id))?;
+        let source_column_id = self.columns[column_index].id;
         let now = timestamp();
         let mut card = self.columns[column_index].cards.remove(card_index);
         card.archived_at = Some(now);
@@ -366,6 +423,13 @@ impl Board {
         self.archived_cards.push(card);
         self.reindex();
         self.updated_at = now;
+        self.record_event(
+            card_id,
+            CardEventKind::Archived,
+            Some(source_column_id),
+            None,
+            now,
+        );
         Ok(true)
     }
 
@@ -386,6 +450,14 @@ impl Board {
             card.archived_at = Some(now);
             card.updated_at = now;
         }
+        self.pending_events
+            .extend(cards.iter().map(|card| CardEvent {
+                card_id: card.id,
+                kind: CardEventKind::Archived,
+                from_column_id: Some(column_id),
+                to_column_id: None,
+                at: now,
+            }));
         self.archived_cards.append(&mut cards);
         self.reindex();
         self.updated_at = now;
@@ -424,6 +496,13 @@ impl Board {
             .push(card);
         self.reindex();
         self.updated_at = now;
+        self.record_event(
+            card_id,
+            CardEventKind::Restored,
+            None,
+            Some(target_column_id),
+            now,
+        );
         Ok(true)
     }
 
@@ -689,6 +768,11 @@ impl Board {
             .find(|column| column.id != column_id)
             .expect("there is another column")
             .id;
+        let deleted_card_ids = self.columns[index]
+            .cards
+            .iter()
+            .map(|card| card.id)
+            .collect::<Vec<_>>();
         self.columns.remove(index);
         let now = timestamp();
         for card in &mut self.archived_cards {
@@ -699,6 +783,14 @@ impl Board {
         }
         self.reindex();
         self.updated_at = now;
+        self.pending_events
+            .extend(deleted_card_ids.into_iter().map(|card_id| CardEvent {
+                card_id,
+                kind: CardEventKind::Deleted,
+                from_column_id: Some(column_id),
+                to_column_id: None,
+                at: now,
+            }));
         Ok(())
     }
 
@@ -710,6 +802,27 @@ impl Board {
                 card.column_id = column.id;
             }
         }
+    }
+
+    fn record_event(
+        &mut self,
+        card_id: CardId,
+        kind: CardEventKind,
+        from_column_id: Option<ColumnId>,
+        to_column_id: Option<ColumnId>,
+        at: i64,
+    ) {
+        self.pending_events.push(CardEvent {
+            card_id,
+            kind,
+            from_column_id,
+            to_column_id,
+            at,
+        });
+    }
+
+    pub(crate) fn discard_pending_events(&mut self) {
+        self.pending_events.clear();
     }
 }
 
@@ -747,7 +860,7 @@ mod tests {
 
     use super::{
         card_matches_search, due_status, normalize_search_text, parse_due_date, Board, BoardError,
-        DueStatus,
+        CardEventKind, DueStatus,
     };
 
     #[test]
@@ -1055,6 +1168,61 @@ mod tests {
             board.add_card(1, "新規", "").unwrap(),
             board.next_card_id - 1
         );
+    }
+
+    #[test]
+    fn records_card_lifecycle_events_but_not_intra_column_reorders() {
+        let mut board = Board::demo();
+        board.pending_events.clear();
+        let card_id = board.columns[0].cards[0].id;
+
+        assert!(board.move_card(card_id, 2, 1).unwrap());
+        assert!(board.move_card(card_id, 2, 0).unwrap());
+        assert!(board.archive_card(card_id).unwrap());
+
+        assert_eq!(
+            board
+                .pending_events
+                .iter()
+                .map(|event| event.kind)
+                .collect::<Vec<_>>(),
+            [CardEventKind::Moved, CardEventKind::Archived]
+        );
+        assert_eq!(board.pending_events[0].from_column_id, Some(1));
+        assert_eq!(board.pending_events[0].to_column_id, Some(2));
+        assert_eq!(board.pending_events[1].from_column_id, Some(2));
+        assert_eq!(board.pending_events[1].to_column_id, None);
+    }
+
+    #[test]
+    fn records_one_archived_event_for_each_card_in_a_column() {
+        let mut board = Board::demo();
+        board.pending_events.clear();
+
+        assert_eq!(board.archive_column(1).unwrap(), 2);
+        assert_eq!(board.pending_events.len(), 2);
+        assert!(board
+            .pending_events
+            .iter()
+            .all(|event| event.kind == CardEventKind::Archived));
+    }
+
+    #[test]
+    fn records_deleted_events_for_cards_removed_directly_or_with_a_column() {
+        let mut board = Board::demo();
+        board.pending_events.clear();
+        let card_id = board.columns[0].cards[0].id;
+
+        board.delete_card(card_id).unwrap();
+        assert_eq!(board.pending_events[0].kind, CardEventKind::Deleted);
+        assert_eq!(board.pending_events[0].from_column_id, Some(1));
+
+        board.pending_events.clear();
+        let remaining_card_id = board.columns[0].cards[0].id;
+        board.remove_column(1).unwrap();
+        assert_eq!(board.pending_events.len(), 1);
+        assert_eq!(board.pending_events[0].card_id, remaining_card_id);
+        assert_eq!(board.pending_events[0].kind, CardEventKind::Deleted);
     }
 
     #[test]
