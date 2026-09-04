@@ -138,6 +138,54 @@ src/
 - Rust toolchain
 - SQLite
 
+## ビルドと起動
+
+`make help` でタスク一覧が出ます。主なものは次の通りです。
+
+| コマンド | 内容 |
+| --- | --- |
+| `make run` | ターミナルから直接起動する (デバッグビルド) |
+| `make check` | CI と同じ fmt / clippy / test を走らせる |
+| `make bundle` | リリースビルドから `target/release/bundle/Ekanban.app` を作る |
+| `make open` | `.app` を作って起動する |
+| `make install` | `.app` を `/Applications` にコピーする |
+
+`cargo build` が作るのは実行ファイルだけで、`.app` バンドルにはなりません。Dock のアイコンやアプリ名、Launchpad からの起動を正しく扱うには `make bundle` を使ってください。バンドル生成の実体は `script/bundle-mac` です。
+
+`assets/icon.icns` を置くと、アイコンとして自動的に取り込まれます。
+
+### データベースの置き場所
+
+OS ごとの標準の場所に保存します。GUI から起動するとカレントディレクトリが当てにならないため、相対パスは使いません。
+
+| OS | データベース | ログ |
+| --- | --- | --- |
+| macOS | `~/Library/Application Support/ekanban/ekanban.sqlite3` | `~/Library/Logs/ekanban.log` |
+| Linux/BSD | `$XDG_DATA_HOME/ekanban/` または `~/.local/share/ekanban/` | `$XDG_STATE_HOME/ekanban/` または `~/.local/state/ekanban/` |
+| Windows | `%APPDATA%\ekanban\` | `%LOCALAPPDATA%\ekanban\` |
+
+別の場所を使いたい場合は `EKANBAN_DATABASE` で上書きできます。
+
+```sh
+EKANBAN_DATABASE=./dev.sqlite3 make run
+```
+
+### 起動に失敗したとき
+
+GUI から起動すると stderr がどこにも表示されないため、起動時の致命的なエラーとパニックは上表のログファイルに追記されます。あわせて、stderr が端末に繋がっていないとき (つまり GUI 起動のとき) だけダイアログでも通知します。ターミナルから実行した場合はメッセージがそのまま見えるので、ダイアログは出ません。
+
+ダイアログの表示には macOS では `osascript`、Windows では PowerShell、Linux/BSD では `zenity` / `kdialog` / `xmessage` のうち最初に見つかったものを使います。どれも無い環境ではログだけが残ります。
+
+### 署名
+
+ローカルでは ad-hoc 署名 (`-`) を使うので、追加の設定は要りません。配布用に Developer ID で署名する場合は環境変数で ID を渡します。
+
+```sh
+CODESIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" make bundle
+```
+
+ad-hoc 以外の ID を指定したときは hardened runtime (`--options runtime`) とタイムスタンプが自動で付き、公証をそのまま通せる状態になります。entitlements が必要になったら `script/entitlements.plist` を置けば署名時に読み込まれます。
+
 ## CI
 
 GitHub Actions (`.github/workflows/ci.yml`) で、`main` への push と pull request に対して次を実行します。
