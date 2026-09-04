@@ -33,7 +33,9 @@ Name tests after observable behavior, for example `moves_card_to_another_column`
 
 ## Commits and Pull Requests
 
-Currently, this repo is under development. you can commit to 'main' branch directly. and you can push to the remote directly.
+Work goes through pull requests. A repository ruleset requires the `Check and test` CI job to pass on `main`, so pushing to `main` directly no longer works. Branch off `main`, open a PR that says `Closes #<issue>`, and enable auto-merge with `gh pr merge <n> --squash --auto --delete-branch`; it merges once CI is green and deletes the branch.
+
+Write commit subjects in English, in the imperative mood, and explain in the body why the change was made rather than restating what it does.
 
 ## Planning and Documentation
 
