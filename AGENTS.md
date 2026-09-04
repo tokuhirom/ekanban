@@ -34,3 +34,9 @@ Name tests after observable behavior, for example `moves_card_to_another_column`
 ## Commits and Pull Requests
 
 Currently, this repo is under development. you can commit to 'main' branch directly. and you can push to the remote directly.
+
+## Planning and Documentation
+
+Work in progress is tracked in GitHub issues, not in a roadmap document. When you pick up a task, read its issue for the scope and acceptance criteria, and close the issue when they are met.
+
+`docs/DESIGN.md` holds only what outlives a single issue: the design rules new code must follow, what is out of scope, what was considered and deliberately rejected, and the completion checklist every change must satisfy. Do not add task lists or schedules to it. When you make a decision that constrains future work, or reverse an earlier one, record it there with the reasoning.
