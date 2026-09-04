@@ -39,9 +39,9 @@ pub fn run() {
             }
         }
     }
-    let (database, board) = match Database::open(&path).and_then(|database| {
+    let board = match Database::open(&path).and_then(|database| {
         let board = database.load_board()?;
-        Ok((database, board))
+        Ok(board)
     }) {
         Ok(value) => value,
         Err(error) => {
@@ -64,7 +64,7 @@ pub fn run() {
                 ..Default::default()
             },
             move |window, cx| {
-                let view = cx.new(|cx| BoardView::new(board, database, window, cx));
+                let view = cx.new(|cx| BoardView::new(board, path, window, cx));
                 cx.new(|cx| Root::new(view, window, cx))
             },
         )

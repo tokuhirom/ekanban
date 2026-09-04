@@ -17,4 +17,6 @@ gpui_kit::actions!([
     ShowThisWeekCards,
     ShowAllApplications,
     ToggleFullscreen,
+    Undo,
+    Redo,
 ]);

@@ -20,6 +20,16 @@ pub struct Database {
     connection: Connection,
 }
 
+/// Opens the database on the caller's thread and persists a board snapshot.
+///
+/// Keeping this small operation separate from [`Database`] lets the UI hand a
+/// detached board clone to a background executor without moving the SQLite
+/// connection that is used during startup.
+pub fn save_board_snapshot(path: impl AsRef<Path>, mut board: Board) -> Result<(), DbError> {
+    let mut database = Database::open(path)?;
+    database.save_board(&mut board)
+}
+
 impl Database {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, DbError> {
         let connection = Connection::open(path)?;
@@ -194,6 +204,8 @@ impl Database {
             archived_cards,
             columns,
             pending_events: Vec::new(),
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
         })
     }
 
@@ -647,7 +659,7 @@ mod tests {
     use rusqlite::Connection;
     use tempfile::tempdir;
 
-    use super::Database;
+    use super::{save_board_snapshot, Database};
     use crate::model::Board;
 
     #[test]
@@ -666,6 +678,35 @@ mod tests {
         database.save_board(&mut changed).unwrap();
 
         assert_eq!(database.load_board().unwrap(), changed);
+    }
+
+    #[test]
+    fn saves_a_detached_board_snapshot() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("board.sqlite3");
+        let database = Database::open(&path).unwrap();
+        let mut board = database.load_board().unwrap();
+        let card_id = board.add_card(1, "バックグラウンド保存", "").unwrap();
+        let expected_title = board.columns[0]
+            .cards
+            .iter()
+            .find(|card| card.id == card_id)
+            .unwrap()
+            .title
+            .clone();
+
+        save_board_snapshot(&path, board).unwrap();
+
+        let reloaded = Database::open(&path).unwrap().load_board().unwrap();
+        assert_eq!(
+            reloaded.columns[0]
+                .cards
+                .iter()
+                .find(|card| card.id == card_id)
+                .unwrap()
+                .title,
+            expected_title
+        );
     }
 
     #[test]
@@ -733,6 +774,34 @@ mod tests {
             .find(|card| card.id == card_id)
             .unwrap();
         assert_eq!(moved_card.created_at, created_at);
+    }
+
+    #[test]
+    fn saves_undo_and_redo_without_repeating_lifecycle_events() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("board.sqlite3");
+        let mut database = Database::open(&path).unwrap();
+        let mut board = database.load_board().unwrap();
+        let card_id = board.columns[0].cards[0].id;
+        let initial_event_count = lifecycle_event_count(&database, card_id);
+
+        board.move_card(card_id, 2, 0).unwrap();
+        database.save_board(&mut board).unwrap();
+        board.undo().unwrap();
+        database.save_board(&mut board).unwrap();
+        assert_eq!(board.columns[0].cards[0].id, card_id);
+        assert_eq!(
+            lifecycle_event_count(&database, card_id),
+            initial_event_count + 1
+        );
+
+        board.redo().unwrap();
+        database.save_board(&mut board).unwrap();
+        assert_eq!(board.columns[1].cards[0].id, card_id);
+        assert_eq!(
+            lifecycle_event_count(&database, card_id),
+            initial_event_count + 1
+        );
     }
 
     #[test]
@@ -1040,5 +1109,16 @@ mod tests {
             .cards
             .iter()
             .any(|card| card.id == card_id));
+    }
+
+    fn lifecycle_event_count(database: &Database, card_id: i64) -> i64 {
+        database
+            .connection
+            .query_row(
+                "SELECT COUNT(*) FROM card_events WHERE card_id = ?1",
+                [card_id],
+                |row| row.get(0),
+            )
+            .unwrap()
     }
 }

@@ -2,8 +2,8 @@ use gpui_kit::{App, KeyBinding, Menu, MenuItem, OsAction, SystemMenuType};
 
 use crate::actions::{
     About, AddCard, AddColumn, AddTag, CancelEdit, ClearSearch, CloseWindow, FocusSearch,
-    HideApplication, HideOtherApplications, Quit, SaveEdit, ShowAllApplications, ShowAllCards,
-    ShowOverdueCards, ShowThisWeekCards, ToggleArchiveView, ToggleFullscreen,
+    HideApplication, HideOtherApplications, Quit, Redo, SaveEdit, ShowAllApplications,
+    ShowAllCards, ShowOverdueCards, ShowThisWeekCards, ToggleArchiveView, ToggleFullscreen, Undo,
 };
 
 pub fn install(cx: &mut App) {
@@ -20,6 +20,8 @@ pub fn install(cx: &mut App) {
         KeyBinding::new("cmd-shift-f", ClearSearch, Some("Board")),
         KeyBinding::new("cmd-w", CloseWindow, Some("Board")),
         KeyBinding::new("cmd-ctrl-f", ToggleFullscreen, Some("Board")),
+        KeyBinding::new("secondary-z", Undo, Some("Board")),
+        KeyBinding::new("secondary-shift-z", Redo, Some("Board")),
         KeyBinding::new("cmd-q", Quit, None),
         KeyBinding::new("cmd-h", HideApplication, None),
         KeyBinding::new("cmd-alt-h", HideOtherApplications, None),
@@ -46,8 +48,8 @@ pub fn install(cx: &mut App) {
             MenuItem::action("ウインドウを閉じる", CloseWindow),
         ]),
         Menu::new("編集").items([
-            MenuItem::os_action("元に戻す", gpui_kit::NoAction, OsAction::Undo).disabled(true),
-            MenuItem::os_action("やり直す", gpui_kit::NoAction, OsAction::Redo).disabled(true),
+            MenuItem::os_action("元に戻す", Undo, OsAction::Undo),
+            MenuItem::os_action("やり直す", Redo, OsAction::Redo),
             MenuItem::separator(),
             MenuItem::os_action("カット", gpui_kit::NoAction, OsAction::Cut),
             MenuItem::os_action("コピー", gpui_kit::NoAction, OsAction::Copy),

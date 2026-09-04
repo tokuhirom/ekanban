@@ -75,6 +75,125 @@ pub struct Column {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BoardOperation {
+    MoveCard {
+        card_id: CardId,
+        from_column_id: ColumnId,
+        from_index: usize,
+        to_column_id: ColumnId,
+        to_index: usize,
+    },
+    MoveColumn {
+        column_id: ColumnId,
+        from_index: usize,
+        to_index: usize,
+    },
+    AddCard {
+        card: Card,
+    },
+    UpdateCard {
+        card_id: CardId,
+        before_title: String,
+        before_description: String,
+        after_title: String,
+        after_description: String,
+    },
+    EditCard {
+        card_id: CardId,
+        before_title: String,
+        before_description: String,
+        before_due_date: Option<NaiveDate>,
+        before_tag_ids: Vec<TagId>,
+        after_title: String,
+        after_description: String,
+        after_due_date: Option<NaiveDate>,
+        after_tag_ids: Vec<TagId>,
+    },
+    DeleteCard {
+        card: Card,
+        index: usize,
+    },
+    ArchiveCard {
+        card: Card,
+        archived_card: Card,
+        index: usize,
+        archived_index: usize,
+    },
+    ArchiveColumn {
+        column_id: ColumnId,
+        cards: Vec<ArchivedCardOperation>,
+        archived_start: usize,
+    },
+    RestoreCard {
+        archived_card: Card,
+        restored_card: Card,
+        index: usize,
+        archive_index: usize,
+    },
+    SetDueDate {
+        card_id: CardId,
+        before: Option<NaiveDate>,
+        after: Option<NaiveDate>,
+    },
+    SortColumnByDueDate {
+        column_id: ColumnId,
+        before_order: Vec<CardId>,
+        after_order: Vec<CardId>,
+    },
+    SetColumnWipLimit {
+        column_id: ColumnId,
+        before: Option<i64>,
+        after: Option<i64>,
+    },
+    AddTag {
+        tag: Tag,
+    },
+    RenameTag {
+        tag_id: TagId,
+        before: String,
+        after: String,
+    },
+    SetTagColor {
+        tag_id: TagId,
+        before: String,
+        after: String,
+    },
+    RemoveTag {
+        tag: Tag,
+        index: usize,
+        active_card_tags: Vec<(CardId, Vec<TagId>)>,
+        archived_card_tags: Vec<(CardId, Vec<TagId>)>,
+    },
+    SetCardTags {
+        card_id: CardId,
+        before: Vec<TagId>,
+        after: Vec<TagId>,
+    },
+    AddColumn {
+        column: Column,
+        index: usize,
+    },
+    RenameColumn {
+        column_id: ColumnId,
+        before: String,
+        after: String,
+    },
+    RemoveColumn {
+        column: Column,
+        index: usize,
+        fallback_column_id: ColumnId,
+        archived_card_column_ids: Vec<(CardId, ColumnId)>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArchivedCardOperation {
+    pub card: Card,
+    pub archived_card: Card,
+    pub index: usize,
+}
+
+#[derive(Debug, Clone)]
 pub struct Board {
     pub id: BoardId,
     pub name: String,
@@ -88,7 +207,27 @@ pub struct Board {
     pub columns: Vec<Column>,
     /// Events that are written by the next save and then cleared.
     pub(crate) pending_events: Vec<CardEvent>,
+    pub(crate) undo_stack: Vec<BoardOperation>,
+    pub(crate) redo_stack: Vec<BoardOperation>,
 }
+
+impl PartialEq for Board {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+            && self.name == other.name
+            && self.created_at == other.created_at
+            && self.updated_at == other.updated_at
+            && self.next_card_id == other.next_card_id
+            && self.next_column_id == other.next_column_id
+            && self.next_tag_id == other.next_tag_id
+            && self.tags == other.tags
+            && self.archived_cards == other.archived_cards
+            && self.columns == other.columns
+            && self.pending_events == other.pending_events
+    }
+}
+
+impl Eq for Board {}
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum BoardError {
@@ -200,6 +339,8 @@ impl Board {
                 Column::new(3, 1, "完了", 2, now),
             ],
             pending_events: Vec::new(),
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
         };
 
         board
@@ -214,6 +355,8 @@ impl Board {
         board
             .add_card(3, "README を書く", "プロジェクトの方針をまとめる")
             .expect("demo column exists");
+        board.undo_stack.clear();
+        board.redo_stack.clear();
         board
     }
 
@@ -269,6 +412,13 @@ impl Board {
             .insert(insert_index, card);
         self.reindex();
         self.updated_at = now;
+        self.push_operation(BoardOperation::MoveCard {
+            card_id,
+            from_column_id: source_column_id,
+            from_index: source_card_index,
+            to_column_id: target_column_id,
+            to_index: insert_index,
+        });
         if !same_column {
             self.record_event(
                 card_id,
@@ -302,11 +452,17 @@ impl Board {
         }
 
         let mut column = self.columns.remove(source_index);
-        column.updated_at = timestamp();
+        let now = timestamp();
+        column.updated_at = now;
         insert_index = insert_index.min(self.columns.len());
         self.columns.insert(insert_index, column);
         self.reindex();
-        self.updated_at = timestamp();
+        self.updated_at = now;
+        self.push_operation(BoardOperation::MoveColumn {
+            column_id,
+            from_index: source_index,
+            to_index: insert_index,
+        });
         Ok(true)
     }
 
@@ -339,8 +495,16 @@ impl Board {
                 archived_at: None,
             });
         }
+        let card = self
+            .columns
+            .iter()
+            .find(|column| column.id == column_id)
+            .and_then(|column| column.cards.last())
+            .cloned()
+            .expect("new card exists");
         self.next_card_id += 1;
         self.record_event(id, CardEventKind::Created, None, Some(column_id), now);
+        self.push_operation(BoardOperation::AddCard { card });
         self.updated_at = now;
         Ok(id)
     }
@@ -356,22 +520,115 @@ impl Board {
             return Err(BoardError::EmptyCardTitle);
         }
         let description = description.into();
-        let card = self
-            .columns
-            .iter_mut()
-            .flat_map(|column| column.cards.iter_mut())
-            .find(|card| card.id == card_id)
-            .ok_or(BoardError::CardNotFound(card_id))?;
+        let (before_title, before_description, after_title, after_description) = {
+            let card = self
+                .columns
+                .iter_mut()
+                .flat_map(|column| column.cards.iter_mut())
+                .find(|card| card.id == card_id)
+                .ok_or(BoardError::CardNotFound(card_id))?;
 
-        if card.title == title && card.description == description {
-            return Ok(false);
+            if card.title == title && card.description == description {
+                return Ok(false);
+            }
+
+            let before_title = card.title.clone();
+            let before_description = card.description.clone();
+            let now = timestamp();
+            card.title = title;
+            card.description = description;
+            card.updated_at = now;
+            (
+                before_title,
+                before_description,
+                card.title.clone(),
+                card.description.clone(),
+            )
+        };
+        self.updated_at = timestamp();
+        self.push_operation(BoardOperation::UpdateCard {
+            card_id,
+            before_title,
+            before_description,
+            after_title,
+            after_description,
+        });
+        Ok(true)
+    }
+
+    pub fn update_card_details(
+        &mut self,
+        card_id: CardId,
+        title: impl Into<String>,
+        description: impl Into<String>,
+        due_date: Option<NaiveDate>,
+        tag_ids: Vec<TagId>,
+    ) -> Result<bool, BoardError> {
+        let title = title.into();
+        if title.trim().is_empty() {
+            return Err(BoardError::EmptyCardTitle);
         }
-
-        let now = timestamp();
-        card.title = title;
-        card.description = description;
-        card.updated_at = now;
-        self.updated_at = now;
+        for tag_id in &tag_ids {
+            if !self.tags.iter().any(|tag| tag.id == *tag_id) {
+                return Err(BoardError::TagNotFound(*tag_id));
+            }
+        }
+        let mut tag_ids = tag_ids;
+        tag_ids.sort_unstable();
+        tag_ids.dedup();
+        let description = description.into();
+        let (
+            before_title,
+            before_description,
+            before_due_date,
+            before_tag_ids,
+            after_title,
+            after_description,
+        ) = {
+            let card = self
+                .columns
+                .iter_mut()
+                .flat_map(|column| column.cards.iter_mut())
+                .find(|card| card.id == card_id)
+                .ok_or(BoardError::CardNotFound(card_id))?;
+            if card.title == title
+                && card.description == description
+                && card.due_date == due_date
+                && card.tag_ids == tag_ids
+            {
+                return Ok(false);
+            }
+            let before_title = card.title.clone();
+            let before_description = card.description.clone();
+            let before_due_date = card.due_date;
+            let before_tag_ids = card.tag_ids.clone();
+            let now = timestamp();
+            card.title = title.clone();
+            card.description = description.clone();
+            card.due_date = due_date;
+            card.tag_ids = tag_ids.clone();
+            card.updated_at = now;
+            (
+                before_title,
+                before_description,
+                before_due_date,
+                before_tag_ids,
+                card.title.clone(),
+                card.description.clone(),
+            )
+        };
+        self.updated_at = timestamp();
+        self.push_operation(BoardOperation::EditCard {
+            card_id,
+            before_title,
+            before_description,
+            before_due_date,
+            before_tag_ids,
+            after_title,
+            after_description,
+            after_due_date: due_date,
+            after_tag_ids: tag_ids,
+        });
         Ok(true)
     }
 
@@ -394,11 +651,15 @@ impl Board {
             .ok_or(BoardError::CardNotFound(card_id))?;
 
         let column_id = self.columns[column_index].id;
-        self.columns[column_index].cards.remove(card_index);
+        let card = self.columns[column_index].cards.remove(card_index);
         self.reindex();
         let now = timestamp();
         self.updated_at = now;
         self.record_event(card_id, CardEventKind::Deleted, Some(column_id), None, now);
+        self.push_operation(BoardOperation::DeleteCard {
+            card,
+            index: card_index,
+        });
         Ok(())
     }
 
@@ -418,8 +679,10 @@ impl Board {
         let source_column_id = self.columns[column_index].id;
         let now = timestamp();
         let mut card = self.columns[column_index].cards.remove(card_index);
+        let original_card = card.clone();
         card.archived_at = Some(now);
         card.updated_at = now;
+        let archived_card = card.clone();
         self.archived_cards.push(card);
         self.reindex();
         self.updated_at = now;
@@ -430,6 +693,12 @@ impl Board {
             None,
             now,
         );
+        self.push_operation(BoardOperation::ArchiveCard {
+            card: original_card,
+            archived_card,
+            index: card_index,
+            archived_index: self.archived_cards.len() - 1,
+        });
         Ok(true)
     }
 
@@ -444,12 +713,15 @@ impl Board {
         }
 
         let now = timestamp();
+        let archived_start = self.archived_cards.len();
         let mut cards = std::mem::take(&mut column.cards);
         let count = cards.len();
+        let original_cards = cards.clone();
         for card in &mut cards {
             card.archived_at = Some(now);
             card.updated_at = now;
         }
+        let archived_cards = cards.clone();
         self.pending_events
             .extend(cards.iter().map(|card| CardEvent {
                 card_id: card.id,
@@ -461,6 +733,20 @@ impl Board {
         self.archived_cards.append(&mut cards);
         self.reindex();
         self.updated_at = now;
+        self.push_operation(BoardOperation::ArchiveColumn {
+            column_id,
+            cards: original_cards
+                .into_iter()
+                .zip(archived_cards)
+                .enumerate()
+                .map(|(index, (card, archived_card))| ArchivedCardOperation {
+                    card,
+                    archived_card,
+                    index,
+                })
+                .collect(),
+            archived_start,
+        });
         Ok(count)
     }
 
@@ -478,6 +764,7 @@ impl Board {
             .or_else(|| self.columns.first().map(|column| column.id))
             .ok_or(BoardError::LastColumn)?;
         let now = timestamp();
+        let archived_card = self.archived_cards[archive_index].clone();
         let mut card = self.archived_cards.remove(archive_index);
         card.column_id = target_column_id;
         card.position = self
@@ -488,6 +775,7 @@ impl Board {
             .expect("target column exists");
         card.archived_at = None;
         card.updated_at = now;
+        let restored_card = card.clone();
         self.columns
             .iter_mut()
             .find(|column| column.id == target_column_id)
@@ -503,6 +791,17 @@ impl Board {
             Some(target_column_id),
             now,
         );
+        self.push_operation(BoardOperation::RestoreCard {
+            archived_card,
+            restored_card,
+            index: self
+                .columns
+                .iter()
+                .find(|column| column.id == target_column_id)
+                .map(|column| column.cards.len().saturating_sub(1))
+                .expect("target column exists"),
+            archive_index,
+        });
         Ok(true)
     }
 
@@ -522,10 +821,16 @@ impl Board {
             return Ok(false);
         }
 
+        let before = card.due_date;
         let now = timestamp();
         card.due_date = due_date;
         card.updated_at = now;
         self.updated_at = now;
+        self.push_operation(BoardOperation::SetDueDate {
+            card_id,
+            before,
+            after: due_date,
+        });
         Ok(true)
     }
 
@@ -546,12 +851,23 @@ impl Board {
             .then_with(|| left.position.cmp(&right.position))
         });
 
-        if column.cards.iter().map(|card| card.id).eq(original_order) {
+        if column
+            .cards
+            .iter()
+            .map(|card| card.id)
+            .eq(original_order.iter().copied())
+        {
             return Ok(false);
         }
 
+        let sorted_order = column.cards.iter().map(|card| card.id).collect();
         self.reindex();
         self.updated_at = timestamp();
+        self.push_operation(BoardOperation::SortColumnByDueDate {
+            column_id,
+            before_order: original_order,
+            after_order: sorted_order,
+        });
         Ok(true)
     }
 
@@ -574,10 +890,16 @@ impl Board {
             return Ok(false);
         }
 
+        let before = column.wip_limit;
         let now = timestamp();
         column.wip_limit = wip_limit;
         column.updated_at = now;
         self.updated_at = now;
+        self.push_operation(BoardOperation::SetColumnWipLimit {
+            column_id,
+            before,
+            after: wip_limit,
+        });
         Ok(true)
     }
 
@@ -603,8 +925,10 @@ impl Board {
             created_at: now,
             updated_at: now,
         });
+        let tag = self.tags.last().cloned().expect("new tag exists");
         self.next_tag_id += 1;
         self.updated_at = now;
+        self.push_operation(BoardOperation::AddTag { tag });
         Ok(id)
     }
 
@@ -624,18 +948,27 @@ impl Board {
         {
             return Err(BoardError::DuplicateTagName(name));
         }
-        let tag = self
-            .tags
-            .iter_mut()
-            .find(|tag| tag.id == tag_id)
-            .ok_or(BoardError::TagNotFound(tag_id))?;
-        if tag.name == name {
-            return Ok(false);
-        }
-        let now = timestamp();
-        tag.name = name;
-        tag.updated_at = now;
-        self.updated_at = now;
+        let before = {
+            let tag = self
+                .tags
+                .iter_mut()
+                .find(|tag| tag.id == tag_id)
+                .ok_or(BoardError::TagNotFound(tag_id))?;
+            if tag.name == name {
+                return Ok(false);
+            }
+            let before = tag.name.clone();
+            let now = timestamp();
+            tag.name = name.clone();
+            tag.updated_at = now;
+            before
+        };
+        self.updated_at = timestamp();
+        self.push_operation(BoardOperation::RenameTag {
+            tag_id,
+            before,
+            after: name,
+        });
         Ok(true)
     }
 
@@ -645,18 +978,27 @@ impl Board {
         color: impl Into<String>,
     ) -> Result<bool, BoardError> {
         let color = color.into();
-        let tag = self
-            .tags
-            .iter_mut()
-            .find(|tag| tag.id == tag_id)
-            .ok_or(BoardError::TagNotFound(tag_id))?;
-        if tag.color == color {
-            return Ok(false);
-        }
-        let now = timestamp();
-        tag.color = color;
-        tag.updated_at = now;
-        self.updated_at = now;
+        let before = {
+            let tag = self
+                .tags
+                .iter_mut()
+                .find(|tag| tag.id == tag_id)
+                .ok_or(BoardError::TagNotFound(tag_id))?;
+            if tag.color == color {
+                return Ok(false);
+            }
+            let before = tag.color.clone();
+            let now = timestamp();
+            tag.color = color.clone();
+            tag.updated_at = now;
+            before
+        };
+        self.updated_at = timestamp();
+        self.push_operation(BoardOperation::SetTagColor {
+            tag_id,
+            before,
+            after: color,
+        });
         Ok(true)
     }
 
@@ -666,7 +1008,20 @@ impl Board {
             .iter()
             .position(|tag| tag.id == tag_id)
             .ok_or(BoardError::TagNotFound(tag_id))?;
-        self.tags.remove(index);
+        let active_card_tags = self
+            .columns
+            .iter()
+            .flat_map(|column| column.cards.iter())
+            .filter(|card| card.tag_ids.contains(&tag_id))
+            .map(|card| (card.id, card.tag_ids.clone()))
+            .collect::<Vec<_>>();
+        let archived_card_tags = self
+            .archived_cards
+            .iter()
+            .filter(|card| card.tag_ids.contains(&tag_id))
+            .map(|card| (card.id, card.tag_ids.clone()))
+            .collect::<Vec<_>>();
+        let tag = self.tags.remove(index);
         for column in &mut self.columns {
             for card in &mut column.cards {
                 card.tag_ids.retain(|id| *id != tag_id);
@@ -676,6 +1031,12 @@ impl Board {
             card.tag_ids.retain(|id| *id != tag_id);
         }
         self.updated_at = timestamp();
+        self.push_operation(BoardOperation::RemoveTag {
+            tag,
+            index,
+            active_card_tags,
+            archived_card_tags,
+        });
         Ok(())
     }
 
@@ -701,10 +1062,17 @@ impl Board {
         if card.tag_ids == tag_ids {
             return Ok(false);
         }
+        let before = card.tag_ids.clone();
+        let after = tag_ids.clone();
         let now = timestamp();
         card.tag_ids = tag_ids;
         card.updated_at = now;
         self.updated_at = now;
+        self.push_operation(BoardOperation::SetCardTags {
+            card_id,
+            before,
+            after,
+        });
         Ok(true)
     }
 
@@ -722,8 +1090,13 @@ impl Board {
             self.columns.len() as i64,
             now,
         ));
+        let column = self.columns.last().cloned().expect("new column exists");
         self.next_column_id += 1;
         self.updated_at = now;
+        self.push_operation(BoardOperation::AddColumn {
+            column,
+            index: self.columns.len() - 1,
+        });
         Ok(id)
     }
 
@@ -736,20 +1109,29 @@ impl Board {
         if name.trim().is_empty() {
             return Err(BoardError::EmptyColumnName);
         }
-        let column = self
-            .columns
-            .iter_mut()
-            .find(|column| column.id == column_id)
-            .ok_or(BoardError::ColumnNotFound(column_id))?;
+        let before = {
+            let column = self
+                .columns
+                .iter_mut()
+                .find(|column| column.id == column_id)
+                .ok_or(BoardError::ColumnNotFound(column_id))?;
 
-        if column.name == name {
-            return Ok(false);
-        }
+            if column.name == name {
+                return Ok(false);
+            }
 
-        let now = timestamp();
-        column.name = name;
-        column.updated_at = now;
-        self.updated_at = now;
+            let before = column.name.clone();
+            let now = timestamp();
+            column.name = name.clone();
+            column.updated_at = now;
+            before
+        };
+        self.updated_at = timestamp();
+        self.push_operation(BoardOperation::RenameColumn {
+            column_id,
+            before,
+            after: name,
+        });
         Ok(true)
     }
 
@@ -768,11 +1150,14 @@ impl Board {
             .find(|column| column.id != column_id)
             .expect("there is another column")
             .id;
-        let deleted_card_ids = self.columns[index]
-            .cards
+        let column = self.columns[index].clone();
+        let archived_card_column_ids = self
+            .archived_cards
             .iter()
-            .map(|card| card.id)
+            .filter(|card| card.column_id == column_id)
+            .map(|card| (card.id, card.column_id))
             .collect::<Vec<_>>();
+        let deleted_card_ids = column.cards.iter().map(|card| card.id).collect::<Vec<_>>();
         self.columns.remove(index);
         let now = timestamp();
         for card in &mut self.archived_cards {
@@ -791,6 +1176,537 @@ impl Board {
                 to_column_id: None,
                 at: now,
             }));
+        self.push_operation(BoardOperation::RemoveColumn {
+            column,
+            index,
+            fallback_column_id,
+            archived_card_column_ids,
+        });
+        Ok(())
+    }
+
+    pub fn can_undo(&self) -> bool {
+        !self.undo_stack.is_empty()
+    }
+
+    pub fn can_redo(&self) -> bool {
+        !self.redo_stack.is_empty()
+    }
+
+    pub fn undo(&mut self) -> Result<bool, BoardError> {
+        let Some(operation) = self.undo_stack.pop() else {
+            return Ok(false);
+        };
+        if let Err(error) = self.apply_operation(&operation, true) {
+            self.undo_stack.push(operation);
+            return Err(error);
+        }
+        self.redo_stack.push(operation);
+        Ok(true)
+    }
+
+    pub fn redo(&mut self) -> Result<bool, BoardError> {
+        let Some(operation) = self.redo_stack.pop() else {
+            return Ok(false);
+        };
+        if let Err(error) = self.apply_operation(&operation, false) {
+            self.redo_stack.push(operation);
+            return Err(error);
+        }
+        self.undo_stack.push(operation);
+        Ok(true)
+    }
+
+    fn push_operation(&mut self, operation: BoardOperation) {
+        self.undo_stack.push(operation);
+        self.redo_stack.clear();
+    }
+
+    fn apply_operation(
+        &mut self,
+        operation: &BoardOperation,
+        undo: bool,
+    ) -> Result<(), BoardError> {
+        match operation {
+            BoardOperation::MoveCard {
+                card_id,
+                from_column_id,
+                from_index,
+                to_column_id,
+                to_index,
+            } => {
+                if undo {
+                    self.move_card_raw(*card_id, *from_column_id, *from_index)?;
+                } else {
+                    self.move_card_raw(*card_id, *to_column_id, *to_index)?;
+                }
+            }
+            BoardOperation::MoveColumn {
+                column_id,
+                from_index,
+                to_index,
+            } => {
+                self.move_column_raw(*column_id, if undo { *from_index } else { *to_index })?;
+            }
+            BoardOperation::AddCard { card } => {
+                if undo {
+                    self.remove_active_card(card.id)?;
+                } else {
+                    self.insert_active_card(card.clone(), card.position as usize)?;
+                    self.next_card_id = self.next_card_id.max(card.id + 1);
+                }
+            }
+            BoardOperation::UpdateCard {
+                card_id,
+                before_title,
+                before_description,
+                after_title,
+                after_description,
+            } => {
+                self.update_card_raw(
+                    *card_id,
+                    if undo { before_title } else { after_title },
+                    if undo {
+                        before_description
+                    } else {
+                        after_description
+                    },
+                )?;
+            }
+            BoardOperation::EditCard {
+                card_id,
+                before_title,
+                before_description,
+                before_due_date,
+                before_tag_ids,
+                after_title,
+                after_description,
+                after_due_date,
+                after_tag_ids,
+            } => {
+                self.update_card_raw(
+                    *card_id,
+                    if undo { before_title } else { after_title },
+                    if undo {
+                        before_description
+                    } else {
+                        after_description
+                    },
+                )?;
+                self.set_due_date_raw(
+                    *card_id,
+                    if undo {
+                        *before_due_date
+                    } else {
+                        *after_due_date
+                    },
+                )?;
+                self.set_card_tags_raw(
+                    *card_id,
+                    if undo { before_tag_ids } else { after_tag_ids },
+                )?;
+            }
+            BoardOperation::DeleteCard { card, index } => {
+                if undo {
+                    self.insert_active_card(card.clone(), *index)?;
+                } else {
+                    self.remove_active_card(card.id)?;
+                }
+            }
+            BoardOperation::ArchiveCard {
+                card,
+                archived_card,
+                index,
+                archived_index,
+            } => {
+                if undo {
+                    self.remove_archived_card(card.id)?;
+                    self.insert_active_card(card.clone(), *index)?;
+                } else {
+                    self.remove_active_card(card.id)?;
+                    let index = (*archived_index).min(self.archived_cards.len());
+                    self.archived_cards.insert(index, archived_card.clone());
+                }
+                self.reindex();
+            }
+            BoardOperation::ArchiveColumn {
+                cards,
+                archived_start,
+                ..
+            } => {
+                if undo {
+                    for operation in cards {
+                        self.remove_archived_card(operation.card.id)?;
+                        self.insert_active_card(operation.card.clone(), operation.index)?;
+                    }
+                } else {
+                    for operation in cards {
+                        self.remove_active_card(operation.card.id)?;
+                        let index =
+                            (*archived_start + operation.index).min(self.archived_cards.len());
+                        self.archived_cards
+                            .insert(index, operation.archived_card.clone());
+                    }
+                }
+                self.reindex();
+            }
+            BoardOperation::RestoreCard {
+                archived_card,
+                restored_card,
+                index,
+                archive_index,
+            } => {
+                if undo {
+                    self.remove_active_card(restored_card.id)?;
+                    let archive_index = (*archive_index).min(self.archived_cards.len());
+                    self.archived_cards
+                        .insert(archive_index, archived_card.clone());
+                } else {
+                    self.remove_archived_card(archived_card.id)?;
+                    self.insert_active_card(restored_card.clone(), *index)?;
+                }
+                self.reindex();
+            }
+            BoardOperation::SetDueDate {
+                card_id,
+                before,
+                after,
+            } => self.set_due_date_raw(*card_id, if undo { *before } else { *after })?,
+            BoardOperation::SortColumnByDueDate {
+                column_id,
+                before_order,
+                after_order,
+            } => self.sort_column_raw(*column_id, if undo { before_order } else { after_order })?,
+            BoardOperation::SetColumnWipLimit {
+                column_id,
+                before,
+                after,
+            } => self.set_column_wip_limit_raw(*column_id, if undo { *before } else { *after })?,
+            BoardOperation::AddTag { tag } => {
+                if undo {
+                    self.remove_tag_raw(tag.id)?;
+                } else {
+                    self.tags.push(tag.clone());
+                    self.next_tag_id = self.next_tag_id.max(tag.id + 1);
+                }
+            }
+            BoardOperation::RenameTag {
+                tag_id,
+                before,
+                after,
+            } => self.rename_tag_raw(*tag_id, if undo { before } else { after })?,
+            BoardOperation::SetTagColor {
+                tag_id,
+                before,
+                after,
+            } => self.set_tag_color_raw(*tag_id, if undo { before } else { after })?,
+            BoardOperation::RemoveTag {
+                tag,
+                index,
+                active_card_tags,
+                archived_card_tags,
+            } => {
+                if undo {
+                    self.tags.insert(*index, tag.clone());
+                    self.restore_card_tags(active_card_tags);
+                    self.restore_card_tags(archived_card_tags);
+                } else {
+                    self.remove_tag_raw(tag.id)?;
+                }
+            }
+            BoardOperation::SetCardTags {
+                card_id,
+                before,
+                after,
+            } => self.set_card_tags_raw(*card_id, if undo { before } else { after })?,
+            BoardOperation::AddColumn { column, index } => {
+                if undo {
+                    self.remove_column_raw(column.id)?;
+                } else {
+                    self.columns.insert(*index, column.clone());
+                    self.next_column_id = self.next_column_id.max(column.id + 1);
+                    self.reindex();
+                }
+            }
+            BoardOperation::RenameColumn {
+                column_id,
+                before,
+                after,
+            } => self.rename_column_raw(*column_id, if undo { before } else { after })?,
+            BoardOperation::RemoveColumn {
+                column,
+                index,
+                fallback_column_id,
+                archived_card_column_ids,
+            } => {
+                if undo {
+                    self.columns.insert(*index, column.clone());
+                    for (card_id, column_id) in archived_card_column_ids {
+                        if let Some(card) = self
+                            .archived_cards
+                            .iter_mut()
+                            .find(|card| card.id == *card_id)
+                        {
+                            card.column_id = *column_id;
+                        }
+                    }
+                } else {
+                    self.remove_column_raw(column.id)?;
+                    for (card_id, _) in archived_card_column_ids {
+                        if let Some(card) = self
+                            .archived_cards
+                            .iter_mut()
+                            .find(|card| card.id == *card_id)
+                        {
+                            card.column_id = *fallback_column_id;
+                        }
+                    }
+                }
+                self.reindex();
+            }
+        }
+        self.updated_at = timestamp();
+        Ok(())
+    }
+
+    fn active_card_location(&self, card_id: CardId) -> Option<(usize, usize)> {
+        self.columns
+            .iter()
+            .enumerate()
+            .find_map(|(column_index, column)| {
+                column
+                    .cards
+                    .iter()
+                    .position(|card| card.id == card_id)
+                    .map(|card_index| (column_index, card_index))
+            })
+    }
+
+    fn remove_active_card(&mut self, card_id: CardId) -> Result<Card, BoardError> {
+        let (column_index, card_index) = self
+            .active_card_location(card_id)
+            .ok_or(BoardError::CardNotFound(card_id))?;
+        let card = self.columns[column_index].cards.remove(card_index);
+        self.reindex();
+        Ok(card)
+    }
+
+    fn insert_active_card(&mut self, mut card: Card, index: usize) -> Result<(), BoardError> {
+        let column = self
+            .columns
+            .iter_mut()
+            .find(|column| column.id == card.column_id)
+            .ok_or(BoardError::ColumnNotFound(card.column_id))?;
+        card.archived_at = None;
+        let index = index.min(column.cards.len());
+        column.cards.insert(index, card);
+        self.reindex();
+        Ok(())
+    }
+
+    fn remove_archived_card(&mut self, card_id: CardId) -> Result<Card, BoardError> {
+        let index = self
+            .archived_cards
+            .iter()
+            .position(|card| card.id == card_id)
+            .ok_or(BoardError::CardNotFound(card_id))?;
+        Ok(self.archived_cards.remove(index))
+    }
+
+    fn move_card_raw(
+        &mut self,
+        card_id: CardId,
+        target_column_id: ColumnId,
+        target_index: usize,
+    ) -> Result<(), BoardError> {
+        let card = self.remove_active_card(card_id)?;
+        let mut card = card;
+        card.column_id = target_column_id;
+        self.insert_active_card(card, target_index)
+    }
+
+    fn move_column_raw(
+        &mut self,
+        column_id: ColumnId,
+        target_index: usize,
+    ) -> Result<(), BoardError> {
+        let source_index = self
+            .columns
+            .iter()
+            .position(|column| column.id == column_id)
+            .ok_or(BoardError::ColumnNotFound(column_id))?;
+        let column = self.columns.remove(source_index);
+        let target_index = target_index.min(self.columns.len());
+        self.columns.insert(target_index, column);
+        self.reindex();
+        Ok(())
+    }
+
+    fn update_card_raw(
+        &mut self,
+        card_id: CardId,
+        title: &str,
+        description: &str,
+    ) -> Result<(), BoardError> {
+        let card = self
+            .columns
+            .iter_mut()
+            .flat_map(|column| column.cards.iter_mut())
+            .find(|card| card.id == card_id)
+            .ok_or(BoardError::CardNotFound(card_id))?;
+        card.title = title.to_string();
+        card.description = description.to_string();
+        card.updated_at = timestamp();
+        Ok(())
+    }
+
+    fn set_due_date_raw(
+        &mut self,
+        card_id: CardId,
+        due_date: Option<NaiveDate>,
+    ) -> Result<(), BoardError> {
+        let card = self
+            .columns
+            .iter_mut()
+            .flat_map(|column| column.cards.iter_mut())
+            .find(|card| card.id == card_id)
+            .ok_or(BoardError::CardNotFound(card_id))?;
+        card.due_date = due_date;
+        card.updated_at = timestamp();
+        Ok(())
+    }
+
+    fn sort_column_raw(&mut self, column_id: ColumnId, order: &[CardId]) -> Result<(), BoardError> {
+        let column = self
+            .columns
+            .iter_mut()
+            .find(|column| column.id == column_id)
+            .ok_or(BoardError::ColumnNotFound(column_id))?;
+        let cards = std::mem::take(&mut column.cards);
+        let mut reordered = Vec::with_capacity(cards.len());
+        let mut remaining = cards;
+        for card_id in order {
+            let index = remaining
+                .iter()
+                .position(|card| card.id == *card_id)
+                .ok_or(BoardError::CardNotFound(*card_id))?;
+            reordered.push(remaining.remove(index));
+        }
+        if !remaining.is_empty() {
+            return Err(BoardError::CardNotFound(remaining[0].id));
+        }
+        column.cards = reordered;
+        self.reindex();
+        Ok(())
+    }
+
+    fn set_column_wip_limit_raw(
+        &mut self,
+        column_id: ColumnId,
+        wip_limit: Option<i64>,
+    ) -> Result<(), BoardError> {
+        let column = self
+            .columns
+            .iter_mut()
+            .find(|column| column.id == column_id)
+            .ok_or(BoardError::ColumnNotFound(column_id))?;
+        column.wip_limit = wip_limit;
+        column.updated_at = timestamp();
+        Ok(())
+    }
+
+    fn remove_tag_raw(&mut self, tag_id: TagId) -> Result<(), BoardError> {
+        let index = self
+            .tags
+            .iter()
+            .position(|tag| tag.id == tag_id)
+            .ok_or(BoardError::TagNotFound(tag_id))?;
+        self.tags.remove(index);
+        for column in &mut self.columns {
+            for card in &mut column.cards {
+                card.tag_ids.retain(|id| *id != tag_id);
+            }
+        }
+        for card in &mut self.archived_cards {
+            card.tag_ids.retain(|id| *id != tag_id);
+        }
+        Ok(())
+    }
+
+    fn restore_card_tags(&mut self, assignments: &[(CardId, Vec<TagId>)]) {
+        for (card_id, tag_ids) in assignments {
+            if let Some(card) = self
+                .columns
+                .iter_mut()
+                .flat_map(|column| column.cards.iter_mut())
+                .find(|card| card.id == *card_id)
+                .or_else(|| {
+                    self.archived_cards
+                        .iter_mut()
+                        .find(|card| card.id == *card_id)
+                })
+            {
+                card.tag_ids = tag_ids.clone();
+            }
+        }
+    }
+
+    fn rename_tag_raw(&mut self, tag_id: TagId, name: &str) -> Result<(), BoardError> {
+        let tag = self
+            .tags
+            .iter_mut()
+            .find(|tag| tag.id == tag_id)
+            .ok_or(BoardError::TagNotFound(tag_id))?;
+        tag.name = name.to_string();
+        tag.updated_at = timestamp();
+        Ok(())
+    }
+
+    fn set_tag_color_raw(&mut self, tag_id: TagId, color: &str) -> Result<(), BoardError> {
+        let tag = self
+            .tags
+            .iter_mut()
+            .find(|tag| tag.id == tag_id)
+            .ok_or(BoardError::TagNotFound(tag_id))?;
+        tag.color = color.to_string();
+        tag.updated_at = timestamp();
+        Ok(())
+    }
+
+    fn set_card_tags_raw(&mut self, card_id: CardId, tag_ids: &[TagId]) -> Result<(), BoardError> {
+        let card = self
+            .columns
+            .iter_mut()
+            .flat_map(|column| column.cards.iter_mut())
+            .find(|card| card.id == card_id)
+            .ok_or(BoardError::CardNotFound(card_id))?;
+        card.tag_ids = tag_ids.to_vec();
+        card.updated_at = timestamp();
+        Ok(())
+    }
+
+    fn rename_column_raw(&mut self, column_id: ColumnId, name: &str) -> Result<(), BoardError> {
+        let column = self
+            .columns
+            .iter_mut()
+            .find(|column| column.id == column_id)
+            .ok_or(BoardError::ColumnNotFound(column_id))?;
+        column.name = name.to_string();
+        column.updated_at = timestamp();
+        Ok(())
+    }
+
+    fn remove_column_raw(&mut self, column_id: ColumnId) -> Result<(), BoardError> {
+        let index = self
+            .columns
+            .iter()
+            .position(|column| column.id == column_id)
+            .ok_or(BoardError::ColumnNotFound(column_id))?;
+        if self.columns.len() == 1 {
+            return Err(BoardError::LastColumn);
+        }
+        self.columns.remove(index);
+        self.reindex();
         Ok(())
     }
 
@@ -941,6 +1857,29 @@ mod tests {
             .unwrap());
         assert_eq!(board.columns[0].cards[0].title, "更新したタイトル");
         assert_eq!(board.columns[0].cards[0].description, "更新した説明");
+    }
+
+    #[test]
+    fn undoes_a_card_editor_save_as_one_operation() {
+        let mut board = Board::demo();
+        let card_id = board.columns[0].cards[0].id;
+        let tag_id = board.add_tag("重要", "#ef4444").unwrap();
+        let due_date = NaiveDate::from_ymd_opt(2026, 9, 30).unwrap();
+
+        board
+            .update_card_details(card_id, "更新", "説明", Some(due_date), vec![tag_id])
+            .unwrap();
+        assert!(board.undo().unwrap());
+        let card = &board.columns[0].cards[0];
+        assert_eq!(card.title, "GPUI の画面を作る");
+        assert_eq!(card.description, "カラムとカードを表示する");
+        assert_eq!(card.due_date, None);
+        assert!(card.tag_ids.is_empty());
+        assert!(board.redo().unwrap());
+        let card = &board.columns[0].cards[0];
+        assert_eq!(card.title, "更新");
+        assert_eq!(card.due_date, Some(due_date));
+        assert_eq!(card.tag_ids, vec![tag_id]);
     }
 
     #[test]
@@ -1223,6 +2162,49 @@ mod tests {
         assert_eq!(board.pending_events.len(), 1);
         assert_eq!(board.pending_events[0].card_id, remaining_card_id);
         assert_eq!(board.pending_events[0].kind, CardEventKind::Deleted);
+    }
+
+    #[test]
+    fn undoes_and_redoes_card_operations_without_reusing_snapshots() {
+        let mut board = Board::demo();
+        let card_id = board.columns[0].cards[0].id;
+        let original_title = board.columns[0].cards[0].title.clone();
+
+        assert!(board.move_card(card_id, 2, 0).unwrap());
+        assert!(board.can_undo());
+        assert!(!board.can_redo());
+        assert_eq!(board.columns[1].cards[0].id, card_id);
+
+        assert!(board.undo().unwrap());
+        assert_eq!(board.columns[0].cards[0].id, card_id);
+        assert!(!board.can_undo());
+        assert!(board.can_redo());
+
+        assert!(board.redo().unwrap());
+        assert_eq!(board.columns[1].cards[0].id, card_id);
+
+        assert!(board.update_card(card_id, "更新", "説明").unwrap());
+        assert!(board.undo().unwrap());
+        assert_eq!(board.columns[1].cards[0].title, original_title);
+        assert!(board.redo().unwrap());
+        assert_eq!(board.columns[1].cards[0].title, "更新");
+    }
+
+    #[test]
+    fn a_new_operation_clears_redo_history() {
+        let mut board = Board::demo();
+        let card_id = board.columns[0].cards[0].id;
+
+        board
+            .set_card_due_date(card_id, Some(NaiveDate::from_ymd_opt(2026, 9, 30).unwrap()))
+            .unwrap();
+        board.undo().unwrap();
+        assert!(board.can_redo());
+
+        board
+            .set_card_due_date(card_id, Some(NaiveDate::from_ymd_opt(2026, 10, 1).unwrap()))
+            .unwrap();
+        assert!(!board.can_redo());
     }
 
     #[test]

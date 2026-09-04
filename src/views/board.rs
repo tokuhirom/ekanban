@@ -1,3 +1,9 @@
+use std::{
+    collections::VecDeque,
+    path::PathBuf,
+    sync::{Arc, Mutex},
+};
+
 use chrono::{Datelike, Duration, Local, NaiveDate, Weekday};
 use gpui_kit::{
     component::dialog::DialogButtonProps,
@@ -8,17 +14,17 @@ use gpui_kit::{
     component::{button::Button, button::ButtonVariants as _},
     div,
     prelude::*,
-    px, rgb, rgba, Context, Entity, Half, IntoElement, KeyDownEvent, Pixels, Point, Render,
-    SharedString, Window,
+    px, rgb, rgba, Context, Entity, Focusable as _, Half, IntoElement, KeyDownEvent, Pixels, Point,
+    Render, SharedString, Window,
 };
 
 use crate::{
     actions::{
-        About, AddCard, AddColumn, AddTag, CancelEdit, ClearSearch, CloseWindow, FocusSearch,
+        About, AddCard, AddColumn, AddTag, CancelEdit, ClearSearch, CloseWindow, FocusSearch, Redo,
         SaveEdit, ShowAllCards, ShowOverdueCards, ShowThisWeekCards, ToggleArchiveView,
-        ToggleFullscreen,
+        ToggleFullscreen, Undo,
     },
-    db::Database,
+    db::{save_board_snapshot, DbError},
     model::{
         card_matches_search, due_status, parse_due_date, parse_wip_limit, Board, BoardError, Card,
         CardId, Column, ColumnId, DueStatus, Tag, TagId,
@@ -90,6 +96,34 @@ struct TagEditor {
     color: Entity<InputState>,
 }
 
+enum SaveFailure {
+    None,
+    ClearCardEditor,
+    RestoreCardEditor(CardEditor),
+    RestoreColumnEditor(ColumnEditor),
+    RestoreTagEditor(TagEditor),
+    RestoreTagState {
+        tag_id: TagId,
+        editor: Option<TagEditor>,
+        filter_was_selected: bool,
+    },
+}
+
+struct PendingSave {
+    id: u64,
+    snapshot: Board,
+    before: Board,
+    success_message: String,
+    on_failure: SaveFailure,
+}
+
+struct ActiveSave {
+    id: u64,
+    before: Board,
+    success_message: String,
+    on_failure: SaveFailure,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum DueFilter {
     None,
@@ -124,7 +158,11 @@ impl Render for ColumnDragPreview {
 
 pub struct BoardView {
     board: Board,
-    database: Database,
+    database_path: PathBuf,
+    save_lock: Arc<Mutex<()>>,
+    next_save_id: u64,
+    pending_saves: VecDeque<PendingSave>,
+    active_save: Option<ActiveSave>,
     status: Option<String>,
     editing_card: Option<CardEditor>,
     editing_column: Option<ColumnEditor>,
@@ -139,14 +177,18 @@ pub struct BoardView {
 impl BoardView {
     pub fn new(
         board: Board,
-        database: Database,
+        database_path: PathBuf,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("タイトル・説明を検索"));
         Self {
             board,
-            database,
+            database_path,
+            save_lock: Arc::new(Mutex::new(())),
+            next_save_id: 0,
+            pending_saves: VecDeque::new(),
+            active_save: None,
             status: None,
             editing_card: None,
             editing_column: None,
@@ -164,6 +206,106 @@ impl BoardView {
         self.board.discard_pending_events();
     }
 
+    fn enqueue_save(
+        &mut self,
+        before: Board,
+        success_message: impl Into<String>,
+        on_failure: SaveFailure,
+        cx: &mut Context<Self>,
+    ) {
+        self.next_save_id += 1;
+        self.pending_saves.push_back(PendingSave {
+            id: self.next_save_id,
+            snapshot: self.board.clone(),
+            before,
+            success_message: success_message.into(),
+            on_failure,
+        });
+        // The snapshot owns the events produced by this operation. New
+        // operations append to the live board while this snapshot is being
+        // written, so they can be saved independently by the next request.
+        self.board.pending_events.clear();
+        self.status = Some("保存中…".to_string());
+        self.start_next_save(cx);
+    }
+
+    fn start_next_save(&mut self, cx: &mut Context<Self>) {
+        if self.active_save.is_some() {
+            return;
+        }
+        let Some(pending) = self.pending_saves.pop_front() else {
+            return;
+        };
+
+        let id = pending.id;
+        let path = self.database_path.clone();
+        let save_lock = self.save_lock.clone();
+        let snapshot = pending.snapshot;
+        self.active_save = Some(ActiveSave {
+            id,
+            before: pending.before,
+            success_message: pending.success_message,
+            on_failure: pending.on_failure,
+        });
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    let _guard = save_lock.lock().expect("save worker mutex was poisoned");
+                    save_board_snapshot(path, snapshot)
+                })
+                .await;
+            let _ = this.update(cx, |view, cx| view.finish_save(id, result, cx));
+        })
+        .detach();
+    }
+
+    fn finish_save(&mut self, id: u64, result: Result<(), DbError>, cx: &mut Context<Self>) {
+        let Some(active) = self.active_save.take() else {
+            return;
+        };
+        if active.id != id {
+            self.active_save = Some(active);
+            return;
+        }
+        match result {
+            Ok(()) => {
+                if self.pending_saves.is_empty() {
+                    self.status = Some(active.success_message);
+                } else {
+                    self.status = Some("保存中…".to_string());
+                }
+                self.start_next_save(cx);
+            }
+            Err(error) => {
+                // Requests are started only after the preceding request has
+                // succeeded. Therefore all queued snapshots include the
+                // failed state and must be discarded together with it.
+                self.pending_saves.clear();
+                self.rollback_board(active.before);
+                match active.on_failure {
+                    SaveFailure::None => {}
+                    SaveFailure::ClearCardEditor => self.editing_card = None,
+                    SaveFailure::RestoreCardEditor(editor) => self.editing_card = Some(editor),
+                    SaveFailure::RestoreColumnEditor(editor) => self.editing_column = Some(editor),
+                    SaveFailure::RestoreTagEditor(editor) => self.editing_tag = Some(editor),
+                    SaveFailure::RestoreTagState {
+                        tag_id,
+                        editor,
+                        filter_was_selected,
+                    } => {
+                        if filter_was_selected {
+                            self.tag_filter = Some(tag_id);
+                        }
+                        self.editing_tag = editor;
+                    }
+                }
+                self.status = Some(format!("保存に失敗しました: {error}"));
+            }
+        }
+        cx.notify();
+    }
+
     fn move_card(
         &mut self,
         card_id: CardId,
@@ -177,13 +319,7 @@ impl BoardView {
             .move_card(card_id, target_column_id, target_index)
         {
             Ok(false) => return,
-            Ok(true) => match self.database.save_board(&mut self.board) {
-                Ok(()) => self.status = Some("保存しました".to_string()),
-                Err(error) => {
-                    self.rollback_board(before);
-                    self.status = Some(format!("保存に失敗しました: {error}"));
-                }
-            },
+            Ok(true) => self.enqueue_save(before, "保存しました", SaveFailure::None, cx),
             Err(error) => self.status = Some(format_move_error(error)),
         }
         cx.notify();
@@ -193,13 +329,7 @@ impl BoardView {
         let before = self.board.clone();
         match self.board.move_column(column_id, target_index) {
             Ok(false) => return,
-            Ok(true) => match self.database.save_board(&mut self.board) {
-                Ok(()) => self.status = Some("カラムを並べ替えました".to_string()),
-                Err(error) => {
-                    self.rollback_board(before);
-                    self.status = Some(format!("保存に失敗しました: {error}"));
-                }
-            },
+            Ok(true) => self.enqueue_save(before, "カラムを並べ替えました", SaveFailure::None, cx),
             Err(error) => self.status = Some(format_move_error(error)),
         }
         cx.notify();
@@ -219,16 +349,15 @@ impl BoardView {
             .board
             .add_card(column_id, "新しいカード", "説明を追加してください");
         match result {
-            Ok(card_id) => match self.database.save_board(&mut self.board) {
-                Ok(()) => {
-                    self.status = Some("カードを追加しました".to_string());
-                    self.begin_card_edit(card_id, window, cx);
-                }
-                Err(error) => {
-                    self.rollback_board(before);
-                    self.status = Some(format!("保存に失敗しました: {error}"));
-                }
-            },
+            Ok(card_id) => {
+                self.begin_card_edit(card_id, window, cx);
+                self.enqueue_save(
+                    before,
+                    "カードを追加しました",
+                    SaveFailure::ClearCardEditor,
+                    cx,
+                );
+            }
             Err(error) => self.status = Some(format_move_error(error)),
         }
         cx.notify();
@@ -309,29 +438,15 @@ impl BoardView {
         };
         let before = self.board.clone();
 
-        let content_changed = match self.board.update_card(editor.card_id, title, description) {
+        let changed = match self.board.update_card_details(
+            editor.card_id,
+            title,
+            description,
+            due_date,
+            tag_ids,
+        ) {
             Ok(changed) => changed,
             Err(error) => {
-                self.editing_card = Some(editor);
-                self.status = Some(format_card_error(error));
-                cx.notify();
-                return;
-            }
-        };
-        let due_date_changed = match self.board.set_card_due_date(editor.card_id, due_date) {
-            Ok(changed) => changed,
-            Err(error) => {
-                self.rollback_board(before);
-                self.editing_card = Some(editor);
-                self.status = Some(format_card_error(error));
-                cx.notify();
-                return;
-            }
-        };
-        let tags_changed = match self.board.set_card_tags(editor.card_id, tag_ids) {
-            Ok(changed) => changed,
-            Err(error) => {
-                self.rollback_board(before);
                 self.editing_card = Some(editor);
                 self.status = Some(format_card_error(error));
                 cx.notify();
@@ -339,17 +454,15 @@ impl BoardView {
             }
         };
 
-        if !content_changed && !due_date_changed && !tags_changed {
+        if !changed {
             self.status = Some("カードに変更はありません".to_string());
         } else {
-            match self.database.save_board(&mut self.board) {
-                Ok(()) => self.status = Some("カードを更新しました".to_string()),
-                Err(error) => {
-                    self.rollback_board(before);
-                    self.editing_card = Some(editor);
-                    self.status = Some(format!("保存に失敗しました: {error}"));
-                }
-            }
+            self.enqueue_save(
+                before,
+                "カードを更新しました",
+                SaveFailure::RestoreCardEditor(editor),
+                cx,
+            );
         }
         cx.notify();
     }
@@ -357,22 +470,21 @@ impl BoardView {
     fn delete_card(&mut self, card_id: CardId, cx: &mut Context<Self>) {
         let before = self.board.clone();
         match self.board.delete_card(card_id) {
-            Ok(()) => match self.database.save_board(&mut self.board) {
-                Ok(()) => {
-                    if self
-                        .editing_card
-                        .as_ref()
-                        .is_some_and(|editor| editor.card_id == card_id)
-                    {
-                        self.editing_card = None;
-                    }
-                    self.status = Some("カードを削除しました".to_string());
-                }
-                Err(error) => {
-                    self.rollback_board(before);
-                    self.status = Some(format!("保存に失敗しました: {error}"));
-                }
-            },
+            Ok(()) => {
+                let on_failure = if self
+                    .editing_card
+                    .as_ref()
+                    .is_some_and(|editor| editor.card_id == card_id)
+                {
+                    self.editing_card
+                        .take()
+                        .map(SaveFailure::RestoreCardEditor)
+                        .unwrap_or(SaveFailure::None)
+                } else {
+                    SaveFailure::None
+                };
+                self.enqueue_save(before, "カードを削除しました", on_failure, cx);
+            }
             Err(error) => self.status = Some(format_card_error(error)),
         }
         cx.notify();
@@ -381,22 +493,21 @@ impl BoardView {
     fn archive_card(&mut self, card_id: CardId, cx: &mut Context<Self>) {
         let before = self.board.clone();
         match self.board.archive_card(card_id) {
-            Ok(true) => match self.database.save_board(&mut self.board) {
-                Ok(()) => {
-                    if self
-                        .editing_card
-                        .as_ref()
-                        .is_some_and(|editor| editor.card_id == card_id)
-                    {
-                        self.editing_card = None;
-                    }
-                    self.status = Some("カードをアーカイブしました".to_string());
-                }
-                Err(error) => {
-                    self.rollback_board(before);
-                    self.status = Some(format!("保存に失敗しました: {error}"));
-                }
-            },
+            Ok(true) => {
+                let on_failure = if self
+                    .editing_card
+                    .as_ref()
+                    .is_some_and(|editor| editor.card_id == card_id)
+                {
+                    self.editing_card
+                        .take()
+                        .map(SaveFailure::RestoreCardEditor)
+                        .unwrap_or(SaveFailure::None)
+                } else {
+                    SaveFailure::None
+                };
+                self.enqueue_save(before, "カードをアーカイブしました", on_failure, cx);
+            }
             Ok(false) => {}
             Err(error) => self.status = Some(format_card_error(error)),
         }
@@ -407,16 +518,19 @@ impl BoardView {
         let before = self.board.clone();
         match self.board.archive_column(column_id) {
             Ok(0) => self.status = Some("アーカイブするカードがありません".to_string()),
-            Ok(count) => match self.database.save_board(&mut self.board) {
-                Ok(()) => {
-                    self.editing_card = None;
-                    self.status = Some(format!("{count} 枚をアーカイブしました"));
-                }
-                Err(error) => {
-                    self.rollback_board(before);
-                    self.status = Some(format!("保存に失敗しました: {error}"));
-                }
-            },
+            Ok(count) => {
+                let on_failure = self
+                    .editing_card
+                    .take()
+                    .map(SaveFailure::RestoreCardEditor)
+                    .unwrap_or(SaveFailure::None);
+                self.enqueue_save(
+                    before,
+                    format!("{count} 枚をアーカイブしました"),
+                    on_failure,
+                    cx,
+                );
+            }
             Err(error) => self.status = Some(format_column_error(error)),
         }
         cx.notify();
@@ -425,13 +539,7 @@ impl BoardView {
     fn restore_card(&mut self, card_id: CardId, cx: &mut Context<Self>) {
         let before = self.board.clone();
         match self.board.restore_card(card_id) {
-            Ok(true) => match self.database.save_board(&mut self.board) {
-                Ok(()) => self.status = Some("カードを復元しました".to_string()),
-                Err(error) => {
-                    self.rollback_board(before);
-                    self.status = Some(format!("保存に失敗しました: {error}"));
-                }
-            },
+            Ok(true) => self.enqueue_save(before, "カードを復元しました", SaveFailure::None, cx),
             Ok(false) => {}
             Err(error) => self.status = Some(format_card_error(error)),
         }
@@ -557,23 +665,16 @@ impl BoardView {
 
         match result {
             Ok(false) => self.status = Some("タグに変更はありません".to_string()),
-            Ok(true) => match self.database.save_board(&mut self.board) {
-                Ok(()) => {
-                    self.status = Some(
-                        if editor.tag_id.is_some() {
-                            "タグを更新しました"
-                        } else {
-                            "タグを追加しました"
-                        }
-                        .to_string(),
-                    )
-                }
-                Err(error) => {
-                    self.rollback_board(before);
-                    self.editing_tag = Some(editor);
-                    self.status = Some(format!("保存に失敗しました: {error}"));
-                }
-            },
+            Ok(true) => self.enqueue_save(
+                before,
+                if editor.tag_id.is_some() {
+                    "タグを更新しました"
+                } else {
+                    "タグを追加しました"
+                },
+                SaveFailure::RestoreTagEditor(editor),
+                cx,
+            ),
             Err(error) => {
                 self.rollback_board(before);
                 self.editing_tag = Some(editor);
@@ -586,25 +687,31 @@ impl BoardView {
     fn delete_tag(&mut self, tag_id: TagId, cx: &mut Context<Self>) {
         let before = self.board.clone();
         match self.board.remove_tag(tag_id) {
-            Ok(()) => match self.database.save_board(&mut self.board) {
-                Ok(()) => {
-                    if self.tag_filter == Some(tag_id) {
-                        self.tag_filter = None;
-                    }
-                    if self
-                        .editing_tag
-                        .as_ref()
-                        .is_some_and(|editor| editor.tag_id == Some(tag_id))
-                    {
-                        self.editing_tag = None;
-                    }
-                    self.status = Some("タグを削除しました".to_string());
+            Ok(()) => {
+                let filter_was_selected = self.tag_filter == Some(tag_id);
+                let editor = if self
+                    .editing_tag
+                    .as_ref()
+                    .is_some_and(|editor| editor.tag_id == Some(tag_id))
+                {
+                    self.editing_tag.take()
+                } else {
+                    None
+                };
+                if filter_was_selected {
+                    self.tag_filter = None;
                 }
-                Err(error) => {
-                    self.rollback_board(before);
-                    self.status = Some(format!("保存に失敗しました: {error}"));
-                }
-            },
+                self.enqueue_save(
+                    before,
+                    "タグを削除しました",
+                    SaveFailure::RestoreTagState {
+                        tag_id,
+                        editor,
+                        filter_was_selected,
+                    },
+                    cx,
+                );
+            }
             Err(error) => self.status = Some(format_tag_error(error)),
         }
         cx.notify();
@@ -723,23 +830,16 @@ impl BoardView {
             Ok(false) => {
                 self.status = Some("カラムに変更はありません".to_string());
             }
-            Ok(true) => match self.database.save_board(&mut self.board) {
-                Ok(()) => {
-                    self.status = Some(
-                        if editor.column_id.is_some() {
-                            "カラムを更新しました"
-                        } else {
-                            "カラムを追加しました"
-                        }
-                        .to_string(),
-                    )
-                }
-                Err(error) => {
-                    self.rollback_board(before);
-                    self.editing_column = Some(editor);
-                    self.status = Some(format!("保存に失敗しました: {error}"));
-                }
-            },
+            Ok(true) => self.enqueue_save(
+                before,
+                if editor.column_id.is_some() {
+                    "カラムを更新しました"
+                } else {
+                    "カラムを追加しました"
+                },
+                SaveFailure::RestoreColumnEditor(editor),
+                cx,
+            ),
             Err(error) => {
                 self.editing_column = Some(editor);
                 self.status = Some(format_column_error(error));
@@ -795,22 +895,21 @@ impl BoardView {
     fn delete_column(&mut self, column_id: ColumnId, cx: &mut Context<Self>) {
         let before = self.board.clone();
         match self.board.remove_column(column_id) {
-            Ok(()) => match self.database.save_board(&mut self.board) {
-                Ok(()) => {
-                    if self
-                        .editing_column
-                        .as_ref()
-                        .is_some_and(|editor| editor.column_id == Some(column_id))
-                    {
-                        self.editing_column = None;
-                    }
-                    self.status = Some("カラムを削除しました".to_string());
-                }
-                Err(error) => {
-                    self.rollback_board(before);
-                    self.status = Some(format!("保存に失敗しました: {error}"));
-                }
-            },
+            Ok(()) => {
+                let on_failure = if self
+                    .editing_column
+                    .as_ref()
+                    .is_some_and(|editor| editor.column_id == Some(column_id))
+                {
+                    self.editing_column
+                        .take()
+                        .map(SaveFailure::RestoreColumnEditor)
+                        .unwrap_or(SaveFailure::None)
+                } else {
+                    SaveFailure::None
+                };
+                self.enqueue_save(before, "カラムを削除しました", on_failure, cx);
+            }
             Err(error) => self.status = Some(format_column_error(error)),
         }
         cx.notify();
@@ -822,13 +921,7 @@ impl BoardView {
             Ok(false) => {
                 self.status = Some("期限順に変更はありません".to_string());
             }
-            Ok(true) => match self.database.save_board(&mut self.board) {
-                Ok(()) => self.status = Some("期限順に並べ替えました".to_string()),
-                Err(error) => {
-                    self.rollback_board(before);
-                    self.status = Some(format!("保存に失敗しました: {error}"));
-                }
-            },
+            Ok(true) => self.enqueue_save(before, "期限順に並べ替えました", SaveFailure::None, cx),
             Err(error) => self.status = Some(format_column_error(error)),
         }
         cx.notify();
@@ -880,6 +973,46 @@ impl BoardView {
         } else if self.editing_tag.is_some() {
             self.cancel_tag_edit(cx);
         }
+    }
+
+    fn undo(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.editing_card.is_some()
+            || self.editing_column.is_some()
+            || self.editing_tag.is_some()
+            || self.search.read(cx).focus_handle(cx).is_focused(window)
+        {
+            self.status = Some("編集中は元に戻せません".to_string());
+            cx.notify();
+            return;
+        }
+
+        let before = self.board.clone();
+        match self.board.undo() {
+            Ok(false) => self.status = Some("元に戻す操作がありません".to_string()),
+            Ok(true) => self.enqueue_save(before, "元に戻しました", SaveFailure::None, cx),
+            Err(error) => self.status = Some(format!("元に戻せませんでした: {error}")),
+        }
+        cx.notify();
+    }
+
+    fn redo(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.editing_card.is_some()
+            || self.editing_column.is_some()
+            || self.editing_tag.is_some()
+            || self.search.read(cx).focus_handle(cx).is_focused(window)
+        {
+            self.status = Some("編集中はやり直せません".to_string());
+            cx.notify();
+            return;
+        }
+
+        let before = self.board.clone();
+        match self.board.redo() {
+            Ok(false) => self.status = Some("やり直す操作がありません".to_string()),
+            Ok(true) => self.enqueue_save(before, "やり直しました", SaveFailure::None, cx),
+            Err(error) => self.status = Some(format!("やり直せませんでした: {error}")),
+        }
+        cx.notify();
     }
 
     fn show_about(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1655,6 +1788,8 @@ impl Render for BoardView {
                 this.search.update(cx, |state, cx| state.focus(window, cx));
             }))
             .on_action(cx.listener(|this, _: &SaveEdit, _, cx| this.save_active_edit(cx)))
+            .on_action(cx.listener(|this, _: &Undo, window, cx| this.undo(window, cx)))
+            .on_action(cx.listener(|this, _: &Redo, window, cx| this.redo(window, cx)))
             .on_action(
                 cx.listener(|this, _: &ShowAllCards, _, cx| {
                     this.set_due_filter(DueFilter::None, cx)
