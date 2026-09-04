@@ -296,6 +296,7 @@ pub struct BoardView {
     selected_card: Option<CardId>,
     context_menu_card: Option<CardId>,
     context_menu_column: Option<ColumnId>,
+    card_panel_menu_open: bool,
     board_scroll_handle: ScrollHandle,
     column_scroll_handles: HashMap<ColumnId, ScrollHandle>,
     window_bounds: WindowBoundsState,
@@ -388,6 +389,7 @@ impl BoardView {
             selected_card: None,
             context_menu_card: None,
             context_menu_column: None,
+            card_panel_menu_open: false,
             board_scroll_handle: ScrollHandle::new(),
             column_scroll_handles: HashMap::new(),
             window_bounds,
@@ -864,6 +866,57 @@ impl BoardView {
         cx.notify();
     }
 
+    /// カードをクリックしたときに詳細パネルを開く。
+    ///
+    /// 単一クリックで開くようになったぶん、編集中に隣のカードを押す事故が起きやすい。
+    /// 未保存の入力を黙って捨てないよう、切り替える前に保存する。保存できない状態
+    /// （タイトルが空、期限の書式が不正、チェックリストの項目名が空）なら切り替えない。
+    fn open_card_panel(&mut self, card_id: CardId, window: &mut Window, cx: &mut Context<Self>) {
+        if self
+            .editing_card
+            .as_ref()
+            .is_some_and(|editor| editor.card_id == card_id)
+        {
+            return;
+        }
+        if self.editing_card.is_some() {
+            self.commit_card_edit(false, cx);
+            if self.editing_card.is_some() {
+                return;
+            }
+        }
+        self.select_card(card_id, window, cx);
+        if self.selected_card == Some(card_id) {
+            self.begin_card_edit(card_id, window, cx);
+        }
+    }
+
+    fn toggle_card_panel_menu(&mut self, cx: &mut Context<Self>) {
+        self.card_panel_menu_open = !self.card_panel_menu_open;
+        self.context_menu_card = None;
+        self.context_menu_column = None;
+        cx.notify();
+    }
+
+    /// パネルの ⋮ からのコピー。編集内容を保存してからコピーし、パネルは閉じる。
+    fn copy_card_from_panel(&mut self, card_id: CardId, cx: &mut Context<Self>) {
+        self.card_panel_menu_open = false;
+        self.commit_card_edit(false, cx);
+        if self.editing_card.is_some() {
+            return;
+        }
+        self.copy_card(card_id, cx);
+    }
+
+    fn card_edit_is_savable(&self, editor: &CardEditor, cx: &Context<Self>) -> bool {
+        !editor.title.read(cx).value().trim().is_empty()
+            && parse_due_date(editor.due_date.read(cx).value().as_ref()).is_ok()
+            && !editor
+                .checklist_items
+                .iter()
+                .any(|item| item.text.read(cx).value().trim().is_empty())
+    }
+
     fn navigate_selection(
         &mut self,
         direction: CardDirection,
@@ -1155,6 +1208,7 @@ impl BoardView {
         };
 
         self.selected_card = Some(card_id);
+        self.card_panel_menu_open = false;
         let title_input = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder("カードのタイトル")
@@ -1260,6 +1314,12 @@ impl BoardView {
     }
 
     fn save_card_edit(&mut self, cx: &mut Context<Self>) {
+        self.commit_card_edit(true, cx);
+    }
+
+    /// カードの編集を確定する。`announce_unchanged` が false のときは
+    /// 「変更はありません」を出さない。パネルを切り替えるたびに出るとうるさいため。
+    fn commit_card_edit(&mut self, announce_unchanged: bool, cx: &mut Context<Self>) {
         let Some(editor) = self.editing_card.take() else {
             return;
         };
@@ -1322,15 +1382,15 @@ impl BoardView {
             }
         };
 
-        if !changed {
-            self.set_info("カードに変更はありません");
-        } else {
+        if changed {
             self.enqueue_save(
                 before,
                 "カードを更新しました",
                 SaveFailure::RestoreCardEditor(editor),
                 cx,
             );
+        } else if announce_unchanged {
+            self.set_info("カードに変更はありません");
         }
         cx.notify();
     }
@@ -3185,13 +3245,8 @@ impl BoardView {
         let due_badge = card
             .due_date
             .map(|due_date| render_due_badge(due_date, today, cx.theme()).into_any_element());
-        let is_editing = self
-            .editing_card
-            .as_ref()
-            .is_some_and(|editor| editor.card_id == card_id);
         let is_selected = self.selected_card == Some(card_id);
         let context_menu_open = self.context_menu_card == Some(card_id);
-        let editor = self.editing_card.as_ref();
         div()
             .id(("card", card_id as u64))
             .p_3()
@@ -3212,15 +3267,8 @@ impl BoardView {
                 move |this| this.border_color(color)
             })
             .when(dimmed, |this| this.opacity(0.35))
-            .on_click(cx.listener(move |this, _, window, cx| this.select_card(card_id, window, cx)))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |this, event: &MouseDownEvent, window, cx| {
-                    if event.click_count >= 2 {
-                        cx.stop_propagation();
-                        this.begin_card_edit(card_id, window, cx);
-                    }
-                }),
+            .on_click(
+                cx.listener(move |this, _, window, cx| this.open_card_panel(card_id, window, cx)),
             )
             .on_mouse_down(
                 MouseButton::Right,
@@ -3235,10 +3283,7 @@ impl BoardView {
                 let color = theme_color(cx, UiColor::Accent);
                 move |style, _, _, _| style.border_color(color)
             })
-            .child(if is_editing {
-                self.render_card_editor(editor.expect("editing card exists"), cx)
-                    .into_any_element()
-            } else {
+            .child(
                 div()
                     .id(("card-handle", card_id as u64))
                     .cursor_move()
@@ -3274,12 +3319,165 @@ impl BoardView {
                             .text_xs()
                             .text_color(theme_color(cx, UiColor::MutedForeground))
                             .child(card.description.clone()),
-                    )
-                    .into_any_element()
-            })
+                    ),
+            )
             .when(context_menu_open, |this| {
                 this.child(self.render_card_context_menu(card_id, cx))
             })
+    }
+
+    /// カードの詳細パネル。ボードに重ねず、右端に押し出して置く。
+    /// 重ねると右端のカラムが隠れ、ドロップ先が見えなくなるため。
+    fn render_card_panel(&self, editor: &CardEditor, cx: &mut Context<Self>) -> impl IntoElement {
+        let savable = self.card_edit_is_savable(editor, cx);
+        div()
+            .id("card-panel")
+            .w(px(380.))
+            .flex_none()
+            .h_full()
+            .flex()
+            .flex_col()
+            .bg(theme_color(cx, UiColor::Surface))
+            .border_l_1()
+            .border_color(theme_color(cx, UiColor::Border))
+            .child(self.render_card_panel_header(editor.card_id, cx))
+            .child(
+                div()
+                    .id("card-panel-body")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .p_3()
+                    .child(self.render_card_editor(editor, cx)),
+            )
+            .child(
+                div()
+                    .flex()
+                    .justify_end()
+                    .gap_2()
+                    .p_3()
+                    .border_t_1()
+                    .border_color(theme_color(cx, UiColor::Border))
+                    .child(
+                        Button::new("cancel-card-edit")
+                            .secondary()
+                            .label("キャンセル")
+                            .on_click(cx.listener(|this, _, _, cx| this.cancel_card_edit(cx))),
+                    )
+                    .child(
+                        Button::new("save-card-edit")
+                            .primary()
+                            .disabled(!savable)
+                            .label("保存")
+                            .on_click(cx.listener(|this, _, _, cx| this.save_card_edit(cx))),
+                    ),
+            )
+    }
+
+    fn render_card_panel_header(
+        &self,
+        card_id: CardId,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let column_name = column_name_for_card(&self.board.columns, card_id)
+            .unwrap_or("カラム不明")
+            .to_string();
+        let menu_open = self.card_panel_menu_open;
+        div()
+            .id("card-panel-header")
+            .relative()
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap_2()
+            .p_3()
+            .border_b_1()
+            .border_color(theme_color(cx, UiColor::Border))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .min_w_0()
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme_color(cx, UiColor::MutedForeground))
+                            .child(format!("{column_name} のカード")),
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(gpui_kit::FontWeight::BOLD)
+                            .text_color(theme_color(cx, UiColor::Foreground))
+                            .child(format!("#{card_id}")),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .child(
+                        Button::new("card-panel-menu").ghost().label("⋮").on_click(
+                            cx.listener(|this, _, _, cx| this.toggle_card_panel_menu(cx)),
+                        ),
+                    )
+                    .child(
+                        Button::new("card-panel-close")
+                            .ghost()
+                            .label("✕")
+                            .on_click(cx.listener(|this, _, _, cx| this.cancel_card_edit(cx))),
+                    ),
+            )
+            .when(menu_open, |this| {
+                this.child(self.render_card_panel_menu(card_id, cx))
+            })
+    }
+
+    /// 常用しない操作はここに畳む（`docs/DESIGN.md`「常用しない操作を画面に常時出さない」）。
+    fn render_card_panel_menu(&self, card_id: CardId, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .id("card-panel-menu-popup")
+            .absolute()
+            .top(px(48.))
+            .right(px(8.))
+            .w(px(180.))
+            .flex()
+            .flex_col()
+            .gap_1()
+            .p_2()
+            .rounded_md()
+            .border_1()
+            .border_color(theme_color(cx, UiColor::Border))
+            .bg(theme_color(cx, UiColor::Popover))
+            .shadow_lg()
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .child(
+                Button::new(("panel-copy", card_id as u64))
+                    .ghost()
+                    .label("コピー")
+                    .on_click(
+                        cx.listener(move |this, _, _, cx| this.copy_card_from_panel(card_id, cx)),
+                    ),
+            )
+            .child(
+                Button::new(("panel-archive", card_id as u64))
+                    .ghost()
+                    .label("アーカイブ")
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.card_panel_menu_open = false;
+                        this.archive_card(card_id, cx)
+                    })),
+            )
+            .child(
+                Button::new(("panel-delete", card_id as u64))
+                    .danger()
+                    .label("削除")
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.card_panel_menu_open = false;
+                        this.delete_card(card_id, cx)
+                    })),
+            )
     }
 
     fn render_card_editor(&self, editor: &CardEditor, cx: &mut Context<Self>) -> impl IntoElement {
@@ -3296,10 +3494,6 @@ impl BoardView {
         } else {
             field_error_message(editor.error.as_ref(), EditorField::DueDate, &due_date_value)
         };
-        let checklist_invalid = editor
-            .checklist_items
-            .iter()
-            .any(|item| item.text.read(cx).value().trim().is_empty());
         let today = Local::now().date_naive();
         let tomorrow = today + Duration::days(1);
         let days_until_saturday = (Weekday::Sat.num_days_from_monday() as i64
@@ -3312,24 +3506,6 @@ impl BoardView {
             .flex()
             .flex_col()
             .gap_2()
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_1()
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(theme_color(cx, UiColor::MutedForeground))
-                            .child("カード"),
-                    )
-                    .child(
-                        div()
-                            .text_sm()
-                            .font_weight(gpui_kit::FontWeight::BOLD)
-                            .child(format!("#{}", editor.card_id)),
-                    ),
-            )
             .child(
                 div()
                     .text_xs()
@@ -3508,29 +3684,6 @@ impl BoardView {
                             )
                     })),
             )
-            .child(
-                div()
-                    .flex()
-                    .justify_end()
-                    .gap_2()
-                    .child(
-                        Button::new("cancel-card-edit")
-                            .secondary()
-                            .label("キャンセル")
-                            .on_click(cx.listener(|this, _, _, cx| this.cancel_card_edit(cx))),
-                    )
-                    .child(
-                        Button::new("save-card-edit")
-                            .primary()
-                            .disabled(
-                                due_date_invalid
-                                    || checklist_invalid
-                                    || title_value.trim().is_empty(),
-                            )
-                            .label("保存")
-                            .on_click(cx.listener(|this, _, _, cx| this.save_card_edit(cx))),
-                    ),
-            )
     }
 }
 
@@ -3541,6 +3694,13 @@ impl Render for BoardView {
         }
         let column_count = self.board.columns.len();
         let board_scroll_handle = self.board_scroll_handle.clone();
+        let card_panel = if self.show_archived {
+            None
+        } else {
+            self.editing_card
+                .as_ref()
+                .map(|editor| self.render_card_panel(editor, cx).into_any_element())
+        };
         div()
             .key_context("Board")
             .track_focus(&self.focus_handle)
@@ -3667,6 +3827,7 @@ impl Render for BoardView {
                             .into_any_element()
                     }),
             )
+            .children(card_panel)
     }
 }
 
@@ -3799,6 +3960,14 @@ fn next_card_id(
             None
         }
     }
+}
+
+/// カードが今どのカラムにあるかを返す。詳細パネルのヘッダに出す。
+fn column_name_for_card(columns: &[Column], card_id: CardId) -> Option<&str> {
+    columns
+        .iter()
+        .find(|column| column.cards.iter().any(|card| card.id == card_id))
+        .map(|column| column.name.as_str())
 }
 
 fn render_board_markdown(board: &Board) -> String {
@@ -4143,8 +4312,8 @@ fn field_error_note(message: String, color: gpui_kit::Hsla) -> impl IntoElement 
 #[cfg(test)]
 mod tests {
     use super::{
-        board_error_detail, db_error_detail, field_error_for, next_card_id, render_board_markdown,
-        CardDirection, EditorField,
+        board_error_detail, column_name_for_card, db_error_detail, field_error_for, next_card_id,
+        render_board_markdown, CardDirection, EditorField,
     };
     use crate::{
         db::DbError,
@@ -4205,6 +4374,23 @@ mod tests {
             next_card_id(&board.columns, None, CardDirection::Down),
             Some(first_card)
         );
+    }
+
+    #[test]
+    fn shows_which_column_a_card_belongs_to() {
+        let board = Board::demo();
+        let first_card = board.columns[0].cards[0].id;
+        let second_column_card = board.columns[1].cards[0].id;
+
+        assert_eq!(
+            column_name_for_card(&board.columns, first_card),
+            Some(board.columns[0].name.as_str())
+        );
+        assert_eq!(
+            column_name_for_card(&board.columns, second_column_card),
+            Some(board.columns[1].name.as_str())
+        );
+        assert_eq!(column_name_for_card(&board.columns, 9_999), None);
     }
 
     #[test]
