@@ -1,0 +1,20 @@
+[package]
+name = "ekanban"
+version = "0.1.0"
+edition = "2021"
+description = "A local-first Kanban board built with Rust and GPUI Kit"
+license = "MIT"
+
+[dependencies]
+gpui-kit = "0.6.0"
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+thiserror = "2.0"
+
+[dev-dependencies]
+tempfile = "3.23"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[profile.dev]
+debug = 1

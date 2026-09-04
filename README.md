@@ -1,16 +1,148 @@
 # ekanban
 
-Kanban app written in rust/gpui.
+Rust と [GPUI Kit](https://github.com/longbridge/gpui-kit) で作る、ローカル専用の Kanban アプリです。
 
- * Kanban board
+カードをドラッグ＆ドロップして、直感的にカラム間を移動したり、カラム内の順番を変更したりできることを最も重視します。
 
-## Features
+## 方針
 
- * written the data in sqlite3
- * automatic schema migration
- * Japanese input/display support
+- データはローカルの SQLite に保存する
+- クラウド同期は実装しない
+- アカウント、サーバー、ネットワーク接続を必要としない
+- 日本語を入力・表示できるようにする
+- ドラッグ中は UI 上で滑らかにカードを移動し、ドロップ時にだけ SQLite を更新する
 
-## deps
+## MVP
 
- * rust
+### ボード
 
+- カラムを横方向に表示する
+- カラムの追加、名前変更、削除
+- カラムのドラッグ＆ドロップによる並べ替え
+
+### カード
+
+- カードの追加、編集、削除
+- カラム内での並べ替え
+- 別カラムへの移動
+- 空のカラムへのドロップ
+- タイトルと説明の編集
+
+カード内の編集・削除ボタンは、ドラッグ開始の対象から除外します。ドラッグ中はカードやカラムのゴーストと、ドロップ対象の強調表示を表示します。
+
+タグ、期限、検索、Markdown、通知、複数ユーザー、クラウド同期は MVP の対象外です。
+
+## ドラッグ＆ドロップ
+
+ドラッグ中の状態はメモリ上で管理し、SQLite には保存しません。
+
+```text
+ドラッグ開始
+    ↓
+移動先カラムと挿入位置を画面上に表示
+    ↓
+ドロップ
+    ↓
+カードの所属カラムと順番を更新
+    ↓
+SQLite に 1 トランザクションで保存
+```
+
+保存に失敗した場合は、ドラッグ前の状態に戻してエラーを表示します。マウス移動のたびにデータベースへアクセスしないことで、操作中の応答性を保ちます。
+
+## データモデル
+
+```text
+boards
+  id
+  name
+  created_at
+  updated_at
+
+columns
+  id
+  board_id
+  name
+  position
+  created_at
+  updated_at
+
+cards
+  id
+  column_id
+  title
+  description
+  position
+  created_at
+  updated_at
+```
+
+データベースは自動マイグレーションに対応します。カードやカラムの順番は `position` で管理し、移動や並べ替えの完了時に対象範囲の順番を振り直します。ローカル専用アプリのため、複雑な同期用 ID や競合解決は導入しません。
+
+## GPUI Kit
+
+UI の基盤には [GPUI Kit](https://github.com/longbridge/gpui-kit) を使用します。GPUI 本体と対応する platform 層を個別に管理せず、GPUI Kit のテーマ・コンポーネント・入力処理を利用します。
+
+D&D のカード操作は GPUI の `on_drag` / `on_drop` を使い、カードやカラムの見た目は GPUI Kit のコンポーネントとテーマに合わせます。
+
+## 構成
+
+```text
+src/
+  main.rs
+  model.rs
+  db/
+    mod.rs
+  views/
+    mod.rs
+    board.rs
+```
+
+- `model.rs`: Board、Column、Card などのドメインモデル
+- `db/mod.rs`: SQLite の読み書きとスキーマのマイグレーション
+- `views/`: GPUI による表示、入力、ドラッグ＆ドロップ
+- UI から SQL を直接実行しない
+
+カード移動やカラム移動の保存は、必ず 1 つのトランザクションで行います。保存処理は今後、データ量が増えた場合に UI スレッドをブロックしない実行方式へ分離します。
+
+## 日本語対応
+
+- SQLite には UTF-8 の文字列をそのまま保存する
+- GPUI の入力コンポーネントで IME composition を扱う
+- 日本語文字列をキーイベントから自前で組み立てない
+- IME 変換中の Enter や Escape を誤ってショートカット処理しない
+- 日本語のタイトルと説明を保存・再表示できることを確認する
+
+## 実装状況と次の実装
+
+完了しているもの:
+
+1. Rust/Cargo プロジェクト、GPUI Kit のテーマ、コンポーネントを初期化する
+2. SQLite の自動マイグレーションとデモデータの投入
+3. カラムとカードの表示
+4. カードの追加
+5. カードのドラッグ＆ドロップ（カラム間移動、カラム内並べ替え、空カラム）
+6. カラムのドラッグ＆ドロップによる並べ替え
+7. 移動後の SQLite 保存と保存失敗時のロールバック
+
+次に実装するもの:
+
+1. カードの編集・削除
+2. カラムの追加・名前変更・削除
+3. GPUI Kit の入力コンポーネントによる日本語 IME の確認
+
+最初のプロトタイプは、3 カラムと数枚のカードを表示し、カードとカラムをドラッグ＆ドロップしてローカル SQLite に保存できるところまで実装しています。
+
+## 必要なもの
+
+- Rust toolchain
+- SQLite
+
+## CI
+
+GitHub Actions (`.github/workflows/ci.yml`) で、`main` への push と pull request に対して次を実行します。
+
+- `cargo fmt --all -- --check`
+- `cargo clippy --all-targets --all-features -- -D warnings`
+- `cargo test --all-features`
+- `cargo build --all-features`
