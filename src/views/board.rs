@@ -83,23 +83,84 @@ struct CardEditor {
     description: Entity<TextareaState>,
     due_date: Entity<InputState>,
     tag_ids: Vec<TagId>,
+    error: Option<FieldError>,
 }
 
 struct ColumnEditor {
     column_id: Option<ColumnId>,
     name: Entity<InputState>,
     wip_limit: Entity<InputState>,
+    error: Option<FieldError>,
 }
 
 struct TagEditor {
     tag_id: Option<TagId>,
     name: Entity<InputState>,
     color: Entity<InputState>,
+    error: Option<FieldError>,
 }
 
 struct BoardEditor {
     board_id: Option<BoardId>,
     name: Entity<InputState>,
+    error: Option<FieldError>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StatusLevel {
+    Info,
+    Success,
+    Error,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct StatusMessage {
+    level: StatusLevel,
+    text: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ErrorContext {
+    MoveCard,
+    MoveColumn,
+    Card,
+    Column,
+    Tag,
+    Board,
+    Undo,
+    Redo,
+}
+
+impl ErrorContext {
+    fn label(self) -> &'static str {
+        match self {
+            Self::MoveCard => "カードを移動できませんでした",
+            Self::MoveColumn => "カラムを移動できませんでした",
+            Self::Card => "カードを操作できませんでした",
+            Self::Column => "カラムを操作できませんでした",
+            Self::Tag => "タグを操作できませんでした",
+            Self::Board => "ボードを操作できませんでした",
+            Self::Undo => "操作を元に戻せませんでした",
+            Self::Redo => "操作をやり直せませんでした",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EditorField {
+    CardTitle,
+    DueDate,
+    ColumnName,
+    WipLimit,
+    TagName,
+    BoardName,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FieldError {
+    field: EditorField,
+    message: String,
+    value: Option<String>,
 }
 
 enum SaveFailure {
@@ -180,7 +241,7 @@ pub struct BoardView {
     next_save_id: u64,
     pending_saves: VecDeque<PendingSave>,
     active_save: Option<ActiveSave>,
-    status: Option<String>,
+    status: Option<StatusMessage>,
     editing_card: Option<CardEditor>,
     editing_column: Option<ColumnEditor>,
     editing_tag: Option<TagEditor>,
@@ -225,6 +286,37 @@ impl BoardView {
         }
     }
 
+    fn set_status(&mut self, level: StatusLevel, text: impl Into<String>) {
+        self.status = Some(StatusMessage {
+            level,
+            text: text.into(),
+        });
+    }
+
+    fn set_info(&mut self, text: impl Into<String>) {
+        self.set_status(StatusLevel::Info, text);
+    }
+
+    fn set_success(&mut self, text: impl Into<String>) {
+        self.set_status(StatusLevel::Success, text);
+    }
+
+    fn set_error(&mut self, text: impl Into<String>) {
+        self.set_status(StatusLevel::Error, text);
+    }
+
+    fn present_board_error(&mut self, context: ErrorContext, error: BoardError) {
+        self.set_error(format!(
+            "{}: {}",
+            context.label(),
+            board_error_detail(&error)
+        ));
+    }
+
+    fn present_db_error(&mut self, context: &str, error: DbError) {
+        self.set_error(format!("{context}: {}", db_error_detail(&error)));
+    }
+
     fn rollback_board(&mut self, before: Board) {
         self.board = before;
         self.board.discard_pending_events();
@@ -251,7 +343,7 @@ impl BoardView {
         if !self.has_pending_save() {
             return false;
         }
-        self.status = Some("保存が完了するまでボードを変更できません".to_string());
+        self.set_info("保存が完了するまでボードを変更できません");
         cx.notify();
         true
     }
@@ -282,7 +374,7 @@ impl BoardView {
             || self.editing_tag.is_some()
             || self.editing_board.is_some()
         {
-            self.status = Some("編集中はボードを切り替えられません".to_string());
+            self.set_info("編集中はボードを切り替えられません");
             cx.notify();
             return;
         }
@@ -297,13 +389,14 @@ impl BoardView {
                 match Database::open(&self.database_path)
                     .and_then(|database| database.set_last_board_id(board_id))
                 {
-                    Ok(()) => self.status = Some(format!("「{name}」に切り替えました")),
-                    Err(error) => {
-                        self.status = Some(format!("ボードを切り替えました（記憶に失敗: {error}）"))
-                    }
+                    Ok(()) => self.set_success(format!("「{name}」に切り替えました")),
+                    Err(error) => self.set_error(format!(
+                        "ボードは切り替えましたが、選択状態の保存に失敗しました: {}",
+                        db_error_detail(&error)
+                    )),
                 }
             }
-            Err(error) => self.status = Some(format_db_error(error)),
+            Err(error) => self.present_db_error("ボードを切り替えられませんでした", error),
         }
         cx.notify();
     }
@@ -317,6 +410,7 @@ impl BoardView {
         self.editing_board = Some(BoardEditor {
             board_id: None,
             name,
+            error: None,
         });
         cx.notify();
     }
@@ -334,13 +428,14 @@ impl BoardView {
         self.editing_board = Some(BoardEditor {
             board_id: Some(self.board.id),
             name,
+            error: None,
         });
         cx.notify();
     }
 
     fn cancel_board_edit(&mut self, cx: &mut Context<Self>) {
         if self.editing_board.take().is_some() {
-            self.status = Some("ボード名の編集をキャンセルしました".to_string());
+            self.set_info("ボード名の編集をキャンセルしました");
             cx.notify();
         }
     }
@@ -368,18 +463,21 @@ impl BoardView {
                         self.boards.push(summary);
                         self.board = board;
                         self.reset_board_view(window, cx);
-                        self.status = Some("ボードを追加しました".to_string());
+                        self.set_success("ボードを追加しました");
                     }
                     Err(error) => {
                         self.editing_board = Some(editor);
-                        self.status = Some(format_db_error(error));
+                        if let Some(editor) = self.editing_board.as_mut() {
+                            editor.error = field_error_for_db(&error);
+                        }
+                        self.present_db_error("ボードを追加できませんでした", error);
                     }
                 }
             }
             Some(board_id) => {
                 let before = self.board.clone();
                 match self.board.rename(name) {
-                    Ok(false) => self.status = Some("ボード名に変更はありません".to_string()),
+                    Ok(false) => self.set_info("ボード名に変更はありません"),
                     Ok(true) => {
                         self.sync_current_board_summary();
                         self.enqueue_save(
@@ -390,8 +488,12 @@ impl BoardView {
                         );
                     }
                     Err(error) => {
+                        let field_error = field_error_for(&error);
                         self.editing_board = Some(editor);
-                        self.status = Some(format_board_error(error));
+                        if let Some(editor) = self.editing_board.as_mut() {
+                            editor.error = field_error;
+                        }
+                        self.present_board_error(ErrorContext::Board, error);
                     }
                 }
                 debug_assert_eq!(board_id, self.board.id);
@@ -410,7 +512,7 @@ impl BoardView {
             return;
         }
         let Some(summary) = self.boards.iter().find(|summary| summary.id == board_id) else {
-            self.status = Some("ボードが見つかりません".to_string());
+            self.set_error("ボードが見つかりません。画面を更新してください。");
             cx.notify();
             return;
         };
@@ -459,20 +561,23 @@ impl BoardView {
                             self.board = board;
                             self.reset_board_view(window, cx);
                             if let Err(error) = database.set_last_board_id(next_id) {
-                                self.status = Some(format!(
-                                    "ボードを削除して切り替えました（記憶に失敗: {error}）"
+                                self.set_error(format!(
+                                    "ボードを削除して切り替えましたが、選択状態の保存に失敗しました: {}",
+                                    db_error_detail(&error)
                                 ));
                             } else {
-                                self.status = Some("ボードを削除しました".to_string());
+                                self.set_success("ボードを削除しました");
                             }
                         }
-                        Err(error) => self.status = Some(format_db_error(error)),
+                        Err(error) => {
+                            self.present_db_error("切り替え先のボードを読み込めませんでした", error)
+                        }
                     }
                 } else {
-                    self.status = Some("ボードを削除しました".to_string());
+                    self.set_success("ボードを削除しました");
                 }
             }
-            Err(error) => self.status = Some(format_db_error(error)),
+            Err(error) => self.present_db_error("ボードを削除できませんでした", error),
         }
         cx.notify();
     }
@@ -496,7 +601,7 @@ impl BoardView {
         // operations append to the live board while this snapshot is being
         // written, so they can be saved independently by the next request.
         self.board.pending_events.clear();
-        self.status = Some("保存中…".to_string());
+        self.set_info("保存中…");
         self.start_next_save(cx);
     }
 
@@ -542,9 +647,9 @@ impl BoardView {
         match result {
             Ok(()) => {
                 if self.pending_saves.is_empty() {
-                    self.status = Some(active.success_message);
+                    self.set_success(active.success_message);
                 } else {
-                    self.status = Some("保存中…".to_string());
+                    self.set_info("保存中…");
                 }
                 self.start_next_save(cx);
             }
@@ -573,7 +678,7 @@ impl BoardView {
                     }
                 }
                 self.sync_current_board_summary();
-                self.status = Some(format!("保存に失敗しました: {error}"));
+                self.present_db_error("保存に失敗しました", error);
             }
         }
         cx.notify();
@@ -773,7 +878,7 @@ impl BoardView {
         {
             Ok(false) => return,
             Ok(true) => self.enqueue_save(before, "保存しました", SaveFailure::None, cx),
-            Err(error) => self.status = Some(format_move_error(error)),
+            Err(error) => self.present_board_error(ErrorContext::MoveCard, error),
         }
         cx.notify();
     }
@@ -783,14 +888,14 @@ impl BoardView {
         match self.board.move_column(column_id, target_index) {
             Ok(false) => return,
             Ok(true) => self.enqueue_save(before, "カラムを並べ替えました", SaveFailure::None, cx),
-            Err(error) => self.status = Some(format_move_error(error)),
+            Err(error) => self.present_board_error(ErrorContext::MoveColumn, error),
         }
         cx.notify();
     }
 
     fn add_card(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.show_archived {
-            self.status = Some("アーカイブ表示中はカードを追加できません".to_string());
+            self.set_info("アーカイブ表示中はカードを追加できません");
             cx.notify();
             return;
         }
@@ -811,7 +916,7 @@ impl BoardView {
                     cx,
                 );
             }
-            Err(error) => self.status = Some(format_move_error(error)),
+            Err(error) => self.present_board_error(ErrorContext::Card, error),
         }
         cx.notify();
     }
@@ -834,7 +939,7 @@ impl BoardView {
                 )
             })
         else {
-            self.status = Some(format_card_error(BoardError::CardNotFound(card_id)));
+            self.present_board_error(ErrorContext::Card, BoardError::CardNotFound(card_id));
             cx.notify();
             return;
         };
@@ -862,13 +967,14 @@ impl BoardView {
             description: description_input,
             due_date: due_date_input,
             tag_ids,
+            error: None,
         });
         cx.notify();
     }
 
     fn cancel_card_edit(&mut self, cx: &mut Context<Self>) {
         if self.editing_card.take().is_some() {
-            self.status = Some("カードの編集をキャンセルしました".to_string());
+            self.set_info("カードの編集をキャンセルしました");
             cx.notify();
         }
     }
@@ -885,7 +991,10 @@ impl BoardView {
             Ok(due_date) => due_date,
             Err(error) => {
                 self.editing_card = Some(editor);
-                self.status = Some(format!("期限を確認してください: {error}"));
+                if let Some(editor) = self.editing_card.as_mut() {
+                    editor.error = field_error_for(&error);
+                }
+                self.present_board_error(ErrorContext::Card, error);
                 cx.notify();
                 return;
             }
@@ -902,14 +1011,17 @@ impl BoardView {
             Ok(changed) => changed,
             Err(error) => {
                 self.editing_card = Some(editor);
-                self.status = Some(format_card_error(error));
+                if let Some(editor) = self.editing_card.as_mut() {
+                    editor.error = field_error_for(&error);
+                }
+                self.present_board_error(ErrorContext::Card, error);
                 cx.notify();
                 return;
             }
         };
 
         if !changed {
-            self.status = Some("カードに変更はありません".to_string());
+            self.set_info("カードに変更はありません");
         } else {
             self.enqueue_save(
                 before,
@@ -945,7 +1057,7 @@ impl BoardView {
                 };
                 self.enqueue_save(before, "カードを削除しました", on_failure, cx);
             }
-            Err(error) => self.status = Some(format_card_error(error)),
+            Err(error) => self.present_board_error(ErrorContext::Card, error),
         }
         cx.notify();
     }
@@ -975,7 +1087,7 @@ impl BoardView {
                 self.enqueue_save(before, "カードをアーカイブしました", on_failure, cx);
             }
             Ok(false) => {}
-            Err(error) => self.status = Some(format_card_error(error)),
+            Err(error) => self.present_board_error(ErrorContext::Card, error),
         }
         cx.notify();
     }
@@ -998,7 +1110,7 @@ impl BoardView {
         };
         let before = self.board.clone();
         match self.board.archive_column(column_id) {
-            Ok(0) => self.status = Some("アーカイブするカードがありません".to_string()),
+            Ok(0) => self.set_info("アーカイブするカードがありません"),
             Ok(count) => {
                 self.selected_card = next_selection;
                 let on_failure = self
@@ -1013,7 +1125,7 @@ impl BoardView {
                     cx,
                 );
             }
-            Err(error) => self.status = Some(format_column_error(error)),
+            Err(error) => self.present_board_error(ErrorContext::Column, error),
         }
         cx.notify();
     }
@@ -1023,7 +1135,7 @@ impl BoardView {
         match self.board.restore_card(card_id) {
             Ok(true) => self.enqueue_save(before, "カードを復元しました", SaveFailure::None, cx),
             Ok(false) => {}
-            Err(error) => self.status = Some(format_card_error(error)),
+            Err(error) => self.present_board_error(ErrorContext::Card, error),
         }
         cx.notify();
     }
@@ -1033,10 +1145,10 @@ impl BoardView {
         self.editing_card = None;
         self.editing_column = None;
         self.selected_card = None;
-        self.status = Some(if self.show_archived {
-            "アーカイブを表示しています".to_string()
+        self.set_info(if self.show_archived {
+            "アーカイブを表示しています"
         } else {
-            "ボードを表示しています".to_string()
+            "ボードを表示しています"
         });
         cx.notify();
     }
@@ -1083,6 +1195,7 @@ impl BoardView {
             tag_id: None,
             name,
             color,
+            error: None,
         });
         cx.notify();
     }
@@ -1095,7 +1208,7 @@ impl BoardView {
             .find(|tag| tag.id == tag_id)
             .map(|tag| (tag.name.clone(), tag.color.clone()))
         else {
-            self.status = Some(format_tag_error(BoardError::TagNotFound(tag_id)));
+            self.present_board_error(ErrorContext::Tag, BoardError::TagNotFound(tag_id));
             cx.notify();
             return;
         };
@@ -1114,13 +1227,14 @@ impl BoardView {
             tag_id: Some(tag_id),
             name,
             color,
+            error: None,
         });
         cx.notify();
     }
 
     fn cancel_tag_edit(&mut self, cx: &mut Context<Self>) {
         if self.editing_tag.take().is_some() {
-            self.status = Some("タグの編集をキャンセルしました".to_string());
+            self.set_info("タグの編集をキャンセルしました");
             cx.notify();
         }
     }
@@ -1147,7 +1261,7 @@ impl BoardView {
         })();
 
         match result {
-            Ok(false) => self.status = Some("タグに変更はありません".to_string()),
+            Ok(false) => self.set_info("タグに変更はありません"),
             Ok(true) => self.enqueue_save(
                 before,
                 if editor.tag_id.is_some() {
@@ -1161,7 +1275,10 @@ impl BoardView {
             Err(error) => {
                 self.rollback_board(before);
                 self.editing_tag = Some(editor);
-                self.status = Some(format_tag_error(error));
+                if let Some(editor) = self.editing_tag.as_mut() {
+                    editor.error = field_error_for(&error);
+                }
+                self.present_board_error(ErrorContext::Tag, error);
             }
         }
         cx.notify();
@@ -1195,7 +1312,7 @@ impl BoardView {
                     cx,
                 );
             }
-            Err(error) => self.status = Some(format_tag_error(error)),
+            Err(error) => self.present_board_error(ErrorContext::Tag, error),
         }
         cx.notify();
     }
@@ -1206,13 +1323,13 @@ impl BoardView {
         } else {
             Some(tag_id)
         };
-        self.status = Some("タグフィルターを変更しました".to_string());
+        self.set_info("タグフィルターを変更しました");
         cx.notify();
     }
 
     fn begin_add_column(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.show_archived {
-            self.status = Some("アーカイブ表示中はカラムを追加できません".to_string());
+            self.set_info("アーカイブ表示中はカラムを追加できません");
             cx.notify();
             return;
         }
@@ -1222,6 +1339,7 @@ impl BoardView {
             column_id: None,
             name,
             wip_limit: cx.new(|cx| InputState::new(window, cx).placeholder("WIP 上限")),
+            error: None,
         });
         cx.notify();
     }
@@ -1247,7 +1365,7 @@ impl BoardView {
                 )
             })
         else {
-            self.status = Some(format_column_error(BoardError::ColumnNotFound(column_id)));
+            self.present_board_error(ErrorContext::Column, BoardError::ColumnNotFound(column_id));
             cx.notify();
             return;
         };
@@ -1267,13 +1385,14 @@ impl BoardView {
             column_id: Some(column_id),
             name,
             wip_limit,
+            error: None,
         });
         cx.notify();
     }
 
     fn cancel_column_edit(&mut self, cx: &mut Context<Self>) {
         if self.editing_column.take().is_some() {
-            self.status = Some("カラムの編集をキャンセルしました".to_string());
+            self.set_info("カラムの編集をキャンセルしました");
             cx.notify();
         }
     }
@@ -1288,7 +1407,10 @@ impl BoardView {
             Ok(wip_limit) => wip_limit,
             Err(error) => {
                 self.editing_column = Some(editor);
-                self.status = Some(format!("WIP 上限を確認してください: {error}"));
+                if let Some(editor) = self.editing_column.as_mut() {
+                    editor.error = field_error_for(&error);
+                }
+                self.present_board_error(ErrorContext::Column, error);
                 cx.notify();
                 return;
             }
@@ -1311,7 +1433,7 @@ impl BoardView {
 
         match result {
             Ok(false) => {
-                self.status = Some("カラムに変更はありません".to_string());
+                self.set_info("カラムに変更はありません");
             }
             Ok(true) => self.enqueue_save(
                 before,
@@ -1325,7 +1447,10 @@ impl BoardView {
             ),
             Err(error) => {
                 self.editing_column = Some(editor);
-                self.status = Some(format_column_error(error));
+                if let Some(editor) = self.editing_column.as_mut() {
+                    editor.error = field_error_for(&error);
+                }
+                self.present_board_error(ErrorContext::Column, error);
             }
         }
         cx.notify();
@@ -1343,7 +1468,7 @@ impl BoardView {
             .iter()
             .find(|column| column.id == column_id)
         else {
-            self.status = Some(format_column_error(BoardError::ColumnNotFound(column_id)));
+            self.present_board_error(ErrorContext::Column, BoardError::ColumnNotFound(column_id));
             cx.notify();
             return;
         };
@@ -1409,7 +1534,7 @@ impl BoardView {
                 };
                 self.enqueue_save(before, "カラムを削除しました", on_failure, cx);
             }
-            Err(error) => self.status = Some(format_column_error(error)),
+            Err(error) => self.present_board_error(ErrorContext::Column, error),
         }
         cx.notify();
     }
@@ -1418,10 +1543,10 @@ impl BoardView {
         let before = self.board.clone();
         match self.board.sort_column_by_due_date(column_id) {
             Ok(false) => {
-                self.status = Some("期限順に変更はありません".to_string());
+                self.set_info("期限順に変更はありません");
             }
             Ok(true) => self.enqueue_save(before, "期限順に並べ替えました", SaveFailure::None, cx),
-            Err(error) => self.status = Some(format_column_error(error)),
+            Err(error) => self.present_board_error(ErrorContext::Column, error),
         }
         cx.notify();
     }
@@ -1432,17 +1557,17 @@ impl BoardView {
         } else {
             filter
         };
-        self.status = Some("表示フィルターを変更しました".to_string());
+        self.set_info("表示フィルターを変更しました");
         cx.notify();
     }
 
     fn commit_search(&mut self, cx: &mut Context<Self>) {
         self.search_query = self.search.read(cx).value().to_string();
-        self.status = if self.search_query.trim().is_empty() {
-            Some("検索をクリアしました".to_string())
+        if self.search_query.trim().is_empty() {
+            self.set_info("検索をクリアしました");
         } else {
-            Some(format!("「{}」で検索中", self.search_query))
-        };
+            self.set_info(format!("「{}」で検索中", self.search_query));
+        }
         cx.notify();
     }
 
@@ -1450,7 +1575,7 @@ impl BoardView {
         self.search
             .update(cx, |state, cx| state.set_value("", window, cx));
         self.search_query.clear();
-        self.status = Some("検索をクリアしました".to_string());
+        self.set_info("検索をクリアしました");
         cx.notify();
     }
 
@@ -1485,16 +1610,16 @@ impl BoardView {
             || self.editing_board.is_some()
             || self.search.read(cx).focus_handle(cx).is_focused(window)
         {
-            self.status = Some("編集中は元に戻せません".to_string());
+            self.set_info("編集中は元に戻せません");
             cx.notify();
             return;
         }
 
         let before = self.board.clone();
         match self.board.undo() {
-            Ok(false) => self.status = Some("元に戻す操作がありません".to_string()),
+            Ok(false) => self.set_info("元に戻す操作がありません"),
             Ok(true) => self.enqueue_save(before, "元に戻しました", SaveFailure::None, cx),
-            Err(error) => self.status = Some(format!("元に戻せませんでした: {error}")),
+            Err(error) => self.present_board_error(ErrorContext::Undo, error),
         }
         cx.notify();
     }
@@ -1506,16 +1631,16 @@ impl BoardView {
             || self.editing_board.is_some()
             || self.search.read(cx).focus_handle(cx).is_focused(window)
         {
-            self.status = Some("編集中はやり直せません".to_string());
+            self.set_info("編集中はやり直せません");
             cx.notify();
             return;
         }
 
         let before = self.board.clone();
         match self.board.redo() {
-            Ok(false) => self.status = Some("やり直す操作がありません".to_string()),
+            Ok(false) => self.set_info("やり直す操作がありません"),
             Ok(true) => self.enqueue_save(before, "やり直しました", SaveFailure::None, cx),
-            Err(error) => self.status = Some(format!("やり直せませんでした: {error}")),
+            Err(error) => self.present_board_error(ErrorContext::Redo, error),
         }
         cx.notify();
     }
@@ -1534,6 +1659,12 @@ impl BoardView {
         editor: &BoardEditor,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let name_value = editor.name.read(cx).value().to_string();
+        let name_error = if name_value.trim().is_empty() {
+            Some("ボード名を入力してください".to_string())
+        } else {
+            field_error_message(editor.error.as_ref(), EditorField::BoardName, &name_value)
+        };
         div()
             .flex()
             .flex_col()
@@ -1552,6 +1683,9 @@ impl BoardView {
                 }
             }))
             .child(Input::new(&editor.name).small())
+            .when_some(name_error, |this, message| {
+                this.child(field_error_note(message))
+            })
             .child(
                 div()
                     .flex()
@@ -1559,6 +1693,7 @@ impl BoardView {
                     .child(
                         Button::new("save-board-edit")
                             .primary()
+                            .disabled(name_value.trim().is_empty())
                             .label("保存")
                             .on_click(
                                 cx.listener(|this, _, window, cx| this.save_board_edit(window, cx)),
@@ -1714,7 +1849,23 @@ impl BoardView {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let editor_kind = editor.column_id;
-        let wip_limit_invalid = parse_wip_limit(&editor.wip_limit.read(cx).value()).is_err();
+        let name_value = editor.name.read(cx).value().to_string();
+        let name_error = if name_value.trim().is_empty() {
+            Some("カラム名を入力してください".to_string())
+        } else {
+            field_error_message(editor.error.as_ref(), EditorField::ColumnName, &name_value)
+        };
+        let wip_limit_value = editor.wip_limit.read(cx).value().to_string();
+        let wip_limit_invalid = parse_wip_limit(&wip_limit_value).is_err();
+        let wip_limit_error = if wip_limit_invalid {
+            Some("WIP は正の整数、または空欄で入力してください".to_string())
+        } else {
+            field_error_message(
+                editor.error.as_ref(),
+                EditorField::WipLimit,
+                &wip_limit_value,
+            )
+        };
         div()
             .flex()
             .items_center()
@@ -1733,19 +1884,17 @@ impl BoardView {
                 }
             }))
             .child(Input::new(&editor.name).small())
+            .when_some(name_error, |this, message| {
+                this.child(field_error_note(message))
+            })
             .child(Input::new(&editor.wip_limit).small())
-            .when(wip_limit_invalid, |this| {
-                this.child(
-                    div()
-                        .text_xs()
-                        .text_color(rgb(0xf87171))
-                        .child("WIP は正の整数"),
-                )
+            .when_some(wip_limit_error, |this, message| {
+                this.child(field_error_note(message))
             })
             .child(
                 Button::new(("save-column", editor_kind.unwrap_or(0) as u64))
                     .primary()
-                    .disabled(wip_limit_invalid)
+                    .disabled(wip_limit_invalid || name_value.trim().is_empty())
                     .label("保存")
                     .on_click(cx.listener(|this, _, _, cx| this.save_column_edit(cx))),
             )
@@ -1759,6 +1908,12 @@ impl BoardView {
 
     fn render_tag_editor(&self, editor: &TagEditor, cx: &mut Context<Self>) -> impl IntoElement {
         let editor_kind = editor.tag_id;
+        let name_value = editor.name.read(cx).value().to_string();
+        let name_error = if name_value.trim().is_empty() {
+            Some("タグ名を入力してください".to_string())
+        } else {
+            field_error_message(editor.error.as_ref(), EditorField::TagName, &name_value)
+        };
         div()
             .flex()
             .items_center()
@@ -1777,10 +1932,14 @@ impl BoardView {
                 }
             }))
             .child(Input::new(&editor.name).small())
+            .when_some(name_error, |this, message| {
+                this.child(field_error_note(message))
+            })
             .child(Input::new(&editor.color).small())
             .child(
                 Button::new(("save-tag", editor_kind.unwrap_or(0) as u64))
                     .primary()
+                    .disabled(name_value.trim().is_empty())
                     .label("保存")
                     .on_click(cx.listener(|this, _, _, cx| this.save_tag_edit(cx))),
             )
@@ -1843,10 +2002,15 @@ impl BoardView {
     }
 
     fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let status = self
-            .status
-            .clone()
-            .unwrap_or_else(|| "ローカル SQLite".to_string());
+        let (status_icon, status_color, status_background, status_text) = match self.status.as_ref()
+        {
+            Some(status) => match status.level {
+                StatusLevel::Info => ("ⓘ", 0xbfdbfe, 0x1e3a8a, status.text.clone()),
+                StatusLevel::Success => ("✓", 0xbbf7d0, 0x14532d, status.text.clone()),
+                StatusLevel::Error => ("⚠", 0xfecaca, 0x7f1d1d, status.text.clone()),
+            },
+            None => ("●", 0x94a3b8, 0x1e293b, "ローカル SQLite".to_string()),
+        };
         div()
             .w_full()
             .flex()
@@ -1867,7 +2031,19 @@ impl BoardView {
                             .font_weight(gpui_kit::FontWeight::BOLD)
                             .child(self.board.name.clone()),
                     )
-                    .child(div().text_xs().text_color(rgb(0x94a3b8)).child(status))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_1()
+                            .px_2()
+                            .py_1()
+                            .rounded_sm()
+                            .bg(rgb(status_background))
+                            .text_xs()
+                            .text_color(rgb(status_color))
+                            .child(format!("{status_icon} {status_text}")),
+                    )
                     .child(self.render_search(cx))
                     .child(self.render_tag_bar(cx)),
             )
@@ -2314,8 +2490,19 @@ impl BoardView {
     }
 
     fn render_card_editor(&self, editor: &CardEditor, cx: &mut Context<Self>) -> impl IntoElement {
+        let title_value = editor.title.read(cx).value().to_string();
+        let title_error = if title_value.trim().is_empty() {
+            Some("タイトルを入力してください".to_string())
+        } else {
+            field_error_message(editor.error.as_ref(), EditorField::CardTitle, &title_value)
+        };
         let due_date_value = editor.due_date.read(cx).value().to_string();
         let due_date_invalid = parse_due_date(&due_date_value).is_err();
+        let due_date_error = if due_date_invalid {
+            Some("YYYY-MM-DD 形式で入力してください（空欄で期限なし）".to_string())
+        } else {
+            field_error_message(editor.error.as_ref(), EditorField::DueDate, &due_date_value)
+        };
         let today = Local::now().date_naive();
         let tomorrow = today + Duration::days(1);
         let days_until_saturday = (Weekday::Sat.num_days_from_monday() as i64
@@ -2330,17 +2517,15 @@ impl BoardView {
             .gap_2()
             .child(div().text_xs().text_color(rgb(0x94a3b8)).child("タイトル"))
             .child(Input::new(&editor.title).small())
+            .when_some(title_error, |this, message| {
+                this.child(field_error_note(message))
+            })
             .child(div().text_xs().text_color(rgb(0x94a3b8)).child("説明"))
             .child(Textarea::new(&editor.description).h(px(96.)))
             .child(div().text_xs().text_color(rgb(0x94a3b8)).child("期限"))
             .child(Input::new(&editor.due_date).small())
-            .when(due_date_invalid, |this| {
-                this.child(
-                    div()
-                        .text_xs()
-                        .text_color(rgb(0xf87171))
-                        .child("YYYY-MM-DD 形式で入力してください"),
-                )
+            .when_some(due_date_error, |this, message| {
+                this.child(field_error_note(message))
             })
             .child(
                 div()
@@ -2418,7 +2603,7 @@ impl BoardView {
                     .child(
                         Button::new("save-card-edit")
                             .primary()
-                            .disabled(due_date_invalid)
+                            .disabled(due_date_invalid || title_value.trim().is_empty())
                             .label("保存")
                             .on_click(cx.listener(|this, _, _, cx| this.save_card_edit(cx))),
                     ),
@@ -2643,34 +2828,161 @@ fn card_matches_filter(card: &Card, filter: DueFilter, today: NaiveDate) -> bool
     }
 }
 
-fn format_move_error(error: BoardError) -> String {
-    format!("移動できませんでした: {error}")
+fn board_error_detail(error: &BoardError) -> String {
+    match error {
+        BoardError::EmptyBoardName => "ボード名を入力してください".to_string(),
+        BoardError::ColumnNotFound(column_id) => {
+            format!("カラム #{column_id} が見つかりません。画面を更新してください")
+        }
+        BoardError::CardNotFound(card_id) => {
+            format!("カード #{card_id} が見つかりません。画面を更新してください")
+        }
+        BoardError::EmptyCardTitle => "タイトルを入力してください".to_string(),
+        BoardError::EmptyColumnName => "カラム名を入力してください".to_string(),
+        BoardError::InvalidDueDate(value) => {
+            format!("期限「{value}」は YYYY-MM-DD 形式で入力してください")
+        }
+        BoardError::InvalidWipLimit(value) => {
+            format!("WIP 上限「{value}」は正の整数、または空欄で入力してください")
+        }
+        BoardError::EmptyTagName => "タグ名を入力してください".to_string(),
+        BoardError::TagNotFound(tag_id) => {
+            format!("タグ #{tag_id} が見つかりません。画面を更新してください")
+        }
+        BoardError::DuplicateTagName(name) => {
+            format!("タグ「{name}」はすでに存在します。別の名前を入力してください")
+        }
+        BoardError::LastColumn => "最後のカラムは削除できません".to_string(),
+    }
 }
 
-fn format_column_error(error: BoardError) -> String {
-    format!("カラムを操作できませんでした: {error}")
+fn db_error_detail(error: &DbError) -> String {
+    match error {
+        DbError::Sqlite(error) => match error {
+            rusqlite::Error::SqliteFailure(sqlite_error, message) => {
+                let reason = message.as_deref().unwrap_or("詳細情報なし");
+                match sqlite_error.code {
+                    rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked => {
+                        "データベースが使用中です。ほかの操作が終わってから再試行してください".to_string()
+                    }
+                    rusqlite::ErrorCode::ReadOnly | rusqlite::ErrorCode::PermissionDenied => {
+                        "データベースに書き込めません。保存先の権限を確認してください".to_string()
+                    }
+                    rusqlite::ErrorCode::DiskFull => {
+                        "ディスク容量が不足しています。空き容量を確保してください".to_string()
+                    }
+                    rusqlite::ErrorCode::DatabaseCorrupt
+                    | rusqlite::ErrorCode::NotADatabase => {
+                        "データベースが壊れているか、SQLite データベースではありません。バックアップを確認してください".to_string()
+                    }
+                    rusqlite::ErrorCode::CannotOpen => {
+                        "データベースを開けません。保存先のパスと権限を確認してください".to_string()
+                    }
+                    _ => format!("SQLite の処理に失敗しました（{reason}）"),
+                }
+            }
+            _ => format!("SQLite の処理に失敗しました（{error}）"),
+        },
+        DbError::NoBoard => "ボードが見つかりません。画面を更新してください".to_string(),
+        DbError::LastBoard => "最後のボードは削除できません".to_string(),
+        DbError::EmptyBoardName => "ボード名を入力してください".to_string(),
+        DbError::InvalidAppState => {
+            "保存されたアプリ状態を読み取れません。ボードを選び直してください".to_string()
+        }
+    }
 }
 
-fn format_card_error(error: BoardError) -> String {
-    format!("カードを操作できませんでした: {error}")
+fn field_error_for(error: &BoardError) -> Option<FieldError> {
+    let (field, message, value) = match error {
+        BoardError::EmptyCardTitle => (
+            EditorField::CardTitle,
+            "タイトルを入力してください",
+            Some(String::new()),
+        ),
+        BoardError::InvalidDueDate(value) => (
+            EditorField::DueDate,
+            "YYYY-MM-DD 形式で入力してください（空欄で期限なし）",
+            Some(value.clone()),
+        ),
+        BoardError::EmptyColumnName => (
+            EditorField::ColumnName,
+            "カラム名を入力してください",
+            Some(String::new()),
+        ),
+        BoardError::InvalidWipLimit(value) => (
+            EditorField::WipLimit,
+            "WIP は正の整数、または空欄で入力してください",
+            Some(value.clone()),
+        ),
+        BoardError::EmptyTagName => (
+            EditorField::TagName,
+            "タグ名を入力してください",
+            Some(String::new()),
+        ),
+        BoardError::DuplicateTagName(name) => (
+            EditorField::TagName,
+            "タグ名を確認してください",
+            Some(name.clone()),
+        ),
+        BoardError::EmptyBoardName => (
+            EditorField::BoardName,
+            "ボード名を入力してください",
+            Some(String::new()),
+        ),
+        BoardError::ColumnNotFound(_)
+        | BoardError::CardNotFound(_)
+        | BoardError::TagNotFound(_)
+        | BoardError::LastColumn => return None,
+    };
+    Some(FieldError {
+        field,
+        message: message.to_string(),
+        value,
+    })
 }
 
-fn format_tag_error(error: BoardError) -> String {
-    format!("タグを操作できませんでした: {error}")
+fn field_error_for_db(error: &DbError) -> Option<FieldError> {
+    matches!(error, DbError::EmptyBoardName).then(|| FieldError {
+        field: EditorField::BoardName,
+        message: "ボード名を入力してください".to_string(),
+        value: Some(String::new()),
+    })
 }
 
-fn format_board_error(error: BoardError) -> String {
-    format!("ボードを操作できませんでした: {error}")
+fn field_error_message(
+    error: Option<&FieldError>,
+    field: EditorField,
+    value: &str,
+) -> Option<String> {
+    error
+        .filter(|error| {
+            error.field == field
+                && error
+                    .value
+                    .as_deref()
+                    .map(|expected| expected == value)
+                    .unwrap_or(true)
+        })
+        .map(|error| error.message.clone())
 }
 
-fn format_db_error(error: DbError) -> String {
-    format!("ボードを操作できませんでした: {error}")
+fn field_error_note(message: String) -> impl IntoElement {
+    div()
+        .text_xs()
+        .text_color(rgb(0xfca5a5))
+        .child(format!("⚠ {message}"))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{next_card_id, CardDirection};
-    use crate::model::Board;
+    use super::{
+        board_error_detail, db_error_detail, field_error_for, next_card_id, CardDirection,
+        EditorField,
+    };
+    use crate::{
+        db::DbError,
+        model::{Board, BoardError},
+    };
 
     #[test]
     fn arrow_navigation_moves_within_and_between_columns() {
@@ -2725,6 +3037,40 @@ mod tests {
         assert_eq!(
             next_card_id(&board.columns, None, CardDirection::Down),
             Some(first_card)
+        );
+    }
+
+    #[test]
+    fn maps_validation_errors_to_the_field_that_needs_attention() {
+        let error = field_error_for(&BoardError::InvalidDueDate("2026/09/04".to_string()))
+            .expect("due date has a field error");
+
+        assert_eq!(error.field, EditorField::DueDate);
+        assert!(error.message.contains("YYYY-MM-DD"));
+    }
+
+    #[test]
+    fn explains_database_open_errors_in_user_facing_terms() {
+        let error = DbError::Sqlite(rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error {
+                code: rusqlite::ErrorCode::CannotOpen,
+                extended_code: 14,
+            },
+            Some("unable to open database file".to_string()),
+        ));
+
+        let message = db_error_detail(&error);
+        assert!(message.contains("開けません"));
+        assert!(!message.contains("unable to open database file"));
+    }
+
+    #[test]
+    fn keeps_domain_error_details_specific() {
+        let message = board_error_detail(&BoardError::DuplicateTagName("bug".to_string()));
+
+        assert_eq!(
+            message,
+            "タグ「bug」はすでに存在します。別の名前を入力してください"
         );
     }
 }
