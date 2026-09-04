@@ -1,11 +1,12 @@
 use std::path::Path;
 
+use chrono::NaiveDate;
 use rusqlite::{params, Connection, OptionalExtension};
 use thiserror::Error;
 
-use crate::model::{Board, Card, Column};
+use crate::model::{Board, Card, Column, Tag};
 
-const CURRENT_SCHEMA_VERSION: i64 = 1;
+const CURRENT_SCHEMA_VERSION: i64 = 6;
 
 #[derive(Debug, Error)]
 pub enum DbError {
@@ -32,20 +33,48 @@ impl Database {
     }
 
     pub fn load_board(&self) -> Result<Board, DbError> {
-        let (id, name, created_at, updated_at) = self
+        let (id, name, created_at, updated_at, next_card_id, next_column_id, next_tag_id) = self
             .connection
             .query_row(
-                "SELECT id, name, created_at, updated_at
+                "SELECT id, name, created_at, updated_at, next_card_id, next_column_id,
+                        next_tag_id
                  FROM boards ORDER BY id LIMIT 1",
                 [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                    ))
+                },
             )
             .optional()?
             .ok_or(DbError::NoBoard)?;
 
+        let mut tag_statement = self.connection.prepare(
+            "SELECT id, board_id, name, color, created_at, updated_at
+             FROM tags WHERE board_id = ?1 ORDER BY id",
+        )?;
+        let tags = tag_statement
+            .query_map(params![id], |row| {
+                Ok(Tag {
+                    id: row.get(0)?,
+                    board_id: row.get(1)?,
+                    name: row.get(2)?,
+                    color: row.get(3)?,
+                    created_at: row.get(4)?,
+                    updated_at: row.get(5)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
         let mut column_statement = self.connection.prepare(
-            "SELECT id, board_id, name, position, created_at, updated_at
-             FROM columns WHERE board_id = ?1 ORDER BY position, id",
+            "SELECT id, board_id, name, position, created_at, updated_at, wip_limit
+                 FROM columns WHERE board_id = ?1 ORDER BY position, id",
         )?;
         let column_rows = column_statement.query_map(params![id], |row| {
             Ok(Column {
@@ -55,6 +84,7 @@ impl Database {
                 position: row.get(3)?,
                 created_at: row.get(4)?,
                 updated_at: row.get(5)?,
+                wip_limit: row.get(6)?,
                 cards: Vec::new(),
             })
         })?;
@@ -63,11 +93,25 @@ impl Database {
         for row in column_rows {
             let mut column = row?;
             let mut card_statement = self.connection.prepare(
-                "SELECT id, column_id, title, description, position, created_at, updated_at
-                 FROM cards WHERE column_id = ?1 ORDER BY position, id",
+                "SELECT id, column_id, title, description, position, created_at, updated_at,
+                        due_date, archived_at
+                 FROM cards WHERE column_id = ?1 AND archived_at IS NULL
+                 ORDER BY position, id",
             )?;
             column.cards = card_statement
                 .query_map(params![column.id], |row| {
+                    let due_date = row
+                        .get::<_, Option<String>>(7)?
+                        .map(|value| {
+                            NaiveDate::parse_from_str(&value, "%Y-%m-%d").map_err(|error| {
+                                rusqlite::Error::FromSqlConversionFailure(
+                                    7,
+                                    rusqlite::types::Type::Text,
+                                    Box::new(error),
+                                )
+                            })
+                        })
+                        .transpose()?;
                     Ok(Card {
                         id: row.get(0)?,
                         column_id: row.get(1)?,
@@ -76,10 +120,66 @@ impl Database {
                         position: row.get(4)?,
                         created_at: row.get(5)?,
                         updated_at: row.get(6)?,
+                        due_date,
+                        tag_ids: Vec::new(),
+                        archived_at: row.get(8)?,
                     })
                 })?
                 .collect::<Result<Vec<_>, _>>()?;
+            for card in &mut column.cards {
+                let mut card_tag_statement = self
+                    .connection
+                    .prepare("SELECT tag_id FROM card_tags WHERE card_id = ?1 ORDER BY tag_id")?;
+                card.tag_ids = card_tag_statement
+                    .query_map(params![card.id], |row| row.get(0))?
+                    .collect::<Result<Vec<_>, _>>()?;
+            }
             columns.push(column);
+        }
+
+        let mut archived_statement = self.connection.prepare(
+            "SELECT cards.id, cards.column_id, cards.title, cards.description,
+                    cards.position, cards.created_at, cards.updated_at,
+                    cards.due_date, cards.archived_at
+             FROM cards
+             JOIN columns ON columns.id = cards.column_id
+             WHERE columns.board_id = ?1 AND cards.archived_at IS NOT NULL
+             ORDER BY cards.archived_at DESC, cards.id",
+        )?;
+        let archived_rows = archived_statement.query_map(params![id], |row| {
+            let due_date = row
+                .get::<_, Option<String>>(7)?
+                .map(|value| {
+                    NaiveDate::parse_from_str(&value, "%Y-%m-%d").map_err(|error| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            7,
+                            rusqlite::types::Type::Text,
+                            Box::new(error),
+                        )
+                    })
+                })
+                .transpose()?;
+            Ok(Card {
+                id: row.get(0)?,
+                column_id: row.get(1)?,
+                title: row.get(2)?,
+                description: row.get(3)?,
+                position: row.get(4)?,
+                created_at: row.get(5)?,
+                updated_at: row.get(6)?,
+                due_date,
+                tag_ids: Vec::new(),
+                archived_at: row.get(8)?,
+            })
+        })?;
+        let mut archived_cards = archived_rows.collect::<Result<Vec<_>, _>>()?;
+        for card in &mut archived_cards {
+            let mut card_tag_statement = self
+                .connection
+                .prepare("SELECT tag_id FROM card_tags WHERE card_id = ?1 ORDER BY tag_id")?;
+            card.tag_ids = card_tag_statement
+                .query_map(params![card.id], |row| row.get(0))?
+                .collect::<Result<Vec<_>, _>>()?;
         }
 
         Ok(Board {
@@ -87,6 +187,11 @@ impl Database {
             name,
             created_at,
             updated_at,
+            next_card_id,
+            next_column_id,
+            next_tag_id,
+            tags,
+            archived_cards,
             columns,
         })
     }
@@ -94,40 +199,134 @@ impl Database {
     pub fn save_board(&mut self, board: &Board) -> Result<(), DbError> {
         let transaction = self.connection.transaction()?;
         transaction.execute(
-            "INSERT INTO boards (id, name, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4)
+            "INSERT INTO boards
+             (id, name, created_at, updated_at, next_card_id, next_column_id, next_tag_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
              ON CONFLICT(id) DO UPDATE SET
                name = excluded.name,
                created_at = excluded.created_at,
-               updated_at = excluded.updated_at",
-            params![board.id, board.name, board.created_at, board.updated_at],
+               updated_at = excluded.updated_at,
+               next_card_id = excluded.next_card_id,
+               next_column_id = excluded.next_column_id,
+               next_tag_id = excluded.next_tag_id",
+            params![
+                board.id,
+                board.name,
+                board.created_at,
+                board.updated_at,
+                board.next_card_id,
+                board.next_column_id,
+                board.next_tag_id
+            ],
         )?;
-        transaction.execute(
-            "DELETE FROM cards
-             WHERE column_id IN (SELECT id FROM columns WHERE board_id = ?1)",
-            params![board.id],
-        )?;
-        transaction.execute("DELETE FROM columns WHERE board_id = ?1", params![board.id])?;
+
+        let active_card_ids = board
+            .columns
+            .iter()
+            .flat_map(|column| column.cards.iter().map(|card| card.id))
+            .collect::<Vec<_>>();
+        let archived_card_ids = board
+            .archived_cards
+            .iter()
+            .map(|card| card.id)
+            .collect::<Vec<_>>();
+        let card_ids = active_card_ids
+            .into_iter()
+            .chain(archived_card_ids)
+            .collect::<Vec<_>>();
+        if card_ids.is_empty() {
+            transaction.execute(
+                "DELETE FROM cards
+                 WHERE column_id IN (SELECT id FROM columns WHERE board_id = ?1)",
+                params![board.id],
+            )?;
+        } else {
+            let placeholders = std::iter::repeat_n("?", card_ids.len())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let sql = format!(
+                "DELETE FROM cards
+                 WHERE column_id IN (SELECT id FROM columns WHERE board_id = ?1)
+                   AND id NOT IN ({placeholders})"
+            );
+            let mut values = vec![board.id];
+            values.extend(card_ids);
+            transaction.execute(&sql, rusqlite::params_from_iter(values))?;
+        }
+
+        let column_ids = board
+            .columns
+            .iter()
+            .map(|column| column.id)
+            .collect::<Vec<_>>();
+        if column_ids.is_empty() {
+            transaction.execute("DELETE FROM columns WHERE board_id = ?1", params![board.id])?;
+        } else {
+            let placeholders = std::iter::repeat_n("?", column_ids.len())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let sql = format!(
+                "DELETE FROM columns
+                 WHERE board_id = ?1 AND id NOT IN ({placeholders})"
+            );
+            let mut values = vec![board.id];
+            values.extend(column_ids);
+            transaction.execute(&sql, rusqlite::params_from_iter(values))?;
+        }
+
+        let tag_ids = board.tags.iter().map(|tag| tag.id).collect::<Vec<_>>();
+        if tag_ids.is_empty() {
+            transaction.execute("DELETE FROM tags WHERE board_id = ?1", params![board.id])?;
+        } else {
+            let placeholders = std::iter::repeat_n("?", tag_ids.len())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let sql = format!(
+                "DELETE FROM tags
+                 WHERE board_id = ?1 AND id NOT IN ({placeholders})"
+            );
+            let mut values = vec![board.id];
+            values.extend(tag_ids);
+            transaction.execute(&sql, rusqlite::params_from_iter(values))?;
+        }
 
         for column in &board.columns {
             transaction.execute(
                 "INSERT INTO columns
-                 (id, board_id, name, position, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                 (id, board_id, name, position, created_at, updated_at, wip_limit)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                 ON CONFLICT(id) DO UPDATE SET
+                   board_id = excluded.board_id,
+                   name = excluded.name,
+                   position = excluded.position,
+                   created_at = excluded.created_at,
+                   updated_at = excluded.updated_at,
+                   wip_limit = excluded.wip_limit",
                 params![
                     column.id,
                     board.id,
                     column.name,
                     column.position,
                     column.created_at,
-                    column.updated_at
+                    column.updated_at,
+                    column.wip_limit
                 ],
             )?;
             for card in &column.cards {
                 transaction.execute(
                     "INSERT INTO cards
-                     (id, column_id, title, description, position, created_at, updated_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                     (id, column_id, title, description, position, created_at, updated_at,
+                      due_date, archived_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                     ON CONFLICT(id) DO UPDATE SET
+                       column_id = excluded.column_id,
+                       title = excluded.title,
+                       description = excluded.description,
+                       position = excluded.position,
+                       created_at = excluded.created_at,
+                       updated_at = excluded.updated_at,
+                       due_date = excluded.due_date,
+                       archived_at = excluded.archived_at",
                     params![
                         card.id,
                         column.id,
@@ -135,8 +334,91 @@ impl Database {
                         card.description,
                         card.position,
                         card.created_at,
-                        card.updated_at
+                        card.updated_at,
+                        card.due_date
+                            .map(|date| date.format("%Y-%m-%d").to_string()),
+                        card.archived_at
                     ],
+                )?;
+            }
+        }
+
+        for card in &board.archived_cards {
+            transaction.execute(
+                "INSERT INTO cards
+                 (id, column_id, title, description, position, created_at, updated_at,
+                  due_date, archived_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                 ON CONFLICT(id) DO UPDATE SET
+                   column_id = excluded.column_id,
+                   title = excluded.title,
+                   description = excluded.description,
+                   position = excluded.position,
+                   created_at = excluded.created_at,
+                   updated_at = excluded.updated_at,
+                   due_date = excluded.due_date,
+                   archived_at = excluded.archived_at",
+                params![
+                    card.id,
+                    card.column_id,
+                    card.title,
+                    card.description,
+                    card.position,
+                    card.created_at,
+                    card.updated_at,
+                    card.due_date
+                        .map(|date| date.format("%Y-%m-%d").to_string()),
+                    card.archived_at
+                ],
+            )?;
+        }
+
+        for tag in &board.tags {
+            transaction.execute(
+                "INSERT INTO tags
+                 (id, board_id, name, color, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT(id) DO UPDATE SET
+                   board_id = excluded.board_id,
+                   name = excluded.name,
+                   color = excluded.color,
+                   created_at = excluded.created_at,
+                   updated_at = excluded.updated_at",
+                params![
+                    tag.id,
+                    board.id,
+                    tag.name,
+                    tag.color,
+                    tag.created_at,
+                    tag.updated_at
+                ],
+            )?;
+        }
+
+        transaction.execute(
+            "DELETE FROM card_tags
+             WHERE card_id IN (
+                 SELECT cards.id FROM cards
+                 JOIN columns ON columns.id = cards.column_id
+                 WHERE columns.board_id = ?1
+             )",
+            params![board.id],
+        )?;
+        for column in &board.columns {
+            for card in &column.cards {
+                for tag_id in &card.tag_ids {
+                    transaction.execute(
+                        "INSERT INTO card_tags (card_id, tag_id) VALUES (?1, ?2)",
+                        params![card.id, tag_id],
+                    )?;
+                }
+            }
+        }
+        for card in &board.archived_cards {
+            for tag_id in &card.tag_ids {
+                transaction.execute(
+                    "INSERT INTO card_tags (card_id, tag_id) VALUES (?1, ?2)",
+                    params![card.id, tag_id],
                 )?;
             }
         }
@@ -158,7 +440,7 @@ impl Database {
             |row| row.get::<_, i64>(0),
         )?;
 
-        if version < CURRENT_SCHEMA_VERSION {
+        if version < 1 {
             let transaction = self.connection.transaction()?;
             transaction.execute_batch(
                 "CREATE TABLE IF NOT EXISTS boards (
@@ -194,6 +476,101 @@ impl Database {
             )?;
             transaction.execute(
                 "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, ?2)",
+                params![1, now()],
+            )?;
+            transaction.commit()?;
+        }
+
+        if version < 2 {
+            let transaction = self.connection.transaction()?;
+            transaction.execute_batch(
+                "ALTER TABLE boards ADD COLUMN next_card_id INTEGER NOT NULL DEFAULT 1;
+                 ALTER TABLE boards ADD COLUMN next_column_id INTEGER NOT NULL DEFAULT 1;",
+            )?;
+            transaction.execute_batch(
+                "UPDATE boards
+                 SET next_card_id = COALESCE(
+                         (SELECT MAX(cards.id) + 1
+                          FROM cards
+                          JOIN columns ON columns.id = cards.column_id
+                          WHERE columns.board_id = boards.id),
+                         1
+                     ),
+                     next_column_id = COALESCE(
+                         (SELECT MAX(columns.id) + 1
+                          FROM columns
+                          WHERE columns.board_id = boards.id),
+                         1
+                     );",
+            )?;
+            transaction.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, ?2)",
+                params![2, now()],
+            )?;
+            transaction.commit()?;
+        }
+
+        if version < 3 {
+            let transaction = self.connection.transaction()?;
+            transaction.execute_batch(
+                "ALTER TABLE cards ADD COLUMN due_date TEXT;
+                 CREATE INDEX IF NOT EXISTS idx_cards_due_date ON cards(due_date);",
+            )?;
+            transaction.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, ?2)",
+                params![3, now()],
+            )?;
+            transaction.commit()?;
+        }
+
+        if version < 4 {
+            let transaction = self.connection.transaction()?;
+            transaction.execute_batch(
+                "ALTER TABLE columns ADD COLUMN wip_limit INTEGER;
+                 CREATE INDEX IF NOT EXISTS idx_columns_wip_limit ON columns(wip_limit);",
+            )?;
+            transaction.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, ?2)",
+                params![4, now()],
+            )?;
+            transaction.commit()?;
+        }
+
+        if version < 5 {
+            let transaction = self.connection.transaction()?;
+            transaction.execute_batch(
+                "ALTER TABLE boards ADD COLUMN next_tag_id INTEGER NOT NULL DEFAULT 1;
+                 CREATE TABLE IF NOT EXISTS tags (
+                    id INTEGER PRIMARY KEY,
+                    board_id INTEGER NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
+                    name TEXT NOT NULL,
+                    color TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                 );
+                 CREATE TABLE IF NOT EXISTS card_tags (
+                    card_id INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
+                    tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+                    PRIMARY KEY (card_id, tag_id)
+                 );
+                 CREATE INDEX IF NOT EXISTS idx_tags_board_id ON tags(board_id);
+                 CREATE INDEX IF NOT EXISTS idx_card_tags_tag_id ON card_tags(tag_id);",
+            )?;
+            transaction.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, ?2)",
+                params![5, now()],
+            )?;
+            transaction.commit()?;
+        }
+
+        if version < 6 {
+            let transaction = self.connection.transaction()?;
+            transaction.execute_batch(
+                "ALTER TABLE cards ADD COLUMN archived_at INTEGER;
+                 CREATE INDEX IF NOT EXISTS idx_cards_archived_at ON cards(archived_at);",
+            )?;
+            transaction.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, ?2)",
                 params![CURRENT_SCHEMA_VERSION, now()],
             )?;
             transaction.commit()?;
@@ -224,6 +601,8 @@ fn now() -> i64 {
 
 #[cfg(test)]
 mod tests {
+    use chrono::NaiveDate;
+    use rusqlite::Connection;
     use tempfile::tempdir;
 
     use super::Database;
@@ -291,5 +670,184 @@ mod tests {
         assert_eq!(reloaded.columns[0].cards[0].id, edited_id);
         assert_eq!(reloaded.columns[0].cards[0].title, "編集済み");
         assert_eq!(reloaded.columns[0].cards[0].description, "新しい説明");
+    }
+
+    #[test]
+    fn preserves_created_at_when_saving_a_moved_card() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("board.sqlite3");
+        let mut database = Database::open(&path).unwrap();
+        let mut board = database.load_board().unwrap();
+        let card_id = board.columns[0].cards[0].id;
+        let created_at = board.columns[0].cards[0].created_at;
+
+        board.move_card(card_id, 3, 0).unwrap();
+        database.save_board(&board).unwrap();
+
+        let reloaded = database.load_board().unwrap();
+        let moved_card = reloaded.columns[2]
+            .cards
+            .iter()
+            .find(|card| card.id == card_id)
+            .unwrap();
+        assert_eq!(moved_card.created_at, created_at);
+    }
+
+    #[test]
+    fn migrates_a_version_one_database_and_initializes_id_counters() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("board.sqlite3");
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE schema_migrations (
+                    version INTEGER PRIMARY KEY,
+                    applied_at INTEGER NOT NULL
+                );
+                INSERT INTO schema_migrations (version, applied_at) VALUES (1, 1);
+                CREATE TABLE boards (
+                    id INTEGER PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                );
+                CREATE TABLE columns (
+                    id INTEGER PRIMARY KEY,
+                    board_id INTEGER NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
+                    name TEXT NOT NULL,
+                    position INTEGER NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                );
+                CREATE TABLE cards (
+                    id INTEGER PRIMARY KEY,
+                    column_id INTEGER NOT NULL REFERENCES columns(id) ON DELETE CASCADE,
+                    title TEXT NOT NULL,
+                    description TEXT NOT NULL DEFAULT '',
+                    position INTEGER NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                );
+                INSERT INTO boards (id, name, created_at, updated_at)
+                    VALUES (7, '旧ボード', 10, 11);
+                INSERT INTO columns
+                    (id, board_id, name, position, created_at, updated_at)
+                    VALUES (12, 7, '列', 0, 10, 11);
+                INSERT INTO cards
+                    (id, column_id, title, description, position, created_at, updated_at)
+                    VALUES (34, 12, 'カード', '', 0, 10, 11);",
+            )
+            .unwrap();
+        drop(connection);
+
+        let database = Database::open(&path).unwrap();
+        let board = database.load_board().unwrap();
+
+        assert_eq!(board.next_card_id, 35);
+        assert_eq!(board.next_column_id, 13);
+
+        let version = database
+            .connection
+            .query_row("SELECT MAX(version) FROM schema_migrations", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap();
+        assert_eq!(version, 6);
+        assert_eq!(board.columns[0].cards[0].id, 34);
+        assert_eq!(board.columns[0].cards[0].due_date, None);
+    }
+
+    #[test]
+    fn round_trips_due_dates_and_clear_values() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("board.sqlite3");
+        let mut database = Database::open(&path).unwrap();
+        let mut board = database.load_board().unwrap();
+        let card_with_due_date = board.columns[0].cards[0].id;
+        let card_without_due_date = board.columns[0].cards[1].id;
+        let due_date = NaiveDate::from_ymd_opt(2026, 10, 5).unwrap();
+
+        board
+            .set_card_due_date(card_with_due_date, Some(due_date))
+            .unwrap();
+        database.save_board(&board).unwrap();
+        let reloaded = database.load_board().unwrap();
+        assert_eq!(reloaded.columns[0].cards[0].due_date, Some(due_date));
+        assert_eq!(reloaded.columns[0].cards[1].due_date, None);
+
+        let mut reloaded = reloaded;
+        reloaded
+            .set_card_due_date(card_with_due_date, None)
+            .unwrap();
+        reloaded
+            .set_card_due_date(card_without_due_date, Some(due_date))
+            .unwrap();
+        database.save_board(&reloaded).unwrap();
+        let final_board = database.load_board().unwrap();
+        assert_eq!(final_board.columns[0].cards[0].due_date, None);
+        assert_eq!(final_board.columns[0].cards[1].due_date, Some(due_date));
+    }
+
+    #[test]
+    fn round_trips_wip_limits() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("board.sqlite3");
+        let mut database = Database::open(&path).unwrap();
+        let mut board = database.load_board().unwrap();
+
+        board.set_column_wip_limit(1, Some(5)).unwrap();
+        database.save_board(&board).unwrap();
+
+        assert_eq!(database.load_board().unwrap().columns[0].wip_limit, Some(5));
+    }
+
+    #[test]
+    fn round_trips_tags_and_card_assignments() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("board.sqlite3");
+        let mut database = Database::open(&path).unwrap();
+        let mut board = database.load_board().unwrap();
+        let tag_id = board.add_tag("重要", "#ef4444").unwrap();
+        let card_id = board.columns[0].cards[0].id;
+        board.set_card_tags(card_id, vec![tag_id]).unwrap();
+        database.save_board(&board).unwrap();
+
+        let reloaded = database.load_board().unwrap();
+        assert_eq!(reloaded.tags[0].name, "重要");
+        assert_eq!(reloaded.columns[0].cards[0].tag_ids, vec![tag_id]);
+    }
+
+    #[test]
+    fn round_trips_archived_cards_and_restoration() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("board.sqlite3");
+        let mut database = Database::open(&path).unwrap();
+        let mut board = database.load_board().unwrap();
+        let card_id = board.columns[0].cards[0].id;
+        let tag_id = board.add_tag("保管", "#64748b").unwrap();
+        board.set_card_tags(card_id, vec![tag_id]).unwrap();
+
+        board.archive_card(card_id).unwrap();
+        database.save_board(&board).unwrap();
+
+        let mut reloaded = database.load_board().unwrap();
+        assert_eq!(reloaded.columns[0].cards.len(), 1);
+        assert_eq!(reloaded.archived_cards[0].id, card_id);
+        assert!(reloaded.archived_cards[0].archived_at.is_some());
+        assert_eq!(reloaded.archived_cards[0].tag_ids, vec![tag_id]);
+
+        reloaded.remove_tag(tag_id).unwrap();
+        database.save_board(&reloaded).unwrap();
+        reloaded = database.load_board().unwrap();
+        assert!(reloaded.archived_cards[0].tag_ids.is_empty());
+
+        reloaded.restore_card(card_id).unwrap();
+        database.save_board(&reloaded).unwrap();
+        let restored = database.load_board().unwrap();
+        assert!(restored.archived_cards.is_empty());
+        assert!(restored.columns[0]
+            .cards
+            .iter()
+            .any(|card| card.id == card_id));
     }
 }

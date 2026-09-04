@@ -1,15 +1,23 @@
+use chrono::{Datelike, Duration, Local, NaiveDate, Weekday};
 use gpui_kit::{
+    component::dialog::DialogButtonProps,
     component::input::{Input, InputState, Textarea, TextareaState},
+    component::Disableable as _,
     component::Sizable,
+    component::WindowExt as _,
     component::{button::Button, button::ButtonVariants as _},
     div,
     prelude::*,
-    px, rgb, rgba, Context, Entity, Half, IntoElement, Pixels, Point, Render, SharedString, Window,
+    px, rgb, rgba, Context, Entity, Half, IntoElement, KeyDownEvent, Pixels, Point, Render,
+    SharedString, Window,
 };
 
 use crate::{
     db::Database,
-    model::{Board, BoardError, Card, CardId, Column, ColumnId},
+    model::{
+        card_matches_search, due_status, parse_due_date, parse_wip_limit, Board, BoardError, Card,
+        CardId, Column, ColumnId, DueStatus, Tag, TagId,
+    },
 };
 
 #[derive(Clone, Copy)]
@@ -61,6 +69,27 @@ struct CardEditor {
     card_id: CardId,
     title: Entity<InputState>,
     description: Entity<TextareaState>,
+    due_date: Entity<InputState>,
+    tag_ids: Vec<TagId>,
+}
+
+struct ColumnEditor {
+    column_id: Option<ColumnId>,
+    name: Entity<InputState>,
+    wip_limit: Entity<InputState>,
+}
+
+struct TagEditor {
+    tag_id: Option<TagId>,
+    name: Entity<InputState>,
+    color: Entity<InputState>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DueFilter {
+    None,
+    Overdue,
+    ThroughThisWeek,
 }
 
 impl Render for ColumnDragPreview {
@@ -93,15 +122,35 @@ pub struct BoardView {
     database: Database,
     status: Option<String>,
     editing_card: Option<CardEditor>,
+    editing_column: Option<ColumnEditor>,
+    editing_tag: Option<TagEditor>,
+    due_filter: DueFilter,
+    tag_filter: Option<TagId>,
+    show_archived: bool,
+    search: Entity<InputState>,
+    search_query: String,
 }
 
 impl BoardView {
-    pub fn new(board: Board, database: Database) -> Self {
+    pub fn new(
+        board: Board,
+        database: Database,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let search = cx.new(|cx| InputState::new(window, cx).placeholder("タイトル・説明を検索"));
         Self {
             board,
             database,
             status: None,
             editing_card: None,
+            editing_column: None,
+            editing_tag: None,
+            due_filter: DueFilter::None,
+            tag_filter: None,
+            show_archived: false,
+            search,
+            search_query: String::new(),
         }
     }
 
@@ -171,13 +220,22 @@ impl BoardView {
     }
 
     fn begin_card_edit(&mut self, card_id: CardId, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((title, description)) = self
+        let Some((title, description, due_date, tag_ids)) = self
             .board
             .columns
             .iter()
             .flat_map(|column| column.cards.iter())
             .find(|card| card.id == card_id)
-            .map(|card| (card.title.clone(), card.description.clone()))
+            .map(|card| {
+                (
+                    card.title.clone(),
+                    card.description.clone(),
+                    card.due_date
+                        .map(|date| date.format("%Y-%m-%d").to_string())
+                        .unwrap_or_default(),
+                    card.tag_ids.clone(),
+                )
+            })
         else {
             self.status = Some(format_card_error(BoardError::CardNotFound(card_id)));
             cx.notify();
@@ -194,11 +252,18 @@ impl BoardView {
                 .placeholder("カードの説明")
                 .default_value(description)
         });
+        let due_date_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("YYYY-MM-DD（任意）")
+                .default_value(due_date)
+        });
         title_input.update(cx, |state, cx| state.focus(window, cx));
         self.editing_card = Some(CardEditor {
             card_id,
             title: title_input,
             description: description_input,
+            due_date: due_date_input,
+            tag_ids,
         });
         cx.notify();
     }
@@ -216,23 +281,59 @@ impl BoardView {
         };
         let title = editor.title.read(cx).value().to_string();
         let description = editor.description.read(cx).value().to_string();
+        let due_date_text = editor.due_date.read(cx).value().to_string();
+        let tag_ids = editor.tag_ids.clone();
+        let due_date = match parse_due_date(&due_date_text) {
+            Ok(due_date) => due_date,
+            Err(error) => {
+                self.editing_card = Some(editor);
+                self.status = Some(format!("期限を確認してください: {error}"));
+                cx.notify();
+                return;
+            }
+        };
         let before = self.board.clone();
 
-        match self.board.update_card(editor.card_id, title, description) {
-            Ok(false) => {
-                self.status = Some("カードに変更はありません".to_string());
+        let content_changed = match self.board.update_card(editor.card_id, title, description) {
+            Ok(changed) => changed,
+            Err(error) => {
+                self.editing_card = Some(editor);
+                self.status = Some(format_card_error(error));
+                cx.notify();
+                return;
             }
-            Ok(true) => match self.database.save_board(&self.board) {
+        };
+        let due_date_changed = match self.board.set_card_due_date(editor.card_id, due_date) {
+            Ok(changed) => changed,
+            Err(error) => {
+                self.board = before;
+                self.editing_card = Some(editor);
+                self.status = Some(format_card_error(error));
+                cx.notify();
+                return;
+            }
+        };
+        let tags_changed = match self.board.set_card_tags(editor.card_id, tag_ids) {
+            Ok(changed) => changed,
+            Err(error) => {
+                self.board = before;
+                self.editing_card = Some(editor);
+                self.status = Some(format_card_error(error));
+                cx.notify();
+                return;
+            }
+        };
+
+        if !content_changed && !due_date_changed && !tags_changed {
+            self.status = Some("カードに変更はありません".to_string());
+        } else {
+            match self.database.save_board(&self.board) {
                 Ok(()) => self.status = Some("カードを更新しました".to_string()),
                 Err(error) => {
                     self.board = before;
                     self.editing_card = Some(editor);
                     self.status = Some(format!("保存に失敗しました: {error}"));
                 }
-            },
-            Err(error) => {
-                self.editing_card = Some(editor);
-                self.status = Some(format_card_error(error));
             }
         }
         cx.notify();
@@ -262,6 +363,648 @@ impl BoardView {
         cx.notify();
     }
 
+    fn archive_card(&mut self, card_id: CardId, cx: &mut Context<Self>) {
+        let before = self.board.clone();
+        match self.board.archive_card(card_id) {
+            Ok(true) => match self.database.save_board(&self.board) {
+                Ok(()) => {
+                    if self
+                        .editing_card
+                        .as_ref()
+                        .is_some_and(|editor| editor.card_id == card_id)
+                    {
+                        self.editing_card = None;
+                    }
+                    self.status = Some("カードをアーカイブしました".to_string());
+                }
+                Err(error) => {
+                    self.board = before;
+                    self.status = Some(format!("保存に失敗しました: {error}"));
+                }
+            },
+            Ok(false) => {}
+            Err(error) => self.status = Some(format_card_error(error)),
+        }
+        cx.notify();
+    }
+
+    fn archive_column(&mut self, column_id: ColumnId, cx: &mut Context<Self>) {
+        let before = self.board.clone();
+        match self.board.archive_column(column_id) {
+            Ok(0) => self.status = Some("アーカイブするカードがありません".to_string()),
+            Ok(count) => match self.database.save_board(&self.board) {
+                Ok(()) => {
+                    self.editing_card = None;
+                    self.status = Some(format!("{count} 枚をアーカイブしました"));
+                }
+                Err(error) => {
+                    self.board = before;
+                    self.status = Some(format!("保存に失敗しました: {error}"));
+                }
+            },
+            Err(error) => self.status = Some(format_column_error(error)),
+        }
+        cx.notify();
+    }
+
+    fn restore_card(&mut self, card_id: CardId, cx: &mut Context<Self>) {
+        let before = self.board.clone();
+        match self.board.restore_card(card_id) {
+            Ok(true) => match self.database.save_board(&self.board) {
+                Ok(()) => self.status = Some("カードを復元しました".to_string()),
+                Err(error) => {
+                    self.board = before;
+                    self.status = Some(format!("保存に失敗しました: {error}"));
+                }
+            },
+            Ok(false) => {}
+            Err(error) => self.status = Some(format_card_error(error)),
+        }
+        cx.notify();
+    }
+
+    fn toggle_archive_view(&mut self, cx: &mut Context<Self>) {
+        self.show_archived = !self.show_archived;
+        self.editing_card = None;
+        self.editing_column = None;
+        self.status = Some(if self.show_archived {
+            "アーカイブを表示しています".to_string()
+        } else {
+            "ボードを表示しています".to_string()
+        });
+        cx.notify();
+    }
+
+    fn set_due_date_input(
+        &mut self,
+        due_date: Option<NaiveDate>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(editor) = self.editing_card.as_ref() {
+            let value = due_date
+                .map(|date| date.format("%Y-%m-%d").to_string())
+                .unwrap_or_default();
+            editor
+                .due_date
+                .update(cx, |state, cx| state.set_value(value, window, cx));
+            cx.notify();
+        }
+    }
+
+    fn toggle_card_tag(&mut self, tag_id: TagId, cx: &mut Context<Self>) {
+        let Some(editor) = self.editing_card.as_mut() else {
+            return;
+        };
+        if let Some(index) = editor.tag_ids.iter().position(|id| *id == tag_id) {
+            editor.tag_ids.remove(index);
+        } else {
+            editor.tag_ids.push(tag_id);
+            editor.tag_ids.sort_unstable();
+        }
+        cx.notify();
+    }
+
+    fn begin_add_tag(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let name = cx.new(|cx| InputState::new(window, cx).placeholder("タグ名"));
+        let color = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("#60a5fa")
+                .default_value("#60a5fa")
+        });
+        name.update(cx, |state, cx| state.focus(window, cx));
+        self.editing_tag = Some(TagEditor {
+            tag_id: None,
+            name,
+            color,
+        });
+        cx.notify();
+    }
+
+    fn begin_tag_edit(&mut self, tag_id: TagId, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((tag_name, tag_color)) = self
+            .board
+            .tags
+            .iter()
+            .find(|tag| tag.id == tag_id)
+            .map(|tag| (tag.name.clone(), tag.color.clone()))
+        else {
+            self.status = Some(format_tag_error(BoardError::TagNotFound(tag_id)));
+            cx.notify();
+            return;
+        };
+        let name = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("タグ名")
+                .default_value(tag_name)
+        });
+        let color = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("#60a5fa")
+                .default_value(tag_color)
+        });
+        name.update(cx, |state, cx| state.focus(window, cx));
+        self.editing_tag = Some(TagEditor {
+            tag_id: Some(tag_id),
+            name,
+            color,
+        });
+        cx.notify();
+    }
+
+    fn cancel_tag_edit(&mut self, cx: &mut Context<Self>) {
+        if self.editing_tag.take().is_some() {
+            self.status = Some("タグの編集をキャンセルしました".to_string());
+            cx.notify();
+        }
+    }
+
+    fn save_tag_edit(&mut self, cx: &mut Context<Self>) {
+        let Some(editor) = self.editing_tag.take() else {
+            return;
+        };
+        let name = editor.name.read(cx).value().to_string();
+        let color = editor.color.read(cx).value().to_string();
+        let before = self.board.clone();
+        let result = (|| -> Result<bool, BoardError> {
+            match editor.tag_id {
+                Some(tag_id) => {
+                    let name_changed = self.board.rename_tag(tag_id, name)?;
+                    let color_changed = self.board.set_tag_color(tag_id, color)?;
+                    Ok(name_changed || color_changed)
+                }
+                None => {
+                    self.board.add_tag(name, color)?;
+                    Ok(true)
+                }
+            }
+        })();
+
+        match result {
+            Ok(false) => self.status = Some("タグに変更はありません".to_string()),
+            Ok(true) => match self.database.save_board(&self.board) {
+                Ok(()) => {
+                    self.status = Some(
+                        if editor.tag_id.is_some() {
+                            "タグを更新しました"
+                        } else {
+                            "タグを追加しました"
+                        }
+                        .to_string(),
+                    )
+                }
+                Err(error) => {
+                    self.board = before;
+                    self.editing_tag = Some(editor);
+                    self.status = Some(format!("保存に失敗しました: {error}"));
+                }
+            },
+            Err(error) => {
+                self.board = before;
+                self.editing_tag = Some(editor);
+                self.status = Some(format_tag_error(error));
+            }
+        }
+        cx.notify();
+    }
+
+    fn delete_tag(&mut self, tag_id: TagId, cx: &mut Context<Self>) {
+        let before = self.board.clone();
+        match self.board.remove_tag(tag_id) {
+            Ok(()) => match self.database.save_board(&self.board) {
+                Ok(()) => {
+                    if self.tag_filter == Some(tag_id) {
+                        self.tag_filter = None;
+                    }
+                    if self
+                        .editing_tag
+                        .as_ref()
+                        .is_some_and(|editor| editor.tag_id == Some(tag_id))
+                    {
+                        self.editing_tag = None;
+                    }
+                    self.status = Some("タグを削除しました".to_string());
+                }
+                Err(error) => {
+                    self.board = before;
+                    self.status = Some(format!("保存に失敗しました: {error}"));
+                }
+            },
+            Err(error) => self.status = Some(format_tag_error(error)),
+        }
+        cx.notify();
+    }
+
+    fn set_tag_filter(&mut self, tag_id: TagId, cx: &mut Context<Self>) {
+        self.tag_filter = if self.tag_filter == Some(tag_id) {
+            None
+        } else {
+            Some(tag_id)
+        };
+        self.status = Some("タグフィルターを変更しました".to_string());
+        cx.notify();
+    }
+
+    fn begin_add_column(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let name = cx.new(|cx| InputState::new(window, cx).placeholder("カラム名"));
+        name.update(cx, |state, cx| state.focus(window, cx));
+        self.editing_column = Some(ColumnEditor {
+            column_id: None,
+            name,
+            wip_limit: cx.new(|cx| InputState::new(window, cx).placeholder("WIP 上限")),
+        });
+        cx.notify();
+    }
+
+    fn begin_column_edit(
+        &mut self,
+        column_id: ColumnId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((column_name, wip_limit)) = self
+            .board
+            .columns
+            .iter()
+            .find(|column| column.id == column_id)
+            .map(|column| {
+                (
+                    column.name.clone(),
+                    column
+                        .wip_limit
+                        .map(|limit| limit.to_string())
+                        .unwrap_or_default(),
+                )
+            })
+        else {
+            self.status = Some(format_column_error(BoardError::ColumnNotFound(column_id)));
+            cx.notify();
+            return;
+        };
+
+        let name = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("カラム名")
+                .default_value(column_name)
+        });
+        let wip_limit = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("WIP 上限")
+                .default_value(wip_limit)
+        });
+        name.update(cx, |state, cx| state.focus(window, cx));
+        self.editing_column = Some(ColumnEditor {
+            column_id: Some(column_id),
+            name,
+            wip_limit,
+        });
+        cx.notify();
+    }
+
+    fn cancel_column_edit(&mut self, cx: &mut Context<Self>) {
+        if self.editing_column.take().is_some() {
+            self.status = Some("カラムの編集をキャンセルしました".to_string());
+            cx.notify();
+        }
+    }
+
+    fn save_column_edit(&mut self, cx: &mut Context<Self>) {
+        let Some(editor) = self.editing_column.take() else {
+            return;
+        };
+        let name = editor.name.read(cx).value().to_string();
+        let wip_limit_text = editor.wip_limit.read(cx).value().to_string();
+        let wip_limit = match parse_wip_limit(&wip_limit_text) {
+            Ok(wip_limit) => wip_limit,
+            Err(error) => {
+                self.editing_column = Some(editor);
+                self.status = Some(format!("WIP 上限を確認してください: {error}"));
+                cx.notify();
+                return;
+            }
+        };
+        let before = self.board.clone();
+        let result = (|| -> Result<bool, BoardError> {
+            match editor.column_id {
+                Some(column_id) => {
+                    let name_changed = self.board.rename_column(column_id, name)?;
+                    let wip_changed = self.board.set_column_wip_limit(column_id, wip_limit)?;
+                    Ok(name_changed || wip_changed)
+                }
+                None => {
+                    let column_id = self.board.add_column(name)?;
+                    self.board.set_column_wip_limit(column_id, wip_limit)?;
+                    Ok(true)
+                }
+            }
+        })();
+
+        match result {
+            Ok(false) => {
+                self.status = Some("カラムに変更はありません".to_string());
+            }
+            Ok(true) => match self.database.save_board(&self.board) {
+                Ok(()) => {
+                    self.status = Some(
+                        if editor.column_id.is_some() {
+                            "カラムを更新しました"
+                        } else {
+                            "カラムを追加しました"
+                        }
+                        .to_string(),
+                    )
+                }
+                Err(error) => {
+                    self.board = before;
+                    self.editing_column = Some(editor);
+                    self.status = Some(format!("保存に失敗しました: {error}"));
+                }
+            },
+            Err(error) => {
+                self.editing_column = Some(editor);
+                self.status = Some(format_column_error(error));
+            }
+        }
+        cx.notify();
+    }
+
+    fn request_delete_column(
+        &mut self,
+        column_id: ColumnId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(column) = self
+            .board
+            .columns
+            .iter()
+            .find(|column| column.id == column_id)
+        else {
+            self.status = Some(format_column_error(BoardError::ColumnNotFound(column_id)));
+            cx.notify();
+            return;
+        };
+        if column.cards.is_empty() {
+            self.delete_column(column_id, cx);
+            return;
+        }
+
+        let card_count = column.cards.len();
+        let board_view = cx.entity();
+        window.open_alert_dialog(cx, move |alert, _, _| {
+            let board_view = board_view.clone();
+            alert
+                .confirm()
+                .title("カラムを削除しますか？")
+                .description(format!(
+                    "このカラムには {card_count} 枚のカードがあります。削除するとカードも削除されます。"
+                ))
+                .button_props(
+                    DialogButtonProps::default()
+                        .ok_text("削除")
+                        .cancel_text("キャンセル")
+                        .show_cancel(true),
+                )
+                .on_ok(move |_, _, cx| {
+                    board_view.update(cx, |this, cx| this.delete_column(column_id, cx));
+                    true
+                })
+        });
+    }
+
+    fn delete_column(&mut self, column_id: ColumnId, cx: &mut Context<Self>) {
+        let before = self.board.clone();
+        match self.board.remove_column(column_id) {
+            Ok(()) => match self.database.save_board(&self.board) {
+                Ok(()) => {
+                    if self
+                        .editing_column
+                        .as_ref()
+                        .is_some_and(|editor| editor.column_id == Some(column_id))
+                    {
+                        self.editing_column = None;
+                    }
+                    self.status = Some("カラムを削除しました".to_string());
+                }
+                Err(error) => {
+                    self.board = before;
+                    self.status = Some(format!("保存に失敗しました: {error}"));
+                }
+            },
+            Err(error) => self.status = Some(format_column_error(error)),
+        }
+        cx.notify();
+    }
+
+    fn sort_column_by_due_date(&mut self, column_id: ColumnId, cx: &mut Context<Self>) {
+        let before = self.board.clone();
+        match self.board.sort_column_by_due_date(column_id) {
+            Ok(false) => {
+                self.status = Some("期限順に変更はありません".to_string());
+            }
+            Ok(true) => match self.database.save_board(&self.board) {
+                Ok(()) => self.status = Some("期限順に並べ替えました".to_string()),
+                Err(error) => {
+                    self.board = before;
+                    self.status = Some(format!("保存に失敗しました: {error}"));
+                }
+            },
+            Err(error) => self.status = Some(format_column_error(error)),
+        }
+        cx.notify();
+    }
+
+    fn set_due_filter(&mut self, filter: DueFilter, cx: &mut Context<Self>) {
+        self.due_filter = if self.due_filter == filter {
+            DueFilter::None
+        } else {
+            filter
+        };
+        self.status = Some("表示フィルターを変更しました".to_string());
+        cx.notify();
+    }
+
+    fn commit_search(&mut self, cx: &mut Context<Self>) {
+        self.search_query = self.search.read(cx).value().to_string();
+        self.status = if self.search_query.trim().is_empty() {
+            Some("検索をクリアしました".to_string())
+        } else {
+            Some(format!("「{}」で検索中", self.search_query))
+        };
+        cx.notify();
+    }
+
+    fn clear_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.search
+            .update(cx, |state, cx| state.set_value("", window, cx));
+        self.search_query.clear();
+        self.status = Some("検索をクリアしました".to_string());
+        cx.notify();
+    }
+
+    fn render_search(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .flex()
+            .items_center()
+            .gap_1()
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                match event.keystroke.key.as_str() {
+                    "enter" => {
+                        cx.stop_propagation();
+                        this.commit_search(cx);
+                    }
+                    "escape" => {
+                        cx.stop_propagation();
+                        this.clear_search(window, cx);
+                    }
+                    _ => {}
+                }
+            }))
+            .child(Input::new(&self.search).small())
+            .when(!self.search_query.is_empty(), |this| {
+                this.child(
+                    Button::new("clear-search")
+                        .ghost()
+                        .label("クリア")
+                        .on_click(cx.listener(|this, _, window, cx| this.clear_search(window, cx))),
+                )
+            })
+    }
+
+    fn render_column_editor(
+        &self,
+        editor: &ColumnEditor,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let editor_kind = editor.column_id;
+        let wip_limit_invalid = parse_wip_limit(&editor.wip_limit.read(cx).value()).is_err();
+        div()
+            .flex()
+            .items_center()
+            .gap_1()
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                match event.keystroke.key.as_str() {
+                    "enter" => {
+                        cx.stop_propagation();
+                        this.save_column_edit(cx);
+                    }
+                    "escape" => {
+                        cx.stop_propagation();
+                        this.cancel_column_edit(cx);
+                    }
+                    _ => {}
+                }
+            }))
+            .child(Input::new(&editor.name).small())
+            .child(Input::new(&editor.wip_limit).small())
+            .when(wip_limit_invalid, |this| {
+                this.child(
+                    div()
+                        .text_xs()
+                        .text_color(rgb(0xf87171))
+                        .child("WIP は正の整数"),
+                )
+            })
+            .child(
+                Button::new(("save-column", editor_kind.unwrap_or(0) as u64))
+                    .primary()
+                    .disabled(wip_limit_invalid)
+                    .label("保存")
+                    .on_click(cx.listener(|this, _, _, cx| this.save_column_edit(cx))),
+            )
+            .child(
+                Button::new(("cancel-column", editor_kind.unwrap_or(0) as u64))
+                    .secondary()
+                    .label("取消")
+                    .on_click(cx.listener(|this, _, _, cx| this.cancel_column_edit(cx))),
+            )
+    }
+
+    fn render_tag_editor(&self, editor: &TagEditor, cx: &mut Context<Self>) -> impl IntoElement {
+        let editor_kind = editor.tag_id;
+        div()
+            .flex()
+            .items_center()
+            .gap_1()
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                match event.keystroke.key.as_str() {
+                    "enter" => {
+                        cx.stop_propagation();
+                        this.save_tag_edit(cx);
+                    }
+                    "escape" => {
+                        cx.stop_propagation();
+                        this.cancel_tag_edit(cx);
+                    }
+                    _ => {}
+                }
+            }))
+            .child(Input::new(&editor.name).small())
+            .child(Input::new(&editor.color).small())
+            .child(
+                Button::new(("save-tag", editor_kind.unwrap_or(0) as u64))
+                    .primary()
+                    .label("保存")
+                    .on_click(cx.listener(|this, _, _, cx| this.save_tag_edit(cx))),
+            )
+            .child(
+                Button::new(("cancel-tag", editor_kind.unwrap_or(0) as u64))
+                    .secondary()
+                    .label("取消")
+                    .on_click(cx.listener(|this, _, _, cx| this.cancel_tag_edit(cx))),
+            )
+    }
+
+    fn render_tag_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let editing_tag = self.editing_tag.as_ref();
+        div()
+            .flex()
+            .items_center()
+            .gap_1()
+            .child(div().text_xs().text_color(rgb(0x94a3b8)).child("タグ"))
+            .children(self.board.tags.iter().map(|tag| {
+                let tag_id = tag.id;
+                let selected = self.tag_filter == Some(tag_id);
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .child(
+                        Button::new(("filter-tag", tag_id as u64))
+                            .secondary()
+                            .label(format!("{}{}", if selected { "✓ " } else { "" }, tag.name))
+                            .on_click(
+                                cx.listener(move |this, _, _, cx| this.set_tag_filter(tag_id, cx)),
+                            ),
+                    )
+                    .child(
+                        Button::new(("edit-tag", tag_id as u64))
+                            .ghost()
+                            .label("編集")
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.begin_tag_edit(tag_id, window, cx)
+                            })),
+                    )
+                    .child(
+                        Button::new(("delete-tag", tag_id as u64))
+                            .danger()
+                            .label("削除")
+                            .on_click(
+                                cx.listener(move |this, _, _, cx| this.delete_tag(tag_id, cx)),
+                            ),
+                    )
+            }))
+            .child(if let Some(editor) = editing_tag {
+                self.render_tag_editor(editor, cx).into_any_element()
+            } else {
+                Button::new("add-tag")
+                    .secondary()
+                    .label("＋ タグ")
+                    .on_click(cx.listener(|this, _, window, cx| this.begin_add_tag(window, cx)))
+                    .into_any_element()
+            })
+    }
+
     fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let status = self
             .status
@@ -287,13 +1030,58 @@ impl BoardView {
                             .font_weight(gpui_kit::FontWeight::BOLD)
                             .child(self.board.name.clone()),
                     )
-                    .child(div().text_xs().text_color(rgb(0x94a3b8)).child(status)),
+                    .child(div().text_xs().text_color(rgb(0x94a3b8)).child(status))
+                    .child(self.render_search(cx))
+                    .child(self.render_tag_bar(cx)),
             )
             .child(
-                Button::new("add-card")
-                    .primary()
-                    .label("＋ カードを追加")
-                    .on_click(cx.listener(|this, _, window, cx| this.add_card(window, cx))),
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        Button::new("filter-none")
+                            .secondary()
+                            .label("すべて")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.set_due_filter(DueFilter::None, cx)
+                            })),
+                    )
+                    .child(
+                        Button::new("filter-overdue")
+                            .secondary()
+                            .label("期限切れ")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.set_due_filter(DueFilter::Overdue, cx)
+                            })),
+                    )
+                    .child(
+                        Button::new("filter-week")
+                            .secondary()
+                            .label("今週まで")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.set_due_filter(DueFilter::ThroughThisWeek, cx)
+                            })),
+                    )
+                    .child(
+                        Button::new("archive-view")
+                            .secondary()
+                            .label(format!("アーカイブ ({})", self.board.archived_cards.len()))
+                            .on_click(cx.listener(|this, _, _, cx| this.toggle_archive_view(cx))),
+                    )
+                    .child(if self.show_archived {
+                        Button::new("back-to-board")
+                            .primary()
+                            .label("ボードへ戻る")
+                            .on_click(cx.listener(|this, _, _, cx| this.toggle_archive_view(cx)))
+                            .into_any_element()
+                    } else {
+                        Button::new("add-card")
+                            .primary()
+                            .label("＋ カードを追加")
+                            .on_click(cx.listener(|this, _, window, cx| this.add_card(window, cx)))
+                            .into_any_element()
+                    }),
             )
     }
 
@@ -306,6 +1094,45 @@ impl BoardView {
         let column_id = column.id;
         let end_index = column.cards.len();
         let column_name = SharedString::from(column.name.clone());
+        let is_editing = self
+            .editing_column
+            .as_ref()
+            .is_some_and(|editor| editor.column_id == Some(column_id));
+        let last_column = self.board.columns.len() == 1;
+        let wip_over = column
+            .wip_limit
+            .is_some_and(|limit| column.cards.len() as i64 > limit);
+        let card_count_label = column
+            .wip_limit
+            .map(|limit| format!("{} / {limit}", column.cards.len()))
+            .unwrap_or_else(|| format!("{} cards", column.cards.len()));
+        let header_content = if is_editing {
+            self.render_column_editor(
+                self.editing_column.as_ref().expect("editing column exists"),
+                cx,
+            )
+            .into_any_element()
+        } else {
+            div()
+                .id(("column-drag-handle", column_id as u64))
+                .flex_1()
+                .min_w_0()
+                .cursor_move()
+                .on_drag(ColumnDrag { column_id }, move |_, position, _, cx| {
+                    cx.new(|_| ColumnDragPreview {
+                        name: column_name.clone(),
+                        position,
+                    })
+                })
+                .child(
+                    div()
+                        .text_sm()
+                        .font_weight(gpui_kit::FontWeight::BOLD)
+                        .text_color(rgb(0xe2e8f0))
+                        .child(column.name.clone()),
+                )
+                .into_any_element()
+        };
         div()
             .id(("column", column_id as u64))
             .w(px(280.))
@@ -333,34 +1160,73 @@ impl BoardView {
                     .items_center()
                     .justify_between()
                     .px_1()
-                    .cursor_move()
-                    .on_drag(ColumnDrag { column_id }, move |_, position, _, cx| {
-                        cx.new(|_| ColumnDragPreview {
-                            name: column_name.clone(),
-                            position,
-                        })
-                    })
+                    .child(header_content)
                     .child(
                         div()
-                            .text_sm()
-                            .font_weight(gpui_kit::FontWeight::BOLD)
-                            .text_color(rgb(0xe2e8f0))
-                            .child(column.name.clone()),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(rgb(0x94a3b8))
-                            .child(format!("{} cards", column.cards.len())),
+                            .flex()
+                            .items_center()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(if wip_over {
+                                        rgb(0xf87171)
+                                    } else {
+                                        rgb(0x94a3b8)
+                                    })
+                                    .child(card_count_label),
+                            )
+                            .when(!is_editing, |this| {
+                                this.child(
+                                    Button::new(("sort-column", column_id as u64))
+                                        .ghost()
+                                        .label("期限順")
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.sort_column_by_due_date(column_id, cx)
+                                        })),
+                                )
+                                .child(
+                                    Button::new(("archive-column", column_id as u64))
+                                        .ghost()
+                                        .label("アーカイブ")
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.archive_column(column_id, cx)
+                                        })),
+                                )
+                                .child(
+                                    Button::new(("edit-column", column_id as u64))
+                                        .ghost()
+                                        .label("編集")
+                                        .on_click(cx.listener(move |this, _, window, cx| {
+                                            this.begin_column_edit(column_id, window, cx)
+                                        })),
+                                )
+                                .child(
+                                    Button::new(("delete-column", column_id as u64))
+                                        .danger()
+                                        .disabled(last_column)
+                                        .label("削除")
+                                        .on_click(cx.listener(move |this, _, window, cx| {
+                                            this.request_delete_column(column_id, window, cx)
+                                        })),
+                                )
+                            }),
                     ),
             )
-            .children(
-                column
-                    .cards
-                    .iter()
-                    .enumerate()
-                    .map(|(index, card)| self.render_card(column_id, index, card, cx)),
-            )
+            .children(column.cards.iter().enumerate().map(|(index, card)| {
+                self.render_card(
+                    column_id,
+                    index,
+                    card,
+                    !card_matches_filter(card, self.due_filter, Local::now().date_naive())
+                        || (!self.search_query.is_empty()
+                            && !card_matches_search(card, &self.search_query))
+                        || self
+                            .tag_filter
+                            .is_some_and(|tag_id| !card.tag_ids.contains(&tag_id)),
+                    cx,
+                )
+            }))
             .child(
                 div()
                     .h(px(40.))
@@ -377,16 +1243,148 @@ impl BoardView {
             )
     }
 
+    fn render_archived(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let today = Local::now().date_naive();
+        div()
+            .id("archived-content")
+            .flex_1()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .p_6()
+            .overflow_y_scroll()
+            .child(
+                div()
+                    .text_lg()
+                    .font_weight(gpui_kit::FontWeight::BOLD)
+                    .child("アーカイブ済みカード"),
+            )
+            .when(self.board.archived_cards.is_empty(), |this| {
+                this.child(
+                    div()
+                        .text_sm()
+                        .text_color(rgb(0x94a3b8))
+                        .child("アーカイブ済みのカードはありません"),
+                )
+            })
+            .children(
+                self.board
+                    .archived_cards
+                    .iter()
+                    .map(|card| self.render_archived_card(card, today, cx)),
+            )
+    }
+
+    fn render_archived_card(
+        &self,
+        card: &Card,
+        today: NaiveDate,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let card_id = card.id;
+        let dimmed = (!self.search_query.is_empty()
+            && !card_matches_search(card, &self.search_query))
+            || !card_matches_filter(card, self.due_filter, today)
+            || self
+                .tag_filter
+                .is_some_and(|tag_id| !card.tag_ids.contains(&tag_id));
+        div()
+            .w_full()
+            .max_w(px(720.))
+            .p_3()
+            .flex()
+            .items_start()
+            .justify_between()
+            .gap_3()
+            .rounded_md()
+            .bg(rgb(0x334155))
+            .border_1()
+            .border_color(rgb(0x475569))
+            .when(dimmed, |this| this.opacity(0.35))
+            .child(
+                div()
+                    .flex_1()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(rgb(0xf8fafc))
+                            .child(card.title.clone()),
+                    )
+                    .when_some(
+                        card.due_date
+                            .map(|due_date| render_due_badge(due_date, today).into_any_element()),
+                        |this, badge| this.child(badge),
+                    )
+                    .children(
+                        card.tag_ids
+                            .iter()
+                            .filter_map(|tag_id| {
+                                self.board.tags.iter().find(|tag| tag.id == *tag_id)
+                            })
+                            .map(render_tag_chip),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(rgb(0x94a3b8))
+                            .child(card.description.clone()),
+                    ),
+            )
+            .child(
+                Button::new(("restore-card", card_id as u64))
+                    .primary()
+                    .label("復元")
+                    .on_click(cx.listener(move |this, _, _, cx| this.restore_card(card_id, cx))),
+            )
+    }
+
+    fn render_add_column(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let editor = self
+            .editing_column
+            .as_ref()
+            .filter(|editor| editor.column_id.is_none());
+        div()
+            .id("add-column-placeholder")
+            .w(px(280.))
+            .h(px(120.))
+            .flex_none()
+            .flex()
+            .items_center()
+            .justify_center()
+            .p_3()
+            .rounded_lg()
+            .border_1()
+            .border_dashed()
+            .border_color(rgb(0x475569))
+            .child(if let Some(editor) = editor {
+                self.render_column_editor(editor, cx).into_any_element()
+            } else {
+                Button::new("add-column")
+                    .secondary()
+                    .label("＋ カラムを追加")
+                    .on_click(cx.listener(|this, _, window, cx| this.begin_add_column(window, cx)))
+                    .into_any_element()
+            })
+    }
+
     fn render_card(
         &self,
         column_id: ColumnId,
         index: usize,
         card: &Card,
+        dimmed: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let card_id = card.id;
         let title = card.title.clone();
         let drag_title = SharedString::from(card.title.clone());
+        let today = Local::now().date_naive();
+        let due_badge = card
+            .due_date
+            .map(|due_date| render_due_badge(due_date, today).into_any_element());
         let is_editing = self
             .editing_card
             .as_ref()
@@ -403,6 +1401,7 @@ impl BoardView {
             .border_1()
             .border_color(rgb(0x475569))
             .hover(|this| this.bg(rgb(0x3f4f66)))
+            .when(dimmed, |this| this.opacity(0.35))
             .on_drop(cx.listener(move |this, drag: &CardDrag, _, cx| {
                 this.move_card(drag.card_id, column_id, index, cx);
             }))
@@ -421,6 +1420,15 @@ impl BoardView {
                         })
                     })
                     .child(div().text_sm().text_color(rgb(0xf8fafc)).child(title))
+                    .when_some(due_badge, |this, badge| this.child(badge))
+                    .children(
+                        card.tag_ids
+                            .iter()
+                            .filter_map(|tag_id| {
+                                self.board.tags.iter().find(|tag| tag.id == *tag_id)
+                            })
+                            .map(render_tag_chip),
+                    )
                     .child(
                         div()
                             .text_xs()
@@ -444,6 +1452,14 @@ impl BoardView {
                                 })),
                         )
                         .child(
+                            Button::new(("archive-card", card_id as u64))
+                                .ghost()
+                                .label("アーカイブ")
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.archive_card(card_id, cx)
+                                })),
+                        )
+                        .child(
                             Button::new(("delete-card", card_id as u64))
                                 .danger()
                                 .label("削除")
@@ -458,6 +1474,16 @@ impl BoardView {
     }
 
     fn render_card_editor(&self, editor: &CardEditor, cx: &mut Context<Self>) -> impl IntoElement {
+        let due_date_value = editor.due_date.read(cx).value().to_string();
+        let due_date_invalid = parse_due_date(&due_date_value).is_err();
+        let today = Local::now().date_naive();
+        let tomorrow = today + Duration::days(1);
+        let days_until_saturday = (Weekday::Sat.num_days_from_monday() as i64
+            - today.weekday().num_days_from_monday() as i64
+            + 7)
+            % 7;
+        let weekend = today + Duration::days(days_until_saturday);
+        let next_week = today + Duration::days(7 - today.weekday().num_days_from_monday() as i64);
         div()
             .flex()
             .flex_col()
@@ -466,6 +1492,78 @@ impl BoardView {
             .child(Input::new(&editor.title).small())
             .child(div().text_xs().text_color(rgb(0x94a3b8)).child("説明"))
             .child(Textarea::new(&editor.description).h(px(96.)))
+            .child(div().text_xs().text_color(rgb(0x94a3b8)).child("期限"))
+            .child(Input::new(&editor.due_date).small())
+            .when(due_date_invalid, |this| {
+                this.child(
+                    div()
+                        .text_xs()
+                        .text_color(rgb(0xf87171))
+                        .child("YYYY-MM-DD 形式で入力してください"),
+                )
+            })
+            .child(
+                div()
+                    .flex()
+                    .gap_1()
+                    .child(
+                        Button::new(("due-today", editor.card_id as u64))
+                            .secondary()
+                            .label("今日")
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.set_due_date_input(Some(today), window, cx)
+                            })),
+                    )
+                    .child(
+                        Button::new(("due-tomorrow", editor.card_id as u64))
+                            .secondary()
+                            .label("明日")
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.set_due_date_input(Some(tomorrow), window, cx)
+                            })),
+                    )
+                    .child(
+                        Button::new(("due-weekend", editor.card_id as u64))
+                            .secondary()
+                            .label("今週末")
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.set_due_date_input(Some(weekend), window, cx)
+                            })),
+                    )
+                    .child(
+                        Button::new(("due-next-week", editor.card_id as u64))
+                            .secondary()
+                            .label("来週")
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.set_due_date_input(Some(next_week), window, cx)
+                            })),
+                    )
+                    .child(
+                        Button::new(("due-clear", editor.card_id as u64))
+                            .secondary()
+                            .label("クリア")
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.set_due_date_input(None, window, cx)
+                            })),
+                    ),
+            )
+            .child(div().text_xs().text_color(rgb(0x94a3b8)).child("タグ"))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .children(self.board.tags.iter().map(|tag| {
+                        let tag_id = tag.id;
+                        let selected = editor.tag_ids.contains(&tag_id);
+                        Button::new(("card-tag", tag_id as u64))
+                            .secondary()
+                            .label(format!("{}{}", if selected { "✓ " } else { "" }, tag.name))
+                            .on_click(
+                                cx.listener(move |this, _, _, cx| this.toggle_card_tag(tag_id, cx)),
+                            )
+                    })),
+            )
             .child(
                 div()
                     .flex()
@@ -480,6 +1578,7 @@ impl BoardView {
                     .child(
                         Button::new("save-card-edit")
                             .primary()
+                            .disabled(due_date_invalid)
                             .label("保存")
                             .on_click(cx.listener(|this, _, _, cx| this.save_card_edit(cx))),
                     ),
@@ -497,7 +1596,9 @@ impl Render for BoardView {
             .bg(rgb(0x0f172a))
             .text_color(rgb(0xf8fafc))
             .child(self.render_header(cx))
-            .child(
+            .child(if self.show_archived {
+                self.render_archived(cx).into_any_element()
+            } else {
                 div()
                     .id("board-content")
                     .flex_1()
@@ -514,8 +1615,73 @@ impl Render for BoardView {
                             .iter()
                             .enumerate()
                             .map(|(index, column)| self.render_column(index, column, cx)),
-                    ),
-            )
+                    )
+                    .child(self.render_add_column(cx))
+                    .into_any_element()
+            })
+    }
+}
+
+fn render_due_badge(due_date: NaiveDate, today: NaiveDate) -> impl IntoElement {
+    let status = due_status(Some(due_date), today);
+    let (label, color) = match status {
+        DueStatus::Overdue(days) => (
+            format!("期限切れ {days}日 ({})", short_date(due_date)),
+            0xf87171,
+        ),
+        DueStatus::Today => (format!("期限 今日 ({})", short_date(due_date)), 0xfbbf24),
+        DueStatus::Soon(days) => (
+            format!("期限 あと {days}日 ({})", short_date(due_date)),
+            0x60a5fa,
+        ),
+        DueStatus::Upcoming(_) => (format!("期限 {}", display_date(due_date, today)), 0x94a3b8),
+        DueStatus::None => return div(),
+    };
+    div().text_xs().text_color(rgb(color)).child(label)
+}
+
+fn render_tag_chip(tag: &Tag) -> impl IntoElement {
+    div()
+        .px_1()
+        .rounded_sm()
+        .bg(rgb(tag_color_value(&tag.color)))
+        .text_xs()
+        .text_color(rgb(0xf8fafc))
+        .child(tag.name.clone())
+}
+
+fn tag_color_value(color: &str) -> u32 {
+    let value = color.trim().trim_start_matches('#');
+    if value.len() == 6 {
+        u32::from_str_radix(value, 16).unwrap_or(0x64748b)
+    } else {
+        0x64748b
+    }
+}
+
+fn short_date(date: NaiveDate) -> String {
+    format!("{}/{}", date.month(), date.day())
+}
+
+fn display_date(date: NaiveDate, today: NaiveDate) -> String {
+    if date.year() == today.year() {
+        short_date(date)
+    } else {
+        format!("{}/{:02}/{:02}", date.year(), date.month(), date.day())
+    }
+}
+
+fn card_matches_filter(card: &Card, filter: DueFilter, today: NaiveDate) -> bool {
+    match filter {
+        DueFilter::None => true,
+        DueFilter::Overdue => matches!(due_status(card.due_date, today), DueStatus::Overdue(_)),
+        DueFilter::ThroughThisWeek => {
+            let Some(due_date) = card.due_date else {
+                return false;
+            };
+            let days_until_sunday = 6 - i64::from(today.weekday().num_days_from_monday());
+            due_date <= today + Duration::days(days_until_sunday)
+        }
     }
 }
 
@@ -523,6 +1689,14 @@ fn format_move_error(error: BoardError) -> String {
     format!("移動できませんでした: {error}")
 }
 
+fn format_column_error(error: BoardError) -> String {
+    format!("カラムを操作できませんでした: {error}")
+}
+
 fn format_card_error(error: BoardError) -> String {
     format!("カードを操作できませんでした: {error}")
+}
+
+fn format_tag_error(error: BoardError) -> String {
+    format!("タグを操作できませんでした: {error}")
 }

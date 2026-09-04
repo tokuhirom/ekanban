@@ -30,7 +30,7 @@ Rust と [GPUI Kit](https://github.com/longbridge/gpui-kit) で作る、ロー�
 
 カード内の編集・削除ボタンは、ドラッグ開始の対象から除外します。ドラッグ中はカードやカラムのゴーストと、ドロップ対象の強調表示を表示します。
 
-タグ、期限、検索、Markdown、通知、複数ユーザー、クラウド同期は MVP の対象外です。このうち期限、タグ、検索は MVP 完成後に着手する予定です。詳しくは [実装ロードマップ](docs/ROADMAP.md) を参照してください。
+期限、タグ、検索、Markdown、通知、複数ユーザー、クラウド同期は MVP の対象外です。期限、タグ、検索、アーカイブは先行して実装済みで、Undo/Redo 以降は引き続き拡張中です。詳しくは [実装ロードマップ](docs/ROADMAP.md) を参照してください。
 
 ## ドラッグ＆ドロップ
 
@@ -58,6 +58,9 @@ boards
   name
   created_at
   updated_at
+  next_card_id
+  next_column_id
+  next_tag_id
 
 columns
   id
@@ -66,6 +69,7 @@ columns
   position
   created_at
   updated_at
+  wip_limit (整数または NULL)
 
 cards
   id
@@ -75,6 +79,20 @@ cards
   position
   created_at
   updated_at
+  due_date (YYYY-MM-DD または NULL)
+  archived_at (UNIX milliseconds または NULL)
+
+tags
+  id
+  board_id
+  name
+  color
+  created_at
+  updated_at
+
+card_tags
+  card_id
+  tag_id
 ```
 
 データベースは自動マイグレーションに対応します。カードやカラムの順番は `position` で管理し、移動や並べ替えの完了時に対象範囲の順番を振り直します。ローカル専用アプリのため、複雑な同期用 ID や競合解決は導入しません。
@@ -130,13 +148,17 @@ src/
 6. カラムのドラッグ＆ドロップによる並べ替え
 7. 移動後の SQLite 保存と保存失敗時のロールバック
 8. カードの編集・削除と保存失敗時のロールバック
+9. 単調増加 ID 採番と差分保存
+10. カラムの追加・名前変更・削除、削除確認
+11. 期限の保存・表示・編集、期限順並べ替え、期限フィルター
+12. タイトル・説明の検索、WIP 上限の警告表示
+13. タグの追加・編集・削除、カードへの付け外し、色付きチップ、タグフィルター
+14. カード・カラムのアーカイブ、アーカイブ一覧、カードの復元
 
 次に実装するもの:
 
-1. ID 採番と保存処理の是正（フェーズ 0）
-2. カラムの追加・名前変更・削除（フェーズ 1）
-3. GPUI Kit の入力コンポーネントによる日本語 IME の確認（フェーズ 1）
-4. 期限（deadline）の管理（フェーズ 2）
+1. Undo/Redo と非同期保存（フェーズ 4）
+2. 複数ボードとキーボード操作（フェーズ 4）
 
 フェーズごとの作業内容、設計判断、受け入れ条件は [実装ロードマップ](docs/ROADMAP.md) にまとめています。
 

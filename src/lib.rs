@@ -57,7 +57,7 @@ pub fn run() {
                 ..Default::default()
             },
             move |window, cx| {
-                let view = cx.new(|_| BoardView::new(board, database));
+                let view = cx.new(|cx| BoardView::new(board, database, window, cx));
                 cx.new(|cx| Root::new(view, window, cx))
             },
         )
