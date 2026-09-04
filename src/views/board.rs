@@ -308,6 +308,7 @@ pub struct BoardView {
     sidebar_collapsed: bool,
     search: Entity<InputState>,
     search_query: String,
+    window_title: String,
 }
 
 impl BoardView {
@@ -372,6 +373,8 @@ impl BoardView {
             }
         });
 
+        let window_title = window_title(&board.name);
+
         Self {
             board,
             boards,
@@ -403,6 +406,7 @@ impl BoardView {
             sidebar_collapsed,
             search,
             search_query,
+            window_title,
         }
     }
 
@@ -3756,7 +3760,15 @@ impl BoardView {
 }
 
 impl Render for BoardView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // ボード名が変わる経路は切り替え・リネーム・新規作成・削除・ロールバック・
+        // Undo / Redo と多いので、呼び出しを撒かずにここで一括して追従させる。
+        let title = window_title(&self.board.name);
+        if title != self.window_title {
+            window.set_window_title(&title);
+            self.window_title = title;
+        }
+
         for column in &self.board.columns {
             self.column_scroll_handles.entry(column.id).or_default();
         }
@@ -3945,6 +3957,19 @@ fn theme_color(cx: &gpui_kit::App, color: UiColor) -> gpui_kit::Hsla {
         UiColor::Sidebar => theme.sidebar,
         UiColor::SidebarAccent => theme.sidebar_accent,
         UiColor::Popover => theme.popover,
+    }
+}
+
+/// ウィンドウタイトルを組み立てる。
+///
+/// アプリ名だけだと複数のボードを開き分けたときに区別できず、ボード名だけだと
+/// タスクバーや `Alt+Tab` でどのアプリか分からないので、両方を並べる。
+pub(crate) fn window_title(board_name: &str) -> String {
+    let board_name = board_name.trim();
+    if board_name.is_empty() {
+        crate::APP_NAME.to_string()
+    } else {
+        format!("{board_name} — {}", crate::APP_NAME)
     }
 }
 
@@ -4386,7 +4411,7 @@ fn field_error_note(message: String, color: gpui_kit::Hsla) -> impl IntoElement 
 mod tests {
     use super::{
         board_error_detail, column_name_for_card, db_error_detail, field_error_for, next_card_id,
-        render_board_markdown, CardDirection, EditorField,
+        render_board_markdown, window_title, CardDirection, EditorField,
     };
     use crate::{
         db::DbError,
@@ -4524,5 +4549,17 @@ mod tests {
         assert!(markdown.contains("- **Markdownカード**"));
         assert!(markdown.contains("> 説明の一行目"));
         assert!(markdown.contains("- [x] 確認済み"));
+    }
+
+    #[test]
+    fn window_title_shows_the_board_and_the_app() {
+        let title = window_title("個人 Kanban");
+        assert!(title.contains("個人 Kanban"));
+        assert!(title.contains(crate::APP_NAME));
+    }
+
+    #[test]
+    fn window_title_falls_back_to_the_app_name_for_a_blank_board() {
+        assert_eq!(window_title("   "), crate::APP_NAME);
     }
 }

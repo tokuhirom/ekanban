@@ -10,8 +10,15 @@ use std::path::PathBuf;
 
 use db::{Database, WindowBoundsState};
 use gpui_kit::component::{Root, Theme};
-use gpui_kit::{px, size, App, AppContext, Bounds, WindowBounds, WindowOptions};
-use views::{parse_theme_preference, BoardView};
+use gpui_kit::{px, size, App, AppContext, Bounds, TitlebarOptions, WindowBounds, WindowOptions};
+use views::{parse_theme_preference, window_title, BoardView};
+
+/// ウィンドウタイトルやバンドルに使うアプリ名。`script/bundle-mac` の `APP_NAME` と揃える。
+pub const APP_NAME: &str = "Ekanban";
+
+/// デスクトップ環境がウィンドウをアプリに結びつけるための識別子。
+/// `script/bundle-mac` の `BUNDLE_ID` と揃える。
+pub const APP_ID: &str = "dev.tokuhirom.ekanban";
 
 /// データベースの置き場所を決める。
 ///
@@ -90,6 +97,13 @@ pub fn run() {
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
+                // Linux にはバンドルが無く、ここで渡さないとタイトルも
+                // アプリ識別子も設定されないまま WM に渡る。
+                titlebar: Some(TitlebarOptions {
+                    title: Some(window_title(&board.name).into()),
+                    ..Default::default()
+                }),
+                app_id: Some(APP_ID.to_string()),
                 ..Default::default()
             },
             move |window, cx| {
