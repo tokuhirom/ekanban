@@ -28,7 +28,8 @@ use crate::{
         About, AddBoard, AddCard, AddColumn, AddTag, BackupDatabase, CancelEdit, ClearSearch,
         CloseWindow, DeleteBoard, ExportBoardJson, ExportBoardMarkdown, FocusSearch, Redo,
         RenameBoard, RevealDatabase, SaveEdit, ShowAllCards, ShowOverdueCards, ShowThisWeekCards,
-        ToggleArchiveView, ToggleFullscreen, Undo, UseDarkTheme, UseLightTheme, UseSystemTheme,
+        ToggleArchiveView, ToggleBoardList, ToggleFullscreen, Undo, UseDarkTheme, UseLightTheme,
+        UseSystemTheme,
     },
     db::{save_board_snapshot, Database, DbError, FilterState, WindowBoundsState},
     model::{
@@ -304,6 +305,7 @@ pub struct BoardView {
     _appearance_subscription: Subscription,
     _app_quit_subscription: Subscription,
     theme_preference: ThemePreference,
+    sidebar_collapsed: bool,
     search: Entity<InputState>,
     search_query: String,
 }
@@ -317,6 +319,7 @@ impl BoardView {
         filter_state: FilterState,
         window_bounds: WindowBoundsState,
         theme_preference: ThemePreference,
+        sidebar_collapsed: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -397,6 +400,7 @@ impl BoardView {
             _appearance_subscription: appearance_subscription,
             _app_quit_subscription: app_quit_subscription,
             theme_preference,
+            sidebar_collapsed,
             search,
             search_query,
         }
@@ -464,6 +468,29 @@ impl BoardView {
             ThemePreference::Light => "ライトモードに変更しました",
             ThemePreference::Dark => "ダークモードに変更しました",
         });
+        cx.notify();
+    }
+
+    /// ボード一覧を畳む / 開く。
+    ///
+    /// 畳むとボード名の編集フォームがサイドバーごと視界から消えるが `editing_board` は
+    /// 残るため、`keyboard_shortcuts_disabled` がショートカットを止めたまま抜け出せなく
+    /// なる。畳む前に保存し、保存できない状態（名前が空）なら畳まない。
+    fn toggle_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.sidebar_collapsed && self.editing_board.is_some() {
+            self.save_board_edit(window, cx);
+            if self.editing_board.is_some() {
+                return;
+            }
+        }
+        self.sidebar_collapsed = !self.sidebar_collapsed;
+        let collapsed = self.sidebar_collapsed;
+        let path = self.database_path.clone();
+        cx.background_spawn(async move {
+            let _ =
+                Database::open(path).and_then(|database| database.set_sidebar_collapsed(collapsed));
+        })
+        .detach();
         cx.notify();
     }
 
@@ -2349,7 +2376,33 @@ impl BoardView {
             )
     }
 
+    /// 畳んだときのレール。開くボタンだけを置く。ボードの切り替え・追加・名前変更・
+    /// 削除はボードメニューとファイルメニューから届くので、ここには並べない。
+    fn render_sidebar_rail(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .w(px(44.))
+            .h_full()
+            .flex_none()
+            .flex()
+            .flex_col()
+            .items_center()
+            .gap_2()
+            .py_4()
+            .border_r_1()
+            .border_color(theme_color(cx, UiColor::Border))
+            .bg(theme_color(cx, UiColor::Sidebar))
+            .child(
+                Button::new("expand-board-list")
+                    .ghost()
+                    .label("›")
+                    .on_click(cx.listener(|this, _, window, cx| this.toggle_sidebar(window, cx))),
+            )
+    }
+
     fn render_sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.sidebar_collapsed {
+            return self.render_sidebar_rail(cx).into_any_element();
+        }
         let editing_board = self.editing_board.as_ref();
         div()
             .w(px(220.))
@@ -2373,9 +2426,23 @@ impl BoardView {
                             .font_weight(gpui_kit::FontWeight::BOLD)
                             .child("ボード"),
                     )
-                    .child(Button::new("add-board").secondary().label("＋").on_click(
-                        cx.listener(|this, _, window, cx| this.begin_add_board(window, cx)),
-                    )),
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_1()
+                            .child(Button::new("add-board").secondary().label("＋").on_click(
+                                cx.listener(|this, _, window, cx| this.begin_add_board(window, cx)),
+                            ))
+                            .child(
+                                Button::new("collapse-board-list")
+                                    .ghost()
+                                    .label("‹")
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.toggle_sidebar(window, cx)
+                                    })),
+                            ),
+                    ),
             )
             .child(
                 div()
@@ -2453,6 +2520,7 @@ impl BoardView {
                     )
                     .into_any_element()
             })
+            .into_any_element()
     }
 
     fn render_search(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -3759,6 +3827,11 @@ impl Render for BoardView {
             )
             .on_action(
                 cx.listener(|this, _: &ToggleArchiveView, _, cx| this.toggle_archive_view(cx)),
+            )
+            .on_action(
+                cx.listener(|this, _: &ToggleBoardList, window, cx| {
+                    this.toggle_sidebar(window, cx)
+                }),
             )
             .on_action(cx.listener(|this, _: &ShowOverdueCards, _, cx| {
                 this.set_due_filter(DueFilter::Overdue, cx)

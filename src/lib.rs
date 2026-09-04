@@ -39,7 +39,7 @@ pub fn run() {
             }
         }
     }
-    let (board, boards, filter_state, saved_window_bounds, theme_preference) =
+    let (board, boards, filter_state, saved_window_bounds, theme_preference, sidebar_collapsed) =
         match Database::open(&path).and_then(|database| {
             let boards = database.load_boards()?;
             let board_id = database
@@ -60,12 +60,14 @@ pub fn run() {
             let saved_window_bounds = database.load_window_bounds().ok().flatten();
             let theme_preference =
                 parse_theme_preference(database.load_theme_preference().ok().flatten().as_deref());
+            let sidebar_collapsed = database.load_sidebar_collapsed().unwrap_or(false);
             Ok((
                 board,
                 boards,
                 filter_state,
                 saved_window_bounds,
                 theme_preference,
+                sidebar_collapsed,
             ))
         }) {
             Ok(value) => value,
@@ -104,6 +106,7 @@ pub fn run() {
                             height: window.bounds().size.height.as_f32(),
                         },
                         theme_preference,
+                        sidebar_collapsed,
                         window,
                         cx,
                     )

@@ -16,6 +16,7 @@ const FILTER_SEARCH_STATE_KEY: &str = "filter_search";
 const FILTER_TAG_STATE_KEY: &str = "filter_tag_id";
 const FILTER_DUE_STATE_KEY: &str = "filter_due";
 const THEME_PREFERENCE_STATE_KEY: &str = "theme_preference";
+const SIDEBAR_COLLAPSED_STATE_KEY: &str = "sidebar_collapsed";
 const BOARD_ID_NAMESPACE_SHIFT: u32 = 32;
 
 #[derive(Debug, Error)]
@@ -215,6 +216,19 @@ impl Database {
             return Err(DbError::InvalidAppState);
         }
         self.set_app_state(THEME_PREFERENCE_STATE_KEY, preference)
+    }
+
+    pub fn load_sidebar_collapsed(&self) -> Result<bool, DbError> {
+        Ok(self
+            .load_app_state(SIDEBAR_COLLAPSED_STATE_KEY)?
+            .is_some_and(|value| value == "1"))
+    }
+
+    pub fn set_sidebar_collapsed(&self, collapsed: bool) -> Result<(), DbError> {
+        self.set_app_state(
+            SIDEBAR_COLLAPSED_STATE_KEY,
+            if collapsed { "1" } else { "0" },
+        )
     }
 
     pub fn export_board_json(&self, board: &Board) -> Result<String, DbError> {
@@ -1800,6 +1814,21 @@ mod tests {
         let final_board = database.load_board().unwrap();
         assert_eq!(final_board.columns[0].cards[0].due_date, None);
         assert_eq!(final_board.columns[0].cards[1].due_date, Some(due_date));
+    }
+
+    #[test]
+    fn round_trips_the_sidebar_collapsed_state() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("board.sqlite3");
+        let database = Database::open(&path).unwrap();
+
+        assert!(!database.load_sidebar_collapsed().unwrap());
+
+        database.set_sidebar_collapsed(true).unwrap();
+        assert!(database.load_sidebar_collapsed().unwrap());
+
+        database.set_sidebar_collapsed(false).unwrap();
+        assert!(!database.load_sidebar_collapsed().unwrap());
     }
 
     #[test]

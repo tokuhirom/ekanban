@@ -15,6 +15,7 @@ gpui_kit::actions!([
     SaveEdit,
     ShowAllCards,
     ToggleArchiveView,
+    ToggleBoardList,
     ShowOverdueCards,
     ShowThisWeekCards,
     ShowAllApplications,
