@@ -1,6 +1,7 @@
 pub mod actions;
 pub mod db;
 pub mod diagnostics;
+pub mod hotkey;
 pub mod menu;
 pub mod model;
 pub mod paths;
@@ -10,8 +11,12 @@ use std::path::PathBuf;
 
 use db::{Database, WindowBoundsState};
 use gpui_kit::component::{Root, Theme};
-use gpui_kit::{px, size, App, AppContext, Bounds, TitlebarOptions, WindowBounds, WindowOptions};
-use views::{parse_theme_preference, window_title, BoardView};
+use gpui_kit::{
+    px, size, App, AppContext, BorrowAppContext as _, Bounds, TitlebarOptions, WindowBounds,
+    WindowOptions,
+};
+use hotkey::{QuickCapture, Shortcut};
+use views::{parse_theme_preference, window_title, BoardView, QuickCaptureState};
 
 /// ウィンドウタイトルやバンドルに使うアプリ名。`script/bundle-mac` の `APP_NAME` と揃える。
 pub const APP_NAME: &str = "Ekanban";
@@ -46,43 +51,52 @@ pub fn run() {
             }
         }
     }
-    let (board, boards, filter_state, saved_window_bounds, theme_preference, sidebar_collapsed) =
-        match Database::open(&path).and_then(|database| {
-            let boards = database.load_boards()?;
-            let board_id = database
-                .load_last_board_id()?
-                .filter(|board_id| boards.iter().any(|board| board.id == *board_id))
-                .or_else(|| boards.first().map(|board| board.id))
-                .ok_or(db::DbError::NoBoard)?;
-            let board = database.load_board_by_id(board_id)?;
-            database.set_last_board_id(board.id)?;
-            let mut filter_state = database.load_filter_state().unwrap_or_default();
-            if filter_state
-                .tag_id
-                .is_some_and(|tag_id| !board.tags.iter().any(|tag| tag.id == tag_id))
-            {
-                filter_state.tag_id = None;
-                database.set_filter_state(&filter_state)?;
-            }
-            let saved_window_bounds = database.load_window_bounds().ok().flatten();
-            let theme_preference =
-                parse_theme_preference(database.load_theme_preference().ok().flatten().as_deref());
-            let sidebar_collapsed = database.load_sidebar_collapsed().unwrap_or(false);
-            Ok((
-                board,
-                boards,
-                filter_state,
-                saved_window_bounds,
-                theme_preference,
-                sidebar_collapsed,
-            ))
-        }) {
-            Ok(value) => value,
-            Err(error) => {
-                diagnostics::report_fatal(&format!("failed to open {}: {error}", path.display()));
-                return;
-            }
-        };
+    let (
+        board,
+        boards,
+        filter_state,
+        saved_window_bounds,
+        theme_preference,
+        sidebar_collapsed,
+        quick_capture_shortcut,
+    ) = match Database::open(&path).and_then(|database| {
+        let boards = database.load_boards()?;
+        let board_id = database
+            .load_last_board_id()?
+            .filter(|board_id| boards.iter().any(|board| board.id == *board_id))
+            .or_else(|| boards.first().map(|board| board.id))
+            .ok_or(db::DbError::NoBoard)?;
+        let board = database.load_board_by_id(board_id)?;
+        database.set_last_board_id(board.id)?;
+        let mut filter_state = database.load_filter_state().unwrap_or_default();
+        if filter_state
+            .tag_id
+            .is_some_and(|tag_id| !board.tags.iter().any(|tag| tag.id == tag_id))
+        {
+            filter_state.tag_id = None;
+            database.set_filter_state(&filter_state)?;
+        }
+        let saved_window_bounds = database.load_window_bounds().ok().flatten();
+        let theme_preference =
+            parse_theme_preference(database.load_theme_preference().ok().flatten().as_deref());
+        let sidebar_collapsed = database.load_sidebar_collapsed().unwrap_or(false);
+        let quick_capture_shortcut = database.load_quick_capture_shortcut().unwrap_or(None);
+        Ok((
+            board,
+            boards,
+            filter_state,
+            saved_window_bounds,
+            theme_preference,
+            sidebar_collapsed,
+            quick_capture_shortcut,
+        ))
+    }) {
+        Ok(value) => value,
+        Err(error) => {
+            diagnostics::report_fatal(&format!("failed to open {}: {error}", path.display()));
+            return;
+        }
+    };
 
     gpui_kit::application().run(move |cx: &mut App| {
         gpui_kit::init(cx);
@@ -93,6 +107,8 @@ pub fn run() {
         cx.on_action(|_: &actions::HideOtherApplications, cx| cx.hide_other_apps());
         cx.on_action(|_: &actions::ShowAllApplications, cx| cx.unhide_other_apps());
         menu::install(cx);
+        cx.set_global(QuickCapture::new());
+        let quick_capture = register_saved_shortcut(quick_capture_shortcut, cx);
         let bounds = restored_window_bounds(saved_window_bounds, cx);
         cx.open_window(
             WindowOptions {
@@ -121,6 +137,7 @@ pub fn run() {
                         },
                         theme_preference,
                         sidebar_collapsed,
+                        quick_capture,
                         window,
                         cx,
                     )
@@ -132,6 +149,45 @@ pub fn run() {
 
         cx.activate(true);
     });
+}
+
+/// 保存済みの割り当てを登録する。
+///
+/// 登録できなかった理由は捨てずに持ち回し、`BoardView` の通知に出す。起動のたび
+/// 黙って失敗する状態を作らない。設定そのものは消さない（ほかのアプリを閉じれば
+/// 次の起動では通る可能性があるため）。
+fn register_saved_shortcut(saved: Option<String>, cx: &mut App) -> QuickCaptureState {
+    let Some(saved) = saved else {
+        return QuickCaptureState {
+            shortcut: None,
+            error: None,
+        };
+    };
+
+    let shortcut = match Shortcut::parse(&saved) {
+        Ok(shortcut) => shortcut,
+        Err(error) => {
+            return QuickCaptureState {
+                shortcut: None,
+                error: Some(format!(
+                    "保存されているクイックキャプチャの割り当てを読み取れませんでした: {error}"
+                )),
+            }
+        }
+    };
+
+    match cx.update_global::<QuickCapture, _>(|quick_capture, _| {
+        quick_capture.set(Some(shortcut.clone()))
+    }) {
+        Ok(()) => QuickCaptureState {
+            shortcut: Some(shortcut),
+            error: None,
+        },
+        Err(message) => QuickCaptureState {
+            shortcut: None,
+            error: Some(message),
+        },
+    }
 }
 
 fn restored_window_bounds(saved: Option<WindowBoundsState>, cx: &App) -> Bounds<gpui_kit::Pixels> {

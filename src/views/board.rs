@@ -5,6 +5,7 @@ use std::{
 };
 
 use chrono::{Datelike, Duration, Local, NaiveDate, Weekday};
+use global_hotkey::{GlobalHotKeyEvent, HotKeyState};
 use gpui_kit::{
     component::dialog::DialogButtonProps,
     component::input::{Input, InputState, Textarea, TextareaState},
@@ -19,19 +20,20 @@ use gpui_kit::{
     div, point,
     prelude::*,
     px, rgb, App, Bounds, Context, DragMoveEvent, Entity, FocusHandle, Focusable as _, Half,
-    IntoElement, KeyDownEvent, Modifiers, MouseButton, MouseDownEvent, Pixels, Point, Render,
-    ScrollHandle, SharedString, Subscription, Window,
+    IntoElement, KeyDownEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent, Pixels, Point,
+    Render, ScrollHandle, SharedString, Subscription, Task, Window,
 };
 
 use crate::{
     actions::{
         About, AddBoard, AddCard, AddColumn, AddTag, BackupDatabase, CancelEdit, ClearSearch,
         CloseWindow, DeleteBoard, ExportBoardJson, ExportBoardMarkdown, FocusSearch, Redo,
-        RenameBoard, RevealDatabase, SaveEdit, ShowAllCards, ShowOverdueCards, ShowThisWeekCards,
-        ToggleArchiveView, ToggleBoardList, ToggleFullscreen, Undo, UseDarkTheme, UseLightTheme,
-        UseSystemTheme,
+        RenameBoard, RevealDatabase, SaveEdit, SetQuickCaptureShortcut, ShowAllCards,
+        ShowOverdueCards, ShowThisWeekCards, ToggleArchiveView, ToggleBoardList, ToggleFullscreen,
+        Undo, UseDarkTheme, UseLightTheme, UseSystemTheme,
     },
     db::{save_board_snapshot, Database, DbError, FilterState, WindowBoundsState},
+    hotkey::{QuickCapture, Shortcut},
     model::{
         card_matches_search, due_status, parse_due_date, parse_wip_limit, Board, BoardError,
         BoardId, BoardSummary, Card, CardId, ChecklistItem, ChecklistItemDraft, ChecklistItemId,
@@ -112,6 +114,20 @@ struct TagEditor {
     name: Entity<InputState>,
     color: Entity<InputState>,
     error: Option<FieldError>,
+}
+
+/// クイックキャプチャの割り当てを記録している最中の状態。
+struct ShortcutCapture {
+    /// 直前の試行が弾かれた理由。
+    error: Option<String>,
+}
+
+/// 起動時に読み込んだクイックキャプチャの設定。
+pub(crate) struct QuickCaptureState {
+    /// 登録できた割り当て。未設定なら `None`。
+    pub shortcut: Option<Shortcut>,
+    /// 読み込みや登録に失敗した理由。成功していれば `None`。
+    pub error: Option<String>,
 }
 
 struct BoardEditor {
@@ -309,6 +325,9 @@ pub struct BoardView {
     search: Entity<InputState>,
     search_query: String,
     window_title: String,
+    quick_capture_shortcut: Option<Shortcut>,
+    capturing_shortcut: Option<ShortcutCapture>,
+    _quick_capture_task: Task<()>,
 }
 
 impl BoardView {
@@ -321,6 +340,7 @@ impl BoardView {
         window_bounds: WindowBoundsState,
         theme_preference: ThemePreference,
         sidebar_collapsed: bool,
+        quick_capture: QuickCaptureState,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -374,8 +394,10 @@ impl BoardView {
         });
 
         let window_title = window_title(&board.name);
+        let quick_capture_task = spawn_quick_capture_listener(window, cx);
+        let quick_capture_error = quick_capture.error;
 
-        Self {
+        let mut view = Self {
             board,
             boards,
             database_path,
@@ -407,7 +429,113 @@ impl BoardView {
             search,
             search_query,
             window_title,
+            quick_capture_shortcut: quick_capture.shortcut,
+            capturing_shortcut: None,
+            _quick_capture_task: quick_capture_task,
+        };
+        if let Some(error) = quick_capture_error {
+            view.set_error(error);
         }
+        view
+    }
+
+    /// 「クイックキャプチャのショートカット…」を選んだとき。
+    ///
+    /// 次に押された組み合わせを記録する状態に入る。
+    fn begin_shortcut_capture(&mut self, cx: &mut Context<Self>) {
+        if let Some(reason) = cx.global::<QuickCapture>().unavailable_reason() {
+            self.set_error(format!(
+                "この環境ではグローバルホットキーを使えません: {reason}"
+            ));
+            cx.notify();
+            return;
+        }
+        self.capturing_shortcut = Some(ShortcutCapture { error: None });
+        cx.notify();
+    }
+
+    fn cancel_shortcut_capture(&mut self, cx: &mut Context<Self>) {
+        if self.capturing_shortcut.take().is_some() {
+            self.set_info("ショートカットの設定をキャンセルしました");
+            cx.notify();
+        }
+    }
+
+    /// 記録中に押されたキーを割り当てとして受け取る。
+    fn capture_shortcut(&mut self, keystroke: &Keystroke, cx: &mut Context<Self>) {
+        if keystroke.key == "escape" && !keystroke.modifiers.modified() {
+            self.cancel_shortcut_capture(cx);
+            return;
+        }
+        // 修飾キー単体を押している途中は、まだ組み合わせが決まっていない。
+        if matches!(
+            keystroke.key.as_str(),
+            "control" | "alt" | "shift" | "platform" | "function"
+        ) {
+            return;
+        }
+
+        match Shortcut::from_keystroke(keystroke) {
+            Ok(shortcut) => self.apply_shortcut(Some(shortcut), cx),
+            Err(error) => {
+                if let Some(capture) = self.capturing_shortcut.as_mut() {
+                    capture.error = Some(error.to_string());
+                }
+                cx.notify();
+            }
+        }
+    }
+
+    /// 割り当てを登録して保存する。`None` で解除する。
+    ///
+    /// 登録に失敗したときは保存もしない。次回の起動で黙って失敗する状態を作らない。
+    fn apply_shortcut(&mut self, shortcut: Option<Shortcut>, cx: &mut Context<Self>) {
+        let label = shortcut
+            .as_ref()
+            .map(|shortcut| shortcut.to_string())
+            .unwrap_or_default();
+        let result = cx.update_global::<QuickCapture, _>(|quick_capture, _| {
+            quick_capture.set(shortcut.clone())
+        });
+        match result {
+            Ok(()) => {}
+            Err(message) => {
+                if let Some(capture) = self.capturing_shortcut.as_mut() {
+                    capture.error = Some(message.clone());
+                }
+                self.set_error(message);
+                cx.notify();
+                return;
+            }
+        }
+
+        let stored = shortcut.as_ref().map(|shortcut| shortcut.to_string());
+        if let Err(error) = Database::open(&self.database_path)
+            .and_then(|database| database.set_quick_capture_shortcut(stored.as_deref()))
+        {
+            self.set_error(format!(
+                "ショートカットは有効になりましたが、保存に失敗しました: {}",
+                db_error_detail(&error)
+            ));
+        } else if shortcut.is_some() {
+            self.set_success(format!("クイックキャプチャを「{label}」に設定しました"));
+        } else {
+            self.set_info("クイックキャプチャのショートカットを解除しました");
+        }
+
+        self.quick_capture_shortcut = shortcut;
+        self.capturing_shortcut = None;
+        cx.notify();
+    }
+
+    /// ホットキーが押されたとき。
+    ///
+    /// 1 行入力のキャプチャウィンドウは #12 で足す。ここではアプリを前面に出す。
+    fn on_quick_capture(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        cx.activate(true);
+        window.activate_window();
+        self.set_info("クイックキャプチャのショートカットで前面に出しました");
+        cx.notify();
     }
 
     fn set_status(&mut self, level: StatusLevel, text: impl Into<String>) {
@@ -1072,6 +1200,13 @@ impl BoardView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // 割り当てを記録している間は、押されたものをそのまま受け取る。
+        if self.capturing_shortcut.is_some() {
+            cx.stop_propagation();
+            self.capture_shortcut(&event.keystroke, cx);
+            return;
+        }
+
         // Text inputs own the key event while editing. This also keeps Enter,
         // Escape, and arrow keys from escaping during IME composition.
         if self.keyboard_shortcuts_disabled(window, cx) || self.show_archived {
@@ -3400,6 +3535,62 @@ impl BoardView {
 
     /// カードの詳細パネル。ボードに重ねず、右端に押し出して置く。
     /// 重ねると右端のカラムが隠れ、ドロップ先が見えなくなるため。
+    /// クイックキャプチャの割り当てを記録している間の帯。
+    fn render_shortcut_capture(
+        &self,
+        capture: &ShortcutCapture,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let current = match self.quick_capture_shortcut.as_ref() {
+            Some(shortcut) => format!("現在の割り当て: {shortcut}"),
+            None => "現在は未設定です".to_string(),
+        };
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .px_6()
+            .py_3()
+            .bg(theme_color(cx, UiColor::Surface))
+            .border_b_1()
+            .border_color(theme_color(cx, UiColor::Border))
+            .child(
+                div()
+                    .font_weight(gpui_kit::FontWeight::BOLD)
+                    .child("クイックキャプチャに割り当てたい組み合わせを押してください"),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme_color(cx, UiColor::MutedForeground))
+                    .child(format!("{current}　修飾キーを 1 つ以上含めてください。")),
+            )
+            .when_some(capture.error.as_ref(), |this, message| {
+                this.child(field_error_note(
+                    message.clone(),
+                    theme_color(cx, UiColor::DangerForeground),
+                ))
+            })
+            .child(
+                div()
+                    .flex()
+                    .gap_1()
+                    .child(
+                        Button::new("clear-quick-capture-shortcut")
+                            .label("解除する")
+                            .disabled(self.quick_capture_shortcut.is_none())
+                            .on_click(cx.listener(|this, _, _, cx| this.apply_shortcut(None, cx))),
+                    )
+                    .child(
+                        Button::new("cancel-quick-capture-shortcut")
+                            .label("キャンセル")
+                            .on_click(
+                                cx.listener(|this, _, _, cx| this.cancel_shortcut_capture(cx)),
+                            ),
+                    ),
+            )
+    }
+
     fn render_card_panel(&self, editor: &CardEditor, cx: &mut Context<Self>) -> impl IntoElement {
         let savable = self.card_edit_is_savable(editor, cx);
         div()
@@ -3782,7 +3973,13 @@ impl Render for BoardView {
                 .map(|editor| self.render_card_panel(editor, cx).into_any_element())
         };
         div()
-            .key_context("Board")
+            // 記録中は "Board" の文脈から外し、cx.bind_keys で登録した割り当てが
+            // 発火しないようにする。そうしないと Cmd+N がカード追加になって記録できない。
+            .key_context(if self.capturing_shortcut.is_some() {
+                "ShortcutCapture"
+            } else {
+                "Board"
+            })
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                 this.handle_board_key_down(event, window, cx)
@@ -3791,6 +3988,9 @@ impl Render for BoardView {
                 cx.listener(|this, _: &AddBoard, window, cx| this.begin_add_board(window, cx)),
             )
             .on_action(cx.listener(|this, _: &About, window, cx| this.show_about(window, cx)))
+            .on_action(cx.listener(|this, _: &SetQuickCaptureShortcut, _, cx| {
+                this.begin_shortcut_capture(cx)
+            }))
             .on_action(cx.listener(|this, _: &AddCard, window, cx| this.add_card(window, cx)))
             .on_action(
                 cx.listener(|this, _: &AddColumn, window, cx| this.begin_add_column(window, cx)),
@@ -3866,6 +4066,11 @@ impl Render for BoardView {
                     .flex()
                     .flex_col()
                     .child(self.render_header(cx))
+                    .children(
+                        self.capturing_shortcut
+                            .as_ref()
+                            .map(|capture| self.render_shortcut_capture(capture, cx)),
+                    )
                     .child(if self.show_archived {
                         self.render_archived(cx).into_any_element()
                     } else {
@@ -3967,6 +4172,52 @@ fn theme_color(cx: &gpui_kit::App, color: UiColor) -> gpui_kit::Hsla {
 /// `!control` のような並びが非 macOS では意味が反転するため。
 fn moves_selected_card(modifiers: &Modifiers) -> bool {
     modifiers.secondary() && modifiers.alt && modifiers.number_of_modifiers() == 2
+}
+
+/// グローバルホットキーのイベントを GPUI のメインループ側で受け取る。
+///
+/// `global-hotkey` は OS 側のスレッドからイベントを流してくるので、UI をそこから
+/// 触らない。100ms ごとに溜まったぶんを引き取り、ビューの更新はメインループで行う。
+fn spawn_quick_capture_listener(window: &Window, cx: &mut Context<BoardView>) -> Task<()> {
+    cx.spawn_in(window, async move |view, cx| {
+        loop {
+            let Ok(registered) = view.read_with(cx, |view, _| {
+                view.quick_capture_shortcut
+                    .as_ref()
+                    .map(|shortcut| shortcut.id())
+            }) else {
+                // ビューが無くなった。
+                return;
+            };
+
+            // 未設定のときはイベントが来ないので、様子を見る間隔を延ばす。
+            let interval = if registered.is_some() { 100 } else { 1000 };
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(interval))
+                .await;
+
+            let Some(registered) = registered else {
+                continue;
+            };
+
+            let mut pressed = false;
+            while let Ok(event) = GlobalHotKeyEvent::receiver().try_recv() {
+                // 解除した直後に届いた古いイベントで動かないよう、今の割り当てと
+                // 突き合わせる。
+                pressed |= event.state() == HotKeyState::Pressed && event.id() == registered;
+            }
+            if !pressed {
+                continue;
+            }
+
+            if view
+                .update_in(cx, |view, window, cx| view.on_quick_capture(window, cx))
+                .is_err()
+            {
+                return;
+            }
+        }
+    })
 }
 
 /// ウィンドウタイトルを組み立てる。

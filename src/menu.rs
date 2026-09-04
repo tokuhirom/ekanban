@@ -3,9 +3,10 @@ use gpui_kit::{App, KeyBinding, Menu, MenuItem, OsAction, SystemMenuType};
 use crate::actions::{
     About, AddBoard, AddCard, AddColumn, AddTag, BackupDatabase, CancelEdit, ClearSearch,
     CloseWindow, DeleteBoard, ExportBoardJson, ExportBoardMarkdown, FocusSearch, HideApplication,
-    HideOtherApplications, Quit, Redo, RenameBoard, RevealDatabase, SaveEdit, ShowAllApplications,
-    ShowAllCards, ShowOverdueCards, ShowThisWeekCards, ToggleArchiveView, ToggleBoardList,
-    ToggleFullscreen, Undo, UseDarkTheme, UseLightTheme, UseSystemTheme,
+    HideOtherApplications, Quit, Redo, RenameBoard, RevealDatabase, SaveEdit,
+    SetQuickCaptureShortcut, ShowAllApplications, ShowAllCards, ShowOverdueCards,
+    ShowThisWeekCards, ToggleArchiveView, ToggleBoardList, ToggleFullscreen, Undo, UseDarkTheme,
+    UseLightTheme, UseSystemTheme,
 };
 
 pub fn install(cx: &mut App) {
@@ -39,6 +40,11 @@ pub fn install(cx: &mut App) {
     cx.set_menus([
         Menu::new("ekanban").items([
             MenuItem::action("ekanbanについて", About),
+            MenuItem::separator(),
+            MenuItem::action(
+                "クイックキャプチャのショートカット…",
+                SetQuickCaptureShortcut,
+            ),
             MenuItem::separator(),
             MenuItem::os_submenu("サービス", SystemMenuType::Services),
             MenuItem::separator(),
