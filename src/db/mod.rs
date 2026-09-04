@@ -17,6 +17,7 @@ const FILTER_TAG_STATE_KEY: &str = "filter_tag_id";
 const FILTER_DUE_STATE_KEY: &str = "filter_due";
 const THEME_PREFERENCE_STATE_KEY: &str = "theme_preference";
 const SIDEBAR_COLLAPSED_STATE_KEY: &str = "sidebar_collapsed";
+const QUICK_CAPTURE_SHORTCUT_STATE_KEY: &str = "quick_capture_shortcut";
 const BOARD_ID_NAMESPACE_SHIFT: u32 = 32;
 
 #[derive(Debug, Error)]
@@ -229,6 +230,18 @@ impl Database {
             SIDEBAR_COLLAPSED_STATE_KEY,
             if collapsed { "1" } else { "0" },
         )
+    }
+
+    pub fn load_quick_capture_shortcut(&self) -> Result<Option<String>, DbError> {
+        self.load_app_state(QUICK_CAPTURE_SHORTCUT_STATE_KEY)
+    }
+
+    /// クイックキャプチャの割り当てを保存する。`None` で解除する。
+    pub fn set_quick_capture_shortcut(&self, shortcut: Option<&str>) -> Result<(), DbError> {
+        match shortcut {
+            Some(shortcut) => self.set_app_state(QUICK_CAPTURE_SHORTCUT_STATE_KEY, shortcut),
+            None => self.delete_app_state(QUICK_CAPTURE_SHORTCUT_STATE_KEY),
+        }
     }
 
     pub fn export_board_json(&self, board: &Board) -> Result<String, DbError> {
@@ -1356,6 +1369,26 @@ mod tests {
         let cleared = FilterState::default();
         database.set_filter_state(&cleared).unwrap();
         assert_eq!(database.load_filter_state().unwrap(), cleared);
+    }
+
+    #[test]
+    fn persists_and_clears_the_quick_capture_shortcut() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("board.sqlite3");
+        let database = Database::open(&path).unwrap();
+
+        assert_eq!(database.load_quick_capture_shortcut().unwrap(), None);
+
+        database
+            .set_quick_capture_shortcut(Some("ctrl-alt-shift-cmd-n"))
+            .unwrap();
+        assert_eq!(
+            database.load_quick_capture_shortcut().unwrap(),
+            Some("ctrl-alt-shift-cmd-n".to_string())
+        );
+
+        database.set_quick_capture_shortcut(None).unwrap();
+        assert_eq!(database.load_quick_capture_shortcut().unwrap(), None);
     }
 
     #[test]

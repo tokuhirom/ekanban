@@ -30,4 +30,5 @@ gpui_kit::actions!([
     ExportBoardJson,
     ExportBoardMarkdown,
     RevealDatabase,
+    SetQuickCaptureShortcut,
 ]);
