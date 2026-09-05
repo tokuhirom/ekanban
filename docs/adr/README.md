@@ -95,3 +95,4 @@
 | [0013](0013-linux-desktop-integration.md) | Linux のデスクトップ統合は、`~/.local` 以下に入れるスクリプトで行う | 2026-09-05 | 有効 |
 | [0014](0014-unsigned-apple-silicon-only-macos-builds.md) | macOS は Apple Silicon 向けの未公証ビルドだけを配る | 2026-09-05 | 有効 |
 | [0015](0015-a-menu-bar-on-every-platform.md) | どのプラットフォームでもメニューバーを出す | 2026-09-06 | 有効 |
+| [0016](0016-where-the-app-says-things.md) | アプリが伝えることを、行き先ごとに分ける | 2026-09-06 | 有効 |

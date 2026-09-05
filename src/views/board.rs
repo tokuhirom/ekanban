@@ -171,19 +171,6 @@ struct BoardEditor {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum StatusLevel {
-    Info,
-    Success,
-    Error,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct StatusMessage {
-    level: StatusLevel,
-    text: String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ErrorContext {
     MoveCard,
     MoveColumn,
@@ -196,7 +183,8 @@ enum ErrorContext {
 }
 
 impl ErrorContext {
-    fn label(self) -> &'static str {
+    /// ダイアログの見出しにそのまま使う。
+    fn title(self) -> &'static str {
         match self {
             Self::MoveCard => "カードを移動できませんでした",
             Self::MoveColumn => "カラムを移動できませんでした",
@@ -251,14 +239,12 @@ struct PendingSave {
     id: u64,
     snapshot: Board,
     before: Board,
-    success_message: String,
     on_failure: SaveFailure,
 }
 
 struct ActiveSave {
     id: u64,
     before: Board,
-    success_message: String,
     on_failure: SaveFailure,
 }
 
@@ -334,7 +320,11 @@ pub struct BoardView {
     next_save_id: u64,
     pending_saves: VecDeque<PendingSave>,
     active_save: Option<ActiveSave>,
-    status: Option<StatusMessage>,
+    /// このビューを載せているウィンドウ。
+    ///
+    /// ダイアログを開くのに `&mut Window` が要るが、保存の完了も書き出しも非同期で、
+    /// そこに `Window` は渡ってこない。ハンドルから引けるようにしておく。
+    board_window: gpui_kit::AnyWindowHandle,
     editing_card: Option<CardEditor>,
     /// 追加したが、まだタイトルを入れて保存していないカード。
     new_card: Option<NewCard>,
@@ -379,12 +369,6 @@ struct CaptureWindow {
     /// 開いたときにボードのウィンドウが前面でなかったか。閉じるときに直前の
     /// アプリへフォーカスを返すかの判断に使う。
     restore_previous_app: bool,
-    /// このキャプチャを開いたボードのウィンドウ。
-    ///
-    /// 閉じたあとにボードを前へ出すのに使う。`App::activate` は macOS の実装で、
-    /// Linux では何もしない（`gpui-pre-linux` の `platform.rs`）ので、ウィンドウ
-    /// 単位の `activate_window` を呼ぶ経路が要る（#52）。
-    board_window: gpui_kit::AnyWindowHandle,
 }
 
 impl BoardView {
@@ -449,7 +433,7 @@ impl BoardView {
         let quick_capture_task = spawn_quick_capture_listener(window, cx);
         let quick_capture_error = quick_capture.error;
 
-        let mut view = Self {
+        let view = Self {
             board,
             boards,
             database_path,
@@ -458,7 +442,7 @@ impl BoardView {
             next_save_id: 0,
             pending_saves: VecDeque::new(),
             active_save: None,
-            status: None,
+            board_window: window.window_handle(),
             editing_card: None,
             new_card: None,
             editing_column: None,
@@ -491,7 +475,7 @@ impl BoardView {
             _quick_capture_task: quick_capture_task,
         };
         if let Some(error) = quick_capture_error {
-            view.set_error(error);
+            view.report_failure("クイックキャプチャを復元できませんでした", error, cx);
         }
         // 開いた時点でボードにフォーカスを渡す。ショートカットもメニューの項目も
         // "Board" の文脈にぶら下がっているので、どこにもフォーカスが無いと、飛ばした
@@ -506,9 +490,11 @@ impl BoardView {
     /// 次に押された組み合わせを記録する状態に入る。
     fn begin_shortcut_capture(&mut self, cx: &mut Context<Self>) {
         if let Some(reason) = cx.global::<QuickCapture>().unavailable_reason() {
-            self.set_error(format!(
-                "この環境ではグローバルホットキーを使えません: {reason}"
-            ));
+            self.report_failure(
+                "ショートカットを割り当てられません",
+                format!("この環境ではグローバルホットキーを使えません: {reason}"),
+                cx,
+            );
             cx.notify();
             return;
         }
@@ -517,8 +503,8 @@ impl BoardView {
     }
 
     fn cancel_shortcut_capture(&mut self, cx: &mut Context<Self>) {
+        // やめたことは、記録中の表示が消えることで分かる。
         if self.capturing_shortcut.take().is_some() {
-            self.set_info("ショートカットの設定をキャンセルしました");
             cx.notify();
         }
     }
@@ -565,7 +551,7 @@ impl BoardView {
                 if let Some(capture) = self.capturing_shortcut.as_mut() {
                     capture.error = Some(message.clone());
                 }
-                self.set_error(message);
+                self.report_failure("ショートカットを登録できませんでした", message, cx);
                 cx.notify();
                 return;
             }
@@ -575,14 +561,14 @@ impl BoardView {
         if let Err(error) = Database::open(&self.database_path)
             .and_then(|database| database.set_quick_capture_shortcut(stored.as_deref()))
         {
-            self.set_error(format!(
-                "ショートカットは有効になりましたが、保存に失敗しました: {}",
-                db_error_detail(&error)
-            ));
-        } else if shortcut.is_some() {
-            self.set_success(format!("クイックキャプチャを「{label}」に設定しました"));
-        } else {
-            self.set_info("クイックキャプチャのショートカットを解除しました");
+            self.report_failure(
+                "ショートカットを保存できませんでした",
+                format!(
+                    "「{label}」は有効になりましたが、設定の保存に失敗しました。次に起動したときは戻ります: {}",
+                    db_error_detail(&error)
+                ),
+                cx,
+            );
         }
 
         self.quick_capture_shortcut = shortcut;
@@ -602,9 +588,10 @@ impl BoardView {
             return;
         }
 
+        // カラムが 1 つも無ければ入れ先が決まらない。ボードを前に出すところまでは
+        // やる。画面を見れば、カラムが無いことがそのまま理由になっている。
         let Some(destination) = self.capture_destination() else {
             window.activate_window();
-            self.set_error("キャプチャ先のカラムがありません。カラムを追加してください。");
             cx.notify();
             return;
         };
@@ -612,7 +599,6 @@ impl BoardView {
         // ホットキーを押した時点でボードが前面だったかを覚えておく。閉じるときに
         // アプリごと隠すかどうかがこれで決まる。
         let restore_previous_app = !window.is_window_active();
-        let board_window = window.window_handle();
         let board_view = cx.entity().downgrade();
         let bounds = Bounds::centered(None, size(px(520.), px(132.)), cx);
         let created: Rc<RefCell<Option<Entity<CaptureView>>>> = Rc::default();
@@ -649,14 +635,15 @@ impl BoardView {
                     handle,
                     view,
                     restore_previous_app,
-                    board_window,
                 });
             }
             Err(error) => {
                 window.activate_window();
-                self.set_error(format!(
-                    "クイックキャプチャのウィンドウを開けませんでした: {error}"
-                ));
+                self.report_failure(
+                    "クイックキャプチャを開けませんでした",
+                    error.to_string(),
+                    cx,
+                );
                 cx.notify();
             }
         }
@@ -689,12 +676,7 @@ impl BoardView {
         self.board
             .add_card(target.column_id, title, "")
             .map_err(|error| board_error_detail(&error))?;
-        self.enqueue_save(
-            before,
-            "クイックキャプチャでカードを追加しました",
-            SaveFailure::None,
-            cx,
-        );
+        self.enqueue_save(before, SaveFailure::None, cx);
         self.capture_save = Some(self.next_save_id);
         cx.notify();
         Ok(())
@@ -712,7 +694,6 @@ impl BoardView {
     ) {
         let path = self.database_path.clone();
         let save_lock = self.save_lock.clone();
-        self.set_info("保存中…");
         cx.spawn(async move |this, cx| {
             let result = cx
                 .background_executor()
@@ -730,12 +711,10 @@ impl BoardView {
                 })
                 .await;
             let _ = this.update(cx, |view, cx| {
+                // 失敗はキャプチャウィンドウが入力を残したまま出す（`finish_capture`）。
+                // 成功したことは、そのウィンドウが閉じることで分かる。
                 let outcome = result
                     .map_err(|error| format!("保存に失敗しました: {}", db_error_detail(&error)));
-                match &outcome {
-                    Ok(()) => view.set_success("クイックキャプチャでカードを追加しました"),
-                    Err(message) => view.set_error(message.clone()),
-                }
                 view.finish_capture(outcome, cx);
                 cx.notify();
             });
@@ -785,7 +764,8 @@ impl BoardView {
             .iter()
             .find(|column| column.id == column_id)
         else {
-            self.set_error("カラムが見つかりません。画面を更新してください。");
+            // メニューを開いたあとにカラムが消えていた。画面を描き直せば、その
+            // カラムごと消える。
             cx.notify();
             return;
         };
@@ -799,14 +779,19 @@ impl BoardView {
         match Database::open(&self.database_path).and_then(|database| {
             database.set_capture_target(Some((target.board_id, target.column_id)))
         }) {
-            Ok(()) => {
-                let label = capture_destination(&target);
-                self.capture_target = Some(target);
-                self.set_success(format!("クイックキャプチャ先を「{label}」にしました"));
-            }
-            Err(error) => self.present_db_error("キャプチャ先を保存できませんでした", error),
+            // 入れ先が変わったことは、そのカラムに出る「⚡ クイックキャプチャ先」が答える。
+            Ok(()) => self.capture_target = Some(target),
+            Err(error) => self.present_db_error("キャプチャ先を保存できませんでした", error, cx),
         }
         cx.notify();
+    }
+
+    fn column_is_empty(&self, column_id: ColumnId) -> bool {
+        self.board
+            .columns
+            .iter()
+            .find(|column| column.id == column_id)
+            .is_none_or(|column| column.cards.is_empty())
     }
 
     /// このカラムがキャプチャ先か。既定（先頭カラム）のときも印を出す。
@@ -872,30 +857,69 @@ impl BoardView {
             cx.hide();
         } else {
             cx.activate(true);
-            let _ = capture
+            let _ = self
                 .board_window
                 .update(cx, |_, window, _| window.activate_window());
         }
         cx.notify();
     }
 
-    fn set_status(&mut self, level: StatusLevel, text: impl Into<String>) {
-        self.status = Some(StatusMessage {
-            level,
-            text: text.into(),
+    /// 使う人が手を打たないと直らない失敗を伝える。
+    ///
+    /// ヘッダの 1 行を捨てたので、失敗の行き先はここだけになった。伝えるのは
+    /// 「使う人に用がある」ものに限る（`docs/DESIGN.md`）。拒否やキャンセルは
+    /// ここを通さない。
+    ///
+    /// 開くのを `defer` に載せるのは、同じウィンドウの更新中に `update_window` を
+    /// 呼ぶと**黙って失敗する**ため。gpui はウィンドウをスロットから取り出して
+    /// 更新するので、入れ子で呼ぶと取り出せず、ダイアログが出ないまま終わる。
+    /// いまの更新が終わってから開けば、同期の経路でも非同期の経路でも同じ 1 本で
+    /// 済む。
+    fn report_failure(&self, title: &'static str, detail: impl Into<String>, cx: &mut App) {
+        let window = self.board_window;
+        let detail = detail.into();
+        cx.defer(move |cx| {
+            let _ = window.update(cx, move |_, window, cx| {
+                let detail = detail.clone();
+                window.open_alert_dialog(cx, move |alert, _, _| {
+                    alert
+                        .title(title)
+                        .description(detail.clone())
+                        .button_props(DialogButtonProps::default().ok_text("OK"))
+                });
+            });
         });
     }
 
-    fn set_info(&mut self, text: impl Into<String>) {
-        self.set_status(StatusLevel::Info, text);
-    }
-
-    fn set_success(&mut self, text: impl Into<String>) {
-        self.set_status(StatusLevel::Success, text);
-    }
-
-    fn set_error(&mut self, text: impl Into<String>) {
-        self.set_status(StatusLevel::Error, text);
+    /// アプリの外にファイルを書けたことを伝える。
+    ///
+    /// 成功を報告するのはここだけ。書き出しとバックアップの結果はアプリの外に
+    /// できるので、画面のどこにも痕跡が残らず、黙ると成功したのか分からない。
+    /// 置いた場所そのものが知りたいことなので、パスを出して、そこを開く導線を
+    /// 付ける。
+    fn report_written_file(&self, title: &'static str, path: PathBuf, cx: &mut App) {
+        let window = self.board_window;
+        cx.defer(move |cx| {
+            let _ = window.update(cx, move |_, window, cx| {
+                let path = path.clone();
+                window.open_alert_dialog(cx, move |alert, _, _| {
+                    let path = path.clone();
+                    alert
+                        .title(title)
+                        .description(path.display().to_string())
+                        .button_props(
+                            DialogButtonProps::default()
+                                .ok_text("場所を開く")
+                                .cancel_text("閉じる")
+                                .show_cancel(true),
+                        )
+                        .on_ok(move |_, _, cx| {
+                            cx.reveal_path(&path);
+                            true
+                        })
+                });
+            });
+        });
     }
 
     fn persist_filter_state(&self, cx: &mut Context<Self>) {
@@ -931,11 +955,7 @@ impl BoardView {
             let _ = Database::open(path).and_then(|database| database.set_theme_preference(value));
         })
         .detach();
-        self.set_info(match preference {
-            ThemePreference::System => "システムの外観に合わせます",
-            ThemePreference::Light => "ライトモードに変更しました",
-            ThemePreference::Dark => "ダークモードに変更しました",
-        });
+        // 何に変わったかは画面の色そのものが答える。
         cx.notify();
     }
 
@@ -962,16 +982,12 @@ impl BoardView {
         cx.notify();
     }
 
-    fn present_board_error(&mut self, context: ErrorContext, error: BoardError) {
-        self.set_error(format!(
-            "{}: {}",
-            context.label(),
-            board_error_detail(&error)
-        ));
+    fn present_board_error(&mut self, context: ErrorContext, error: BoardError, cx: &mut App) {
+        self.report_failure(context.title(), board_error_detail(&error), cx);
     }
 
-    fn present_db_error(&mut self, context: &str, error: DbError) {
-        self.set_error(format!("{context}: {}", db_error_detail(&error)));
+    fn present_db_error(&mut self, context: &'static str, error: DbError, cx: &mut App) {
+        self.report_failure(context, db_error_detail(&error), cx);
     }
 
     fn rollback_board(&mut self, before: Board) {
@@ -997,13 +1013,29 @@ impl BoardView {
         self.active_save.is_some() || !self.pending_saves.is_empty()
     }
 
-    fn reject_while_saving(&mut self, cx: &mut Context<Self>) -> bool {
-        if !self.has_pending_save() {
-            return false;
-        }
-        self.set_info("保存が完了するまでボードを変更できません");
-        cx.notify();
-        true
+    fn is_editing(&self) -> bool {
+        self.editing_card.is_some()
+            || self.editing_column.is_some()
+            || self.editing_tag.is_some()
+            || self.editing_board.is_some()
+    }
+
+    /// ボードを入れ替えられる状態か。
+    ///
+    /// 入れ替えられないときは、一覧の行と `＋` を押せなくする。押せてしまうから
+    /// 「保存が完了するまで…」「編集中は…」と理由を言う必要が出ていた
+    /// （`docs/DESIGN.md`）。
+    fn can_switch_board(&self) -> bool {
+        !self.has_pending_save() && !self.is_editing()
+    }
+
+    /// 保存の途中はボードを入れ替えない。
+    ///
+    /// 理由は言わない。押せるところ（ボード一覧の行と `＋`）は保存中は無効に
+    /// してあるので、ここまで来るのはキーボードとメニューからだけになる
+    /// （`docs/DESIGN.md`）。
+    fn reject_while_saving(&self) -> bool {
+        self.has_pending_save()
     }
 
     fn reset_board_view(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1029,7 +1061,7 @@ impl BoardView {
         if board_id == self.board.id {
             return;
         }
-        if self.reject_while_saving(cx) {
+        if self.reject_while_saving() {
             return;
         }
         if self.editing_card.is_some()
@@ -1037,7 +1069,6 @@ impl BoardView {
             || self.editing_tag.is_some()
             || self.editing_board.is_some()
         {
-            self.set_info("編集中はボードを切り替えられません");
             cx.notify();
             return;
         }
@@ -1053,23 +1084,27 @@ impl BoardView {
                 let name = board.name.clone();
                 self.board = board;
                 self.reset_board_view(window, cx);
-                match Database::open(&self.database_path)
+                // 切り替わったことはヘッダのボード名と盤面が答える。
+                if let Err(error) = Database::open(&self.database_path)
                     .and_then(|database| database.set_last_board_id(board_id))
                 {
-                    Ok(()) => self.set_success(format!("「{name}」に切り替えました")),
-                    Err(error) => self.set_error(format!(
-                        "ボードは切り替えましたが、選択状態の保存に失敗しました: {}",
-                        db_error_detail(&error)
-                    )),
+                    self.report_failure(
+                        "開いていたボードを覚えられませんでした",
+                        format!(
+                            "「{name}」に切り替えましたが、次に起動したときは前のボードが開きます: {}",
+                            db_error_detail(&error)
+                        ),
+                        cx,
+                    );
                 }
             }
-            Err(error) => self.present_db_error("ボードを切り替えられませんでした", error),
+            Err(error) => self.present_db_error("ボードを切り替えられませんでした", error, cx),
         }
         cx.notify();
     }
 
     fn begin_add_board(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.reject_while_saving(cx) {
+        if self.reject_while_saving() {
             return;
         }
         let name = cx.new(|cx| InputState::new(window, cx).placeholder("ボード名"));
@@ -1083,7 +1118,7 @@ impl BoardView {
     }
 
     fn begin_board_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.reject_while_saving(cx) {
+        if self.reject_while_saving() {
             return;
         }
         let name = cx.new(|cx| {
@@ -1101,8 +1136,8 @@ impl BoardView {
     }
 
     fn cancel_board_edit(&mut self, cx: &mut Context<Self>) {
+        // やめたことは、編集フォームが消えることで分かる。
         if self.editing_board.take().is_some() {
-            self.set_info("ボード名の編集をキャンセルしました");
             cx.notify();
         }
     }
@@ -1132,29 +1167,23 @@ impl BoardView {
                         self.boards.push(summary);
                         self.board = board;
                         self.reset_board_view(window, cx);
-                        self.set_success("ボードを追加しました");
                     }
                     Err(error) => {
                         self.editing_board = Some(editor);
                         if let Some(editor) = self.editing_board.as_mut() {
                             editor.error = field_error_for_db(&error);
                         }
-                        self.present_db_error("ボードを追加できませんでした", error);
+                        self.present_db_error("ボードを追加できませんでした", error, cx);
                     }
                 }
             }
             Some(board_id) => {
                 let before = self.board.clone();
                 match self.board.rename(name) {
-                    Ok(false) => self.set_info("ボード名に変更はありません"),
+                    Ok(false) => {}
                     Ok(true) => {
                         self.sync_current_board_summary();
-                        self.enqueue_save(
-                            before,
-                            "ボード名を変更しました",
-                            SaveFailure::RestoreBoardEditor(editor),
-                            cx,
-                        );
+                        self.enqueue_save(before, SaveFailure::RestoreBoardEditor(editor), cx);
                     }
                     Err(error) => {
                         let field_error = field_error_for(&error);
@@ -1162,7 +1191,7 @@ impl BoardView {
                         if let Some(editor) = self.editing_board.as_mut() {
                             editor.error = field_error;
                         }
-                        self.present_board_error(ErrorContext::Board, error);
+                        self.present_board_error(ErrorContext::Board, error, cx);
                     }
                 }
                 debug_assert_eq!(board_id, self.board.id);
@@ -1177,19 +1206,19 @@ impl BoardView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.reject_while_saving(cx) {
+        if self.reject_while_saving() {
             return;
         }
         // 最後の 1 枚は SQLite 側でも弾かれる（`DbError::LastBoard`）が、確認
         // ダイアログに「削除」と答えさせてから断るのは順番が逆なので、ここで
         // 先に断る。
         if self.boards.len() <= 1 {
-            self.set_info("最後のボードは削除できません");
             cx.notify();
             return;
         }
+        // 一覧に無いボードは、既にどこかで消えている。画面を描き直せば一覧から
+        // も消える。
         let Some(summary) = self.boards.iter().find(|summary| summary.id == board_id) else {
-            self.set_error("ボードが見つかりません。画面を更新してください。");
             cx.notify();
             return;
         };
@@ -1216,7 +1245,7 @@ impl BoardView {
     }
 
     fn delete_board(&mut self, board_id: BoardId, window: &mut Window, cx: &mut Context<Self>) {
-        if self.reject_while_saving(cx) {
+        if self.reject_while_saving() {
             return;
         }
         let result = Database::open(&self.database_path).and_then(|mut database| {
@@ -1239,34 +1268,34 @@ impl BoardView {
                             self.board = board;
                             self.reset_board_view(window, cx);
                             if let Err(error) = database.set_last_board_id(next_id) {
-                                self.set_error(format!(
-                                    "ボードを削除して切り替えましたが、選択状態の保存に失敗しました: {}",
-                                    db_error_detail(&error)
-                                ));
-                            } else {
-                                self.set_success("ボードを削除しました");
+                                self.report_failure(
+                                    "開いていたボードを覚えられませんでした",
+                                    format!(
+                                        "ボードは削除しましたが、次に起動したときに開くボードを保存できませんでした: {}",
+                                        db_error_detail(&error)
+                                    ),
+                                    cx,
+                                );
                             }
                         }
-                        Err(error) => {
-                            self.present_db_error("切り替え先のボードを読み込めませんでした", error)
-                        }
+                        Err(error) => self.present_db_error(
+                            "切り替え先のボードを読み込めませんでした",
+                            error,
+                            cx,
+                        ),
                     }
-                } else {
-                    self.set_success("ボードを削除しました");
                 }
             }
-            Err(error) => self.present_db_error("ボードを削除できませんでした", error),
+            Err(error) => self.present_db_error("ボードを削除できませんでした", error, cx),
         }
         cx.notify();
     }
 
-    fn enqueue_save(
-        &mut self,
-        before: Board,
-        success_message: impl Into<String>,
-        on_failure: SaveFailure,
-        cx: &mut Context<Self>,
-    ) {
+    /// 盤面の変更を保存の列に積む。
+    ///
+    /// 成功したことは伝えない。ローカル SQLite の保存は一瞬で、画面には既に結果が
+    /// 出ている。報告するのは失敗だけで、それはダイアログに出す（`docs/DESIGN.md`）。
+    fn enqueue_save(&mut self, before: Board, on_failure: SaveFailure, cx: &mut Context<Self>) {
         self.next_save_id += 1;
         if let Some(new_card) = self.new_card.as_mut() {
             new_card.saved = true;
@@ -1275,14 +1304,12 @@ impl BoardView {
             id: self.next_save_id,
             snapshot: self.board.clone(),
             before,
-            success_message: success_message.into(),
             on_failure,
         });
         // The snapshot owns the events produced by this operation. New
         // operations append to the live board while this snapshot is being
         // written, so they can be saved independently by the next request.
         self.board.pending_events.clear();
-        self.set_info("保存中…");
         self.start_next_save(cx);
     }
 
@@ -1301,7 +1328,6 @@ impl BoardView {
         self.active_save = Some(ActiveSave {
             id,
             before: pending.before,
-            success_message: pending.success_message,
             on_failure: pending.on_failure,
         });
         cx.spawn(async move |this, cx| {
@@ -1336,14 +1362,8 @@ impl BoardView {
             });
 
         match result {
-            Ok(()) => {
-                if self.pending_saves.is_empty() {
-                    self.set_success(active.success_message);
-                } else {
-                    self.set_info("保存中…");
-                }
-                self.start_next_save(cx);
-            }
+            // 成功は伝えない。結果は既に画面に出ている。
+            Ok(()) => self.start_next_save(cx),
             Err(error) => {
                 // Requests are started only after the preceding request has
                 // succeeded. Therefore all queued snapshots include the
@@ -1372,7 +1392,7 @@ impl BoardView {
                     }
                 }
                 self.sync_current_board_summary();
-                self.present_db_error("保存に失敗しました", error);
+                self.present_db_error("保存に失敗しました", error, cx);
             }
         }
         if let Some(capture_result) = capture_result {
@@ -1411,7 +1431,7 @@ impl BoardView {
             return;
         }
         if self.editing_card.is_some() {
-            self.commit_card_edit(false, cx);
+            self.commit_card_edit(cx);
             if self.editing_card.is_some() {
                 return;
             }
@@ -1450,7 +1470,7 @@ impl BoardView {
     /// パネルの ⋮ からのコピー。編集内容を保存してからコピーし、パネルは閉じる。
     fn copy_card_from_panel(&mut self, card_id: CardId, cx: &mut Context<Self>) {
         self.card_panel_menu_open = false;
-        self.commit_card_edit(false, cx);
+        self.commit_card_edit(cx);
         if self.editing_card.is_some() {
             return;
         }
@@ -1680,9 +1700,9 @@ impl BoardView {
             Ok(false) => return,
             Ok(true) => {
                 self.reveal_selected_card();
-                self.enqueue_save(before, "保存しました", SaveFailure::None, cx)
+                self.enqueue_save(before, SaveFailure::None, cx)
             }
-            Err(error) => self.present_board_error(ErrorContext::MoveCard, error),
+            Err(error) => self.present_board_error(ErrorContext::MoveCard, error, cx),
         }
         cx.notify();
     }
@@ -1691,8 +1711,8 @@ impl BoardView {
         let before = self.board.clone();
         match self.board.move_column(column_id, target_index) {
             Ok(false) => return,
-            Ok(true) => self.enqueue_save(before, "カラムを並べ替えました", SaveFailure::None, cx),
-            Err(error) => self.present_board_error(ErrorContext::MoveColumn, error),
+            Ok(true) => self.enqueue_save(before, SaveFailure::None, cx),
+            Err(error) => self.present_board_error(ErrorContext::MoveColumn, error, cx),
         }
         cx.notify();
     }
@@ -1715,9 +1735,10 @@ impl BoardView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // アーカイブ表示にカードを足す場所は無い。ヘッダのボタンは「ボードへ戻る」に
+        // 入れ替わり、カラムも描かれないので、ここへ来るのはキーボードとメニューから
+        // だけ。理由を言う相手がいないので黙って何もしない。
         if self.show_archived {
-            self.set_info("アーカイブ表示中はカードを追加できません");
-            cx.notify();
             return;
         }
         // 入力欄の初期値は空にする。案内は placeholder が出す。既定値として
@@ -1731,9 +1752,8 @@ impl BoardView {
                     saved: false,
                 });
                 self.begin_card_edit(card_id, window, cx);
-                self.set_info("タイトルを入力して保存してください");
             }
-            Err(error) => self.present_board_error(ErrorContext::Card, error),
+            Err(error) => self.present_board_error(ErrorContext::Card, error, cx),
         }
         cx.notify();
     }
@@ -1757,7 +1777,7 @@ impl BoardView {
                 )
             })
         else {
-            self.present_board_error(ErrorContext::Card, BoardError::CardNotFound(card_id));
+            self.present_board_error(ErrorContext::Card, BoardError::CardNotFound(card_id), cx);
             cx.notify();
             return;
         };
@@ -1878,11 +1898,8 @@ impl BoardView {
         let Some(editor) = self.editing_card.take() else {
             return;
         };
-        if self.discard_new_card(editor.card_id, cx) {
-            self.set_info("カードの追加をやめました");
-        } else {
-            self.set_info("カードの編集をキャンセルしました");
-        }
+        // やめたことは、編集パネルが閉じて（追加なら）カードごと消えることで分かる。
+        self.discard_new_card(editor.card_id, cx);
         cx.notify();
     }
 
@@ -1897,25 +1914,24 @@ impl BoardView {
         let new_card = self.new_card.take().expect("just matched");
         let before = self.board.clone();
         if let Err(error) = self.board.discard_added_card(card_id) {
-            self.present_board_error(ErrorContext::Card, error);
+            self.present_board_error(ErrorContext::Card, error, cx);
             return false;
         }
         if self.selected_card == Some(card_id) {
             self.selected_card = None;
         }
         if new_card.saved {
-            self.enqueue_save(before, "カードの追加をやめました", SaveFailure::None, cx);
+            self.enqueue_save(before, SaveFailure::None, cx);
         }
         true
     }
 
     fn save_card_edit(&mut self, cx: &mut Context<Self>) {
-        self.commit_card_edit(true, cx);
+        self.commit_card_edit(cx);
     }
 
-    /// カードの編集を確定する。`announce_unchanged` が false のときは
-    /// 「変更はありません」を出さない。パネルを切り替えるたびに出るとうるさいため。
-    fn commit_card_edit(&mut self, announce_unchanged: bool, cx: &mut Context<Self>) {
+    /// カードの編集を確定する。変更が無ければ何も起きない。
+    fn commit_card_edit(&mut self, cx: &mut Context<Self>) {
         let Some(editor) = self.editing_card.take() else {
             return;
         };
@@ -1941,7 +1957,7 @@ impl BoardView {
             if let Some(editor) = self.editing_card.as_mut() {
                 editor.error = field_error_for(&BoardError::EmptyChecklistItemText);
             }
-            self.present_board_error(ErrorContext::Card, BoardError::EmptyChecklistItemText);
+            self.present_board_error(ErrorContext::Card, BoardError::EmptyChecklistItemText, cx);
             cx.notify();
             return;
         }
@@ -1952,7 +1968,7 @@ impl BoardView {
                 if let Some(editor) = self.editing_card.as_mut() {
                     editor.error = field_error_for(&error);
                 }
-                self.present_board_error(ErrorContext::Card, error);
+                self.present_board_error(ErrorContext::Card, error, cx);
                 cx.notify();
                 return;
             }
@@ -1973,28 +1989,17 @@ impl BoardView {
                 if let Some(editor) = self.editing_card.as_mut() {
                     editor.error = field_error_for(&error);
                 }
-                self.present_board_error(ErrorContext::Card, error);
+                self.present_board_error(ErrorContext::Card, error, cx);
                 cx.notify();
                 return;
             }
         };
 
         if changed {
-            let added = self
-                .new_card
+            // 保存まで通ったので、追加中という扱いを外す。
+            self.new_card
                 .take_if(|new_card| new_card.card_id == card_id);
-            self.enqueue_save(
-                before,
-                if added.is_some() {
-                    "カードを追加しました"
-                } else {
-                    "カードを更新しました"
-                },
-                SaveFailure::RestoreCardEditor(editor),
-                cx,
-            );
-        } else if announce_unchanged {
-            self.set_info("カードに変更はありません");
+            self.enqueue_save(before, SaveFailure::RestoreCardEditor(editor), cx);
         }
         cx.notify();
     }
@@ -2022,9 +2027,9 @@ impl BoardView {
                 } else {
                     SaveFailure::None
                 };
-                self.enqueue_save(before, "カードを削除しました", on_failure, cx);
+                self.enqueue_save(before, on_failure, cx);
             }
-            Err(error) => self.present_board_error(ErrorContext::Card, error),
+            Err(error) => self.present_board_error(ErrorContext::Card, error, cx),
         }
         cx.notify();
     }
@@ -2038,9 +2043,9 @@ impl BoardView {
             Ok(new_card_id) => {
                 self.selected_card = Some(new_card_id);
                 self.context_menu_card = None;
-                self.enqueue_save(before, "カードをコピーしました", SaveFailure::None, cx);
+                self.enqueue_save(before, SaveFailure::None, cx);
             }
-            Err(error) => self.present_board_error(ErrorContext::Card, error),
+            Err(error) => self.present_board_error(ErrorContext::Card, error, cx),
         }
         cx.notify();
     }
@@ -2058,7 +2063,7 @@ impl BoardView {
             .flat_map(|column| column.cards.iter())
             .find(|card| card.id == card_id)
         else {
-            self.present_board_error(ErrorContext::Card, BoardError::CardNotFound(card_id));
+            self.present_board_error(ErrorContext::Card, BoardError::CardNotFound(card_id), cx);
             cx.notify();
             return;
         };
@@ -2073,9 +2078,9 @@ impl BoardView {
             Ok(false) => {}
             Ok(true) => {
                 self.context_menu_card = None;
-                self.enqueue_save(before, "タグを更新しました", SaveFailure::None, cx);
+                self.enqueue_save(before, SaveFailure::None, cx);
             }
-            Err(error) => self.present_board_error(ErrorContext::Card, error),
+            Err(error) => self.present_board_error(ErrorContext::Card, error, cx),
         }
         cx.notify();
     }
@@ -2131,10 +2136,10 @@ impl BoardView {
                 } else {
                     SaveFailure::None
                 };
-                self.enqueue_save(before, "カードをアーカイブしました", on_failure, cx);
+                self.enqueue_save(before, on_failure, cx);
             }
             Ok(false) => {}
-            Err(error) => self.present_board_error(ErrorContext::Card, error),
+            Err(error) => self.present_board_error(ErrorContext::Card, error, cx),
         }
         cx.notify();
     }
@@ -2158,8 +2163,9 @@ impl BoardView {
         };
         let before = self.board.clone();
         match self.board.archive_column(column_id) {
-            Ok(0) => self.set_info("アーカイブするカードがありません"),
-            Ok(count) => {
+            // 空のカラムでは、`…` メニューの「アーカイブ」が無効になっている。
+            Ok(0) => {}
+            Ok(_) => {
                 self.selected_card = next_selection;
                 self.context_menu_card = None;
                 let on_failure = self
@@ -2167,14 +2173,9 @@ impl BoardView {
                     .take()
                     .map(SaveFailure::RestoreCardEditor)
                     .unwrap_or(SaveFailure::None);
-                self.enqueue_save(
-                    before,
-                    format!("{count} 枚をアーカイブしました"),
-                    on_failure,
-                    cx,
-                );
+                self.enqueue_save(before, on_failure, cx);
             }
-            Err(error) => self.present_board_error(ErrorContext::Column, error),
+            Err(error) => self.present_board_error(ErrorContext::Column, error, cx),
         }
         cx.notify();
     }
@@ -2191,7 +2192,11 @@ impl BoardView {
             .iter()
             .find(|column| column.id == column_id)
         else {
-            self.present_board_error(ErrorContext::Column, BoardError::ColumnNotFound(column_id));
+            self.present_board_error(
+                ErrorContext::Column,
+                BoardError::ColumnNotFound(column_id),
+                cx,
+            );
             cx.notify();
             return;
         };
@@ -2228,9 +2233,9 @@ impl BoardView {
     fn restore_card(&mut self, card_id: CardId, cx: &mut Context<Self>) {
         let before = self.board.clone();
         match self.board.restore_card(card_id) {
-            Ok(true) => self.enqueue_save(before, "カードを復元しました", SaveFailure::None, cx),
+            Ok(true) => self.enqueue_save(before, SaveFailure::None, cx),
             Ok(false) => {}
-            Err(error) => self.present_board_error(ErrorContext::Card, error),
+            Err(error) => self.present_board_error(ErrorContext::Card, error, cx),
         }
         cx.notify();
     }
@@ -2244,11 +2249,7 @@ impl BoardView {
         self.selected_card = None;
         self.context_menu_card = None;
         self.context_menu_column = None;
-        self.set_info(if self.show_archived {
-            "アーカイブを表示しています"
-        } else {
-            "ボードを表示しています"
-        });
+        // どちらを見ているかは、画面そのものが答える。
         cx.notify();
     }
 
@@ -2321,7 +2322,7 @@ impl BoardView {
             .find(|tag| tag.id == tag_id)
             .map(|tag| (tag.name.clone(), tag.color.clone()))
         else {
-            self.present_board_error(ErrorContext::Tag, BoardError::TagNotFound(tag_id));
+            self.present_board_error(ErrorContext::Tag, BoardError::TagNotFound(tag_id), cx);
             cx.notify();
             return;
         };
@@ -2347,7 +2348,6 @@ impl BoardView {
 
     fn cancel_tag_edit(&mut self, cx: &mut Context<Self>) {
         if self.editing_tag.take().is_some() {
-            self.set_info("タグの編集をキャンセルしました");
             cx.notify();
         }
     }
@@ -2374,24 +2374,15 @@ impl BoardView {
         })();
 
         match result {
-            Ok(false) => self.set_info("タグに変更はありません"),
-            Ok(true) => self.enqueue_save(
-                before,
-                if editor.tag_id.is_some() {
-                    "タグを更新しました"
-                } else {
-                    "タグを追加しました"
-                },
-                SaveFailure::RestoreTagEditor(editor),
-                cx,
-            ),
+            Ok(false) => {}
+            Ok(true) => self.enqueue_save(before, SaveFailure::RestoreTagEditor(editor), cx),
             Err(error) => {
                 self.rollback_board(before);
                 self.editing_tag = Some(editor);
                 if let Some(editor) = self.editing_tag.as_mut() {
                     editor.error = field_error_for(&error);
                 }
-                self.present_board_error(ErrorContext::Tag, error);
+                self.present_board_error(ErrorContext::Tag, error, cx);
             }
         }
         cx.notify();
@@ -2417,7 +2408,6 @@ impl BoardView {
                 }
                 self.enqueue_save(
                     before,
-                    "タグを削除しました",
                     SaveFailure::RestoreTagState {
                         tag_id,
                         editor,
@@ -2426,7 +2416,7 @@ impl BoardView {
                     cx,
                 );
             }
-            Err(error) => self.present_board_error(ErrorContext::Tag, error),
+            Err(error) => self.present_board_error(ErrorContext::Tag, error, cx),
         }
         cx.notify();
     }
@@ -2434,26 +2424,21 @@ impl BoardView {
     fn set_tag_filter(&mut self, tag_id: TagId, cx: &mut Context<Self>) {
         self.tag_filter = next_tag_filter(self.tag_filter, tag_id);
         self.persist_filter_state(cx);
-        self.set_info(if self.tag_filter.is_some() {
-            "タグで絞り込みました"
-        } else {
-            "タグの絞り込みを解除しました"
-        });
+        // 絞り込んでいるかは、ヘッダの絞り込みノートとチップの `✓` が答える。
         cx.notify();
     }
 
     fn clear_tag_filter(&mut self, cx: &mut Context<Self>) {
+        // 解除したことは、ヘッダの絞り込みノートが消えることで分かる。
         if self.tag_filter.take().is_some() {
             self.persist_filter_state(cx);
-            self.set_info("タグの絞り込みを解除しました");
         }
         cx.notify();
     }
 
     fn begin_add_column(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // カードの追加と同じ。アーカイブ表示に「＋ カラムを追加」は出ていない。
         if self.show_archived {
-            self.set_info("アーカイブ表示中はカラムを追加できません");
-            cx.notify();
             return;
         }
         let name = cx.new(|cx| InputState::new(window, cx).placeholder("カラム名"));
@@ -2489,7 +2474,11 @@ impl BoardView {
                 )
             })
         else {
-            self.present_board_error(ErrorContext::Column, BoardError::ColumnNotFound(column_id));
+            self.present_board_error(
+                ErrorContext::Column,
+                BoardError::ColumnNotFound(column_id),
+                cx,
+            );
             cx.notify();
             return;
         };
@@ -2516,7 +2505,6 @@ impl BoardView {
 
     fn cancel_column_edit(&mut self, cx: &mut Context<Self>) {
         if self.editing_column.take().is_some() {
-            self.set_info("カラムの編集をキャンセルしました");
             cx.notify();
         }
     }
@@ -2534,7 +2522,7 @@ impl BoardView {
                 if let Some(editor) = self.editing_column.as_mut() {
                     editor.error = field_error_for(&error);
                 }
-                self.present_board_error(ErrorContext::Column, error);
+                self.present_board_error(ErrorContext::Column, error, cx);
                 cx.notify();
                 return;
             }
@@ -2556,25 +2544,14 @@ impl BoardView {
         })();
 
         match result {
-            Ok(false) => {
-                self.set_info("カラムに変更はありません");
-            }
-            Ok(true) => self.enqueue_save(
-                before,
-                if editor.column_id.is_some() {
-                    "カラムを更新しました"
-                } else {
-                    "カラムを追加しました"
-                },
-                SaveFailure::RestoreColumnEditor(editor),
-                cx,
-            ),
+            Ok(false) => {}
+            Ok(true) => self.enqueue_save(before, SaveFailure::RestoreColumnEditor(editor), cx),
             Err(error) => {
                 self.editing_column = Some(editor);
                 if let Some(editor) = self.editing_column.as_mut() {
                     editor.error = field_error_for(&error);
                 }
-                self.present_board_error(ErrorContext::Column, error);
+                self.present_board_error(ErrorContext::Column, error, cx);
             }
         }
         cx.notify();
@@ -2593,7 +2570,11 @@ impl BoardView {
             .iter()
             .find(|column| column.id == column_id)
         else {
-            self.present_board_error(ErrorContext::Column, BoardError::ColumnNotFound(column_id));
+            self.present_board_error(
+                ErrorContext::Column,
+                BoardError::ColumnNotFound(column_id),
+                cx,
+            );
             cx.notify();
             return;
         };
@@ -2659,9 +2640,9 @@ impl BoardView {
                 } else {
                     SaveFailure::None
                 };
-                self.enqueue_save(before, "カラムを削除しました", on_failure, cx);
+                self.enqueue_save(before, on_failure, cx);
             }
-            Err(error) => self.present_board_error(ErrorContext::Column, error),
+            Err(error) => self.present_board_error(ErrorContext::Column, error, cx),
         }
         cx.notify();
     }
@@ -2670,22 +2651,17 @@ impl BoardView {
         self.context_menu_column = None;
         let before = self.board.clone();
         match self.board.sort_column_by_due_date(column_id) {
-            Ok(false) => {
-                self.set_info("期限順に変更はありません");
-            }
-            Ok(true) => self.enqueue_save(before, "期限順に並べ替えました", SaveFailure::None, cx),
-            Err(error) => self.present_board_error(ErrorContext::Column, error),
+            // 既に期限順なら、並べ替えても画面は変わらない。
+            Ok(false) => {}
+            Ok(true) => self.enqueue_save(before, SaveFailure::None, cx),
+            Err(error) => self.present_board_error(ErrorContext::Column, error, cx),
         }
         cx.notify();
     }
 
     fn commit_search(&mut self, cx: &mut Context<Self>) {
         self.search_query = self.search.read(cx).value().to_string();
-        if self.search_query.trim().is_empty() {
-            self.set_info("検索をクリアしました");
-        } else {
-            self.set_info(format!("「{}」で検索中", self.search_query));
-        }
+        // 何で絞り込んでいるかは検索欄に打った文字がそのまま出ている。
         self.persist_filter_state(cx);
         cx.notify();
     }
@@ -2695,7 +2671,6 @@ impl BoardView {
             .update(cx, |state, cx| state.set_value("", window, cx));
         self.search_query.clear();
         self.persist_filter_state(cx);
-        self.set_info("検索をクリアしました");
         cx.notify();
     }
 
@@ -2732,16 +2707,15 @@ impl BoardView {
             || self.editing_board.is_some()
             || self.search.read(cx).focus_handle(cx).is_focused(window)
         {
-            self.set_info("編集中は元に戻せません");
             cx.notify();
             return;
         }
 
         let before = self.board.clone();
         match self.board.undo() {
-            Ok(false) => self.set_info("元に戻す操作がありません"),
-            Ok(true) => self.enqueue_save(before, "元に戻しました", SaveFailure::None, cx),
-            Err(error) => self.present_board_error(ErrorContext::Undo, error),
+            Ok(false) => {}
+            Ok(true) => self.enqueue_save(before, SaveFailure::None, cx),
+            Err(error) => self.present_board_error(ErrorContext::Undo, error, cx),
         }
         cx.notify();
     }
@@ -2753,16 +2727,15 @@ impl BoardView {
             || self.editing_board.is_some()
             || self.search.read(cx).focus_handle(cx).is_focused(window)
         {
-            self.set_info("編集中はやり直せません");
             cx.notify();
             return;
         }
 
         let before = self.board.clone();
         match self.board.redo() {
-            Ok(false) => self.set_info("やり直す操作がありません"),
-            Ok(true) => self.enqueue_save(before, "やり直しました", SaveFailure::None, cx),
-            Err(error) => self.present_board_error(ErrorContext::Redo, error),
+            Ok(false) => {}
+            Ok(true) => self.enqueue_save(before, SaveFailure::None, cx),
+            Err(error) => self.present_board_error(ErrorContext::Redo, error, cx),
         }
         cx.notify();
     }
@@ -2785,17 +2758,15 @@ impl BoardView {
         cx.spawn(async move |this, cx| {
             let mut destination = match receiver.await {
                 Ok(Ok(Some(path))) => path,
-                Ok(Ok(None)) => return,
+                // 選ばずに閉じた。ダイアログを閉じたらダイアログが出るのは滑稽なので黙る。
+                Ok(Ok(None)) | Err(_) => return,
                 Ok(Err(error)) => {
                     let _ = this.update(cx, |view, cx| {
-                        view.set_error(save_dialog_error_detail(&error.to_string()));
-                        cx.notify();
-                    });
-                    return;
-                }
-                Err(_) => {
-                    let _ = this.update(cx, |view, cx| {
-                        view.set_error("保存先の選択が中断されました");
+                        view.report_failure(
+                            "保存先を選べませんでした",
+                            save_dialog_error_detail(&error.to_string()),
+                            cx,
+                        );
                         cx.notify();
                     });
                     return;
@@ -2807,6 +2778,7 @@ impl BoardView {
                     ExportFormat::Markdown => "md",
                 });
             }
+            let written = destination.clone();
 
             let result = cx
                 .background_executor()
@@ -2824,8 +2796,10 @@ impl BoardView {
 
             let _ = this.update(cx, |view, cx| {
                 match result {
-                    Ok(()) => view.set_success("ボードを書き出しました"),
-                    Err(error) => view.set_error(format!("ボードを書き出せませんでした: {error}")),
+                    // 書けたものはアプリの外にあり、画面には何も残らない。ここだけは
+                    // 成功も伝える（`docs/DESIGN.md`）。
+                    Ok(()) => view.report_written_file("ボードを書き出しました", written, cx),
+                    Err(error) => view.report_failure("ボードを書き出せませんでした", error, cx),
                 }
                 cx.notify();
             });
@@ -2846,17 +2820,15 @@ impl BoardView {
         cx.spawn(async move |this, cx| {
             let mut destination = match receiver.await {
                 Ok(Ok(Some(path))) => path,
-                Ok(Ok(None)) => return,
+                // 選ばずに閉じたときは黙る。書き出しと同じ。
+                Ok(Ok(None)) | Err(_) => return,
                 Ok(Err(error)) => {
                     let _ = this.update(cx, |view, cx| {
-                        view.set_error(save_dialog_error_detail(&error.to_string()));
-                        cx.notify();
-                    });
-                    return;
-                }
-                Err(_) => {
-                    let _ = this.update(cx, |view, cx| {
-                        view.set_error("保存先の選択が中断されました");
+                        view.report_failure(
+                            "保存先を選べませんでした",
+                            save_dialog_error_detail(&error.to_string()),
+                            cx,
+                        );
                         cx.notify();
                     });
                     return;
@@ -2866,12 +2838,18 @@ impl BoardView {
                 destination.set_extension("sqlite3");
             }
             if destination == source {
+                // 選び直してほしいので、これは伝える。
                 let _ = this.update(cx, |view, cx| {
-                    view.set_error("バックアップ先には別のファイルを指定してください");
+                    view.report_failure(
+                        "バックアップを取れませんでした",
+                        "バックアップ先には、いま使っているデータベースとは別のファイルを指定してください",
+                        cx,
+                    );
                     cx.notify();
                 });
                 return;
             }
+            let written = destination.clone();
 
             let result = cx
                 .background_executor()
@@ -2885,10 +2863,12 @@ impl BoardView {
 
             let _ = this.update(cx, |view, cx| {
                 match result {
-                    Ok(()) => view.set_success("データベースをバックアップしました"),
-                    Err(error) => view.set_error(format!(
-                        "データベースをバックアップできませんでした: {error}"
-                    )),
+                    Ok(()) => {
+                        view.report_written_file("データベースをコピーしました", written, cx)
+                    }
+                    Err(error) => {
+                        view.report_failure("データベースをコピーできませんでした", error, cx)
+                    }
                 }
                 cx.notify();
             });
@@ -2898,7 +2878,6 @@ impl BoardView {
 
     fn reveal_database(&mut self, cx: &mut Context<Self>) {
         cx.reveal_path(&self.database_path);
-        self.set_info("データベースの場所を開きました");
         cx.notify();
     }
 
@@ -2908,12 +2887,11 @@ impl BoardView {
     /// しておく。初回の起動では控えを取り終える前に押されることがあるので、
     /// ディレクトリが無ければそう言う。
     fn reveal_backups(&mut self, cx: &mut Context<Self>) {
+        // まだ控えを取り終えていないうちに押されることがある。開く先が無いだけ
+        // なので、拒否として黙って何もしない。
         let directory = crate::backup::directory(&self.database_path);
         if directory.is_dir() {
             cx.reveal_path(&directory);
-            self.set_info("バックアップの場所を開きました");
-        } else {
-            self.set_info("まだバックアップがありません");
         }
         cx.notify();
     }
@@ -3066,9 +3044,15 @@ impl BoardView {
                             .flex()
                             .items_center()
                             .gap_1()
-                            .child(Button::new("add-board").secondary().label("＋").on_click(
-                                cx.listener(|this, _, window, cx| this.begin_add_board(window, cx)),
-                            ))
+                            .child(
+                                Button::new("add-board")
+                                    .secondary()
+                                    .label("＋")
+                                    .disabled(self.has_pending_save())
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.begin_add_board(window, cx)
+                                    })),
+                            )
                             .child(
                                 Button::new("collapse-board-list")
                                     .ghost()
@@ -3090,27 +3074,35 @@ impl BoardView {
                     .children(self.boards.iter().map(|summary| {
                         let board_id = summary.id;
                         let selected = board_id == self.board.id;
+                        // 保存の途中と編集中は切り替えられない。押せるままにすると
+                        // 断る理由を言う羽目になるので、押せなくする。
+                        let switchable = self.can_switch_board();
                         div()
                             .id(("board-item", board_id as u64))
                             .w_full()
                             .p_2()
                             .rounded_md()
-                            .cursor_pointer()
+                            .when(switchable, |this| this.cursor_pointer())
+                            .when(!switchable, |this| this.opacity(0.5))
                             .bg(if selected {
                                 theme_color(cx, UiColor::SidebarAccent)
                             } else {
                                 theme_color(cx, UiColor::Surface)
                             })
-                            .hover(|this| {
-                                this.bg(if selected {
-                                    theme_color(cx, UiColor::Accent)
-                                } else {
-                                    theme_color(cx, UiColor::SurfaceHover)
+                            .when(switchable, |this| {
+                                this.hover(|this| {
+                                    this.bg(if selected {
+                                        theme_color(cx, UiColor::Accent)
+                                    } else {
+                                        theme_color(cx, UiColor::SurfaceHover)
+                                    })
                                 })
                             })
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.switch_board(board_id, window, cx)
-                            }))
+                            .when(switchable, |this| {
+                                this.on_click(cx.listener(move |this, _, window, cx| {
+                                    this.switch_board(board_id, window, cx)
+                                }))
+                            })
                             .child(
                                 div()
                                     .flex()
@@ -3437,36 +3429,15 @@ impl BoardView {
         )
     }
 
+    /// ヘッダ。ボード名と検索欄と絞り込みノートだけを置く。
+    ///
+    /// 以前はここに常時のステータス行があった。何も起きていないときは
+    /// 「ローカル SQLite」という、選べもしない常に真の事実が出ていた。常に何か
+    /// 出ていると読まれなくなるので、いちばん見逃されたら困る保存失敗が、いちばん
+    /// 見逃されやすくなっていた（#86、[ADR 0016]）。
+    ///
+    /// [ADR 0016]: ../../docs/adr/0016-where-the-app-says-things.md
     fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let (status_icon, status_color, status_background, status_text) = match self.status.as_ref()
-        {
-            Some(status) => match status.level {
-                StatusLevel::Info => (
-                    "ⓘ",
-                    theme_color(cx, UiColor::InfoForeground),
-                    theme_color(cx, UiColor::Info),
-                    status.text.clone(),
-                ),
-                StatusLevel::Success => (
-                    "✓",
-                    theme_color(cx, UiColor::SuccessForeground),
-                    theme_color(cx, UiColor::Success),
-                    status.text.clone(),
-                ),
-                StatusLevel::Error => (
-                    "⚠",
-                    theme_color(cx, UiColor::DangerForeground),
-                    theme_color(cx, UiColor::Danger),
-                    status.text.clone(),
-                ),
-            },
-            None => (
-                "●",
-                theme_color(cx, UiColor::MutedForeground),
-                theme_color(cx, UiColor::Surface),
-                "ローカル SQLite".to_string(),
-            ),
-        };
         div()
             .w_full()
             .relative()
@@ -3489,19 +3460,6 @@ impl BoardView {
                             .text_xl()
                             .font_weight(gpui_kit::FontWeight::BOLD)
                             .child(self.board.name.clone()),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_1()
-                            .px_2()
-                            .py_1()
-                            .rounded_sm()
-                            .bg(status_background)
-                            .text_xs()
-                            .text_color(status_color)
-                            .child(format!("{status_icon} {status_text}")),
                     )
                     .child(self.render_search(cx))
                     .children(self.render_tag_filter_note(cx)),
@@ -3769,6 +3727,9 @@ impl BoardView {
                 Button::new(("context-archive-column", column_id as u64))
                     .ghost()
                     .label("アーカイブ")
+                    // 空のカラムではアーカイブするものが無い。押せてしまうから
+                    // 「アーカイブするカードがありません」と言う必要が出ていた。
+                    .disabled(self.column_is_empty(column_id))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.request_archive_column(column_id, window, cx)
                     })),
@@ -4845,11 +4806,6 @@ pub(crate) enum UiColor {
     Border,
     Accent,
     Danger,
-    DangerForeground,
-    Success,
-    SuccessForeground,
-    Info,
-    InfoForeground,
     Sidebar,
     SidebarAccent,
     Popover,
@@ -4867,11 +4823,6 @@ pub(crate) fn theme_color(cx: &gpui_kit::App, color: UiColor) -> gpui_kit::Hsla 
         UiColor::Border => theme.border,
         UiColor::Accent => theme.accent,
         UiColor::Danger => theme.danger,
-        UiColor::DangerForeground => theme.danger_foreground,
-        UiColor::Success => theme.success,
-        UiColor::SuccessForeground => theme.success_foreground,
-        UiColor::Info => theme.info,
-        UiColor::InfoForeground => theme.info_foreground,
         UiColor::Sidebar => theme.sidebar,
         UiColor::SidebarAccent => theme.sidebar_accent,
         UiColor::Popover => theme.popover,
@@ -5377,10 +5328,13 @@ fn display_date(date: NaiveDate, today: NaiveDate) -> String {
 /// という 1 行を返す。そのまま埋めても、何を入れれば直るのかが読み取れない（#51）。
 fn save_dialog_error_detail(error: &str) -> String {
     if error.contains("xdg-desktop-portal") {
-        return "保存先を選ぶダイアログを開けませんでした。Linux ではこのダイアログに                 xdg-desktop-portal が要ります。ポータル本体と、デスクトップ環境に合った                 バックエンド（GNOME なら xdg-desktop-portal-gnome、KDE なら                 xdg-desktop-portal-kde、そのほかは xdg-desktop-portal-gtk）を入れてください"
+        return "Linux ではこのダイアログに xdg-desktop-portal が要ります。ポータル本体と、\
+                デスクトップ環境に合ったバックエンド（GNOME なら xdg-desktop-portal-gnome、\
+                KDE なら xdg-desktop-portal-kde、そのほかは xdg-desktop-portal-gtk）を\
+                入れてください"
             .to_string();
     }
-    format!("保存先を選択できませんでした: {error}")
+    error.to_string()
 }
 
 fn board_error_detail(error: &BoardError) -> String {
@@ -5771,10 +5725,11 @@ mod tests {
         assert!(detail.contains("xdg-desktop-portal-kde"));
         assert!(detail.contains("xdg-desktop-portal-gtk"));
 
-        // ポータルと関係のない失敗は、これまでどおり理由をそのまま出す。
+        // ポータルと関係のない失敗は、理由をそのまま出す。何のダイアログかは
+        // 見出し（「保存先を選べませんでした」）が言う。
         assert_eq!(
             save_dialog_error_detail("permission denied"),
-            "保存先を選択できませんでした: permission denied"
+            "permission denied"
         );
     }
 
