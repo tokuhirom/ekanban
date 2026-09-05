@@ -5,7 +5,7 @@ use crate::hotkey::platform_support;
 use crate::actions::{
     About, AddBoard, AddCard, AddColumn, AddTag, BackupDatabase, CancelEdit, ClearSearch,
     CloseWindow, DeleteBoard, ExportBoardJson, ExportBoardMarkdown, FocusSearch, HideApplication,
-    HideOtherApplications, Quit, Redo, RenameBoard, RevealDatabase, SaveEdit,
+    HideOtherApplications, ManageTags, Quit, Redo, RenameBoard, RevealDatabase, SaveEdit,
     SetQuickCaptureShortcut, ShowAllApplications, ShowAllCards, ShowOverdueCards,
     ShowThisWeekCards, ToggleArchiveView, ToggleBoardList, ToggleFullscreen, Undo, UseDarkTheme,
     UseLightTheme, UseSystemTheme,
@@ -79,6 +79,8 @@ pub fn install(cx: &mut App) {
         Menu::new("ボード").items([
             MenuItem::action("ボード名を変更", RenameBoard),
             MenuItem::action("現在のボードを削除", DeleteBoard),
+            MenuItem::separator(),
+            MenuItem::action("タグを整理…", ManageTags),
         ]),
         Menu::new("表示").items([
             MenuItem::action("検索にフォーカス", FocusSearch),

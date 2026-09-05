@@ -21,18 +21,18 @@ use gpui_kit::{
     },
     div, point,
     prelude::*,
-    px, rgb, size, App, Bounds, Context, DragMoveEvent, Entity, FocusHandle, Focusable as _, Half,
-    IntoElement, KeyDownEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent, Pixels, Point,
-    Render, ScrollHandle, SharedString, Subscription, Task, Window, WindowBounds, WindowHandle,
-    WindowKind, WindowOptions,
+    px, rgb, size, AnyElement, App, Bounds, Context, DragMoveEvent, Entity, FocusHandle,
+    Focusable as _, Half, IntoElement, KeyDownEvent, Keystroke, Modifiers, MouseButton,
+    MouseDownEvent, Pixels, Point, Render, ScrollHandle, SharedString, Subscription, Task, Window,
+    WindowBounds, WindowHandle, WindowKind, WindowOptions,
 };
 
 use super::capture::CaptureView;
 use crate::{
     actions::{
         About, AddBoard, AddCard, AddColumn, AddTag, BackupDatabase, CancelEdit, ClearSearch,
-        CloseWindow, DeleteBoard, ExportBoardJson, ExportBoardMarkdown, FocusSearch, Redo,
-        RenameBoard, RevealDatabase, SaveEdit, SetQuickCaptureShortcut, ShowAllCards,
+        CloseWindow, DeleteBoard, ExportBoardJson, ExportBoardMarkdown, FocusSearch, ManageTags,
+        Redo, RenameBoard, RevealDatabase, SaveEdit, SetQuickCaptureShortcut, ShowAllCards,
         ShowOverdueCards, ShowThisWeekCards, ToggleArchiveView, ToggleBoardList, ToggleFullscreen,
         Undo, UseDarkTheme, UseLightTheme, UseSystemTheme,
     },
@@ -323,6 +323,7 @@ pub struct BoardView {
     editing_column: Option<ColumnEditor>,
     editing_tag: Option<TagEditor>,
     editing_board: Option<BoardEditor>,
+    tag_panel_open: bool,
     due_filter: DueFilter,
     tag_filter: Option<TagId>,
     show_archived: bool,
@@ -441,6 +442,7 @@ impl BoardView {
             editing_column: None,
             editing_tag: None,
             editing_board: None,
+            tag_panel_open: false,
             due_filter,
             tag_filter: filter_state.tag_id,
             show_archived: false,
@@ -971,6 +973,7 @@ impl BoardView {
         self.editing_column = None;
         self.editing_tag = None;
         self.editing_board = None;
+        self.tag_panel_open = false;
         self.selected_card = None;
         self.context_menu_card = None;
         self.context_menu_column = None;
@@ -1296,7 +1299,10 @@ impl BoardView {
                     SaveFailure::ClearCardEditor => self.editing_card = None,
                     SaveFailure::RestoreCardEditor(editor) => self.editing_card = Some(editor),
                     SaveFailure::RestoreColumnEditor(editor) => self.editing_column = Some(editor),
-                    SaveFailure::RestoreTagEditor(editor) => self.editing_tag = Some(editor),
+                    SaveFailure::RestoreTagEditor(editor) => {
+                        self.editing_tag = Some(editor);
+                        self.tag_panel_open = true;
+                    }
                     SaveFailure::RestoreBoardEditor(editor) => self.editing_board = Some(editor),
                     SaveFailure::RestoreTagState {
                         tag_id,
@@ -1306,6 +1312,7 @@ impl BoardView {
                         if filter_was_selected {
                             self.tag_filter = Some(tag_id);
                         }
+                        self.tag_panel_open |= editor.is_some();
                         self.editing_tag = editor;
                     }
                 }
@@ -2152,7 +2159,21 @@ impl BoardView {
         cx.notify();
     }
 
+    /// タグの整理パネルを開く。ヘッダのタグ一覧をやめたので、タグの追加・編集・削除は
+    /// ここだけから行う。常用しない操作なので、開くのはメニューからにする。
+    fn open_tag_panel(&mut self, cx: &mut Context<Self>) {
+        self.tag_panel_open = true;
+        cx.notify();
+    }
+
+    fn close_tag_panel(&mut self, cx: &mut Context<Self>) {
+        self.tag_panel_open = false;
+        self.editing_tag = None;
+        cx.notify();
+    }
+
     fn begin_add_tag(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.tag_panel_open = true;
         let name = cx.new(|cx| InputState::new(window, cx).placeholder("タグ名"));
         let color = cx.new(|cx| {
             InputState::new(window, cx)
@@ -2288,13 +2309,21 @@ impl BoardView {
     }
 
     fn set_tag_filter(&mut self, tag_id: TagId, cx: &mut Context<Self>) {
-        self.tag_filter = if self.tag_filter == Some(tag_id) {
-            None
-        } else {
-            Some(tag_id)
-        };
+        self.tag_filter = next_tag_filter(self.tag_filter, tag_id);
         self.persist_filter_state(cx);
-        self.set_info("タグフィルターを変更しました");
+        self.set_info(if self.tag_filter.is_some() {
+            "タグで絞り込みました"
+        } else {
+            "タグの絞り込みを解除しました"
+        });
+        cx.notify();
+    }
+
+    fn clear_tag_filter(&mut self, cx: &mut Context<Self>) {
+        if self.tag_filter.take().is_some() {
+            self.persist_filter_state(cx);
+            self.set_info("タグの絞り込みを解除しました");
+        }
         cx.notify();
     }
 
@@ -2579,6 +2608,8 @@ impl BoardView {
             self.cancel_tag_edit(cx);
         } else if self.editing_board.is_some() {
             self.cancel_board_edit(cx);
+        } else if self.tag_panel_open {
+            self.close_tag_panel(cx);
         }
     }
 
@@ -3071,8 +3102,8 @@ impl BoardView {
         };
         div()
             .flex()
-            .items_center()
-            .gap_1()
+            .flex_col()
+            .gap_2()
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
                 match event.keystroke.key.as_str() {
                     "enter" => {
@@ -3092,75 +3123,171 @@ impl BoardView {
             })
             .child(themed_input(Input::new(&editor.color).small(), cx))
             .child(
-                Button::new(("save-tag", editor_kind.unwrap_or(0) as u64))
-                    .primary()
-                    .disabled(name_value.trim().is_empty())
-                    .label("保存")
-                    .on_click(cx.listener(|this, _, _, cx| this.save_tag_edit(cx))),
-            )
-            .child(
-                Button::new(("cancel-tag", editor_kind.unwrap_or(0) as u64))
-                    .secondary()
-                    .label("取消")
-                    .on_click(cx.listener(|this, _, _, cx| this.cancel_tag_edit(cx))),
+                div()
+                    .flex()
+                    .gap_1()
+                    .child(
+                        Button::new(("save-tag", editor_kind.unwrap_or(0) as u64))
+                            .primary()
+                            .disabled(name_value.trim().is_empty())
+                            .label("保存")
+                            .on_click(cx.listener(|this, _, _, cx| this.save_tag_edit(cx))),
+                    )
+                    .child(
+                        Button::new(("cancel-tag", editor_kind.unwrap_or(0) as u64))
+                            .secondary()
+                            .label("取消")
+                            .on_click(cx.listener(|this, _, _, cx| this.cancel_tag_edit(cx))),
+                    ),
             )
     }
 
-    fn render_tag_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    /// タグの整理パネル。カードの詳細パネルと同じく右に押し出して置く。
+    /// 扱うのはボード全体のタグなので、カード 1 枚の話である詳細パネルには混ぜない。
+    fn render_tag_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let editing_tag = self.editing_tag.as_ref();
         div()
+            .id("tag-panel")
+            .w(px(300.))
+            .flex_none()
+            .h_full()
             .flex()
-            // タグが増えても右の絞り込みを押しのけないよう折り返す。
-            .flex_wrap()
-            .items_center()
-            .gap_1()
+            .flex_col()
+            .bg(theme_color(cx, UiColor::Surface))
+            .border_l_1()
+            .border_color(theme_color(cx, UiColor::Border))
             .child(
-                div()
-                    .text_xs()
-                    .text_color(theme_color(cx, UiColor::MutedForeground))
-                    .child("タグ"),
-            )
-            .children(self.board.tags.iter().map(|tag| {
-                let tag_id = tag.id;
-                let selected = self.tag_filter == Some(tag_id);
                 div()
                     .flex()
                     .items_center()
-                    .gap_1()
+                    .justify_between()
+                    .gap_2()
+                    .p_3()
+                    .border_b_1()
+                    .border_color(theme_color(cx, UiColor::Border))
                     .child(
-                        Button::new(("filter-tag", tag_id as u64))
-                            .secondary()
-                            .label(format!("{}{}", if selected { "✓ " } else { "" }, tag.name))
-                            .on_click(
-                                cx.listener(move |this, _, _, cx| this.set_tag_filter(tag_id, cx)),
-                            ),
+                        div()
+                            .text_sm()
+                            .font_weight(gpui_kit::FontWeight::BOLD)
+                            .child("タグを整理"),
                     )
                     .child(
-                        Button::new(("edit-tag", tag_id as u64))
+                        Button::new("close-tag-panel")
                             .ghost()
-                            .label("編集")
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.begin_tag_edit(tag_id, window, cx)
-                            })),
-                    )
-                    .child(
-                        Button::new(("delete-tag", tag_id as u64))
+                            .label("✕")
+                            .on_click(cx.listener(|this, _, _, cx| this.close_tag_panel(cx))),
+                    ),
+            )
+            .child(
+                div()
+                    .id("tag-panel-body")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .p_3()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .when(self.board.tags.is_empty(), |this| {
+                        this.child(
+                            div()
+                                .text_xs()
+                                .text_color(theme_color(cx, UiColor::MutedForeground))
+                                .child("タグがありません"),
+                        )
+                    })
+                    .children(self.board.tags.iter().map(|tag| {
+                        let tag_id = tag.id;
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .gap_2()
+                            .child(
+                                // 縦並びの直下に置くとチップが幅いっぱいに伸びるので、
+                                // 横並びの行で包んで内容の幅に収める。
+                                div().flex().min_w_0().child(render_tag_chip(
+                                    tag,
+                                    theme_color(cx, UiColor::Foreground),
+                                    false,
+                                )),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_none()
+                                    .items_center()
+                                    .gap_1()
+                                    .child(
+                                        Button::new(("edit-tag", tag_id as u64))
+                                            .secondary()
+                                            .label("編集")
+                                            .on_click(cx.listener(move |this, _, window, cx| {
+                                                this.begin_tag_edit(tag_id, window, cx)
+                                            })),
+                                    )
+                                    .child(
+                                        Button::new(("delete-tag", tag_id as u64))
+                                            .secondary()
+                                            .label("削除")
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                this.delete_tag(tag_id, cx)
+                                            })),
+                                    ),
+                            )
+                    })),
+            )
+            .child(
+                div()
+                    .p_3()
+                    .border_t_1()
+                    .border_color(theme_color(cx, UiColor::Border))
+                    .child(if let Some(editor) = editing_tag {
+                        self.render_tag_editor(editor, cx).into_any_element()
+                    } else {
+                        Button::new("add-tag")
                             .secondary()
-                            .label("削除")
+                            .label("＋ タグ")
                             .on_click(
-                                cx.listener(move |this, _, _, cx| this.delete_tag(tag_id, cx)),
-                            ),
-                    )
-            }))
-            .child(if let Some(editor) = editing_tag {
-                self.render_tag_editor(editor, cx).into_any_element()
-            } else {
-                Button::new("add-tag")
-                    .secondary()
-                    .label("＋ タグ")
-                    .on_click(cx.listener(|this, _, window, cx| this.begin_add_tag(window, cx)))
-                    .into_any_element()
-            })
+                                cx.listener(|this, _, window, cx| this.begin_add_tag(window, cx)),
+                            )
+                            .into_any_element()
+                    }),
+            )
+    }
+
+    /// 絞り込み中のタグ。ヘッダからタグ一覧を外したので、これが「いま何で絞り込んで
+    /// いるか」の唯一の手がかりになる。絞り込んでいないときは何も出さない。
+    fn render_tag_filter_note(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let tag = self
+            .board
+            .tags
+            .iter()
+            .find(|tag| Some(tag.id) == self.tag_filter)?;
+        Some(
+            div()
+                .flex()
+                .items_center()
+                .gap_1()
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme_color(cx, UiColor::MutedForeground))
+                        .child("タグで絞り込み中"),
+                )
+                .child(render_tag_chip(
+                    tag,
+                    theme_color(cx, UiColor::Foreground),
+                    false,
+                ))
+                .child(
+                    Button::new("clear-tag-filter")
+                        .ghost()
+                        .label("クリア")
+                        .on_click(cx.listener(|this, _, _, cx| this.clear_tag_filter(cx))),
+                )
+                .into_any_element(),
+        )
     }
 
     fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -3229,7 +3356,7 @@ impl BoardView {
                             .child(format!("{status_icon} {status_text}")),
                     )
                     .child(self.render_search(cx))
-                    .child(self.render_tag_bar(cx)),
+                    .children(self.render_tag_filter_note(cx)),
             )
             .child(
                 div()
@@ -3464,12 +3591,13 @@ impl BoardView {
                             column_id,
                             index,
                             card,
-                            !card_matches_filter(card, self.due_filter, Local::now().date_naive())
-                                || (!self.search_query.is_empty()
-                                    && !card_matches_search(card, &self.search_query))
-                                || self
-                                    .tag_filter
-                                    .is_some_and(|tag_id| !card.tag_ids.contains(&tag_id)),
+                            card_is_dimmed(
+                                card,
+                                &self.search_query,
+                                self.due_filter,
+                                self.tag_filter,
+                                Local::now().date_naive(),
+                            ),
                             cx,
                         )
                     }))
@@ -3606,12 +3734,13 @@ impl BoardView {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let card_id = card.id;
-        let dimmed = (!self.search_query.is_empty()
-            && !card_matches_search(card, &self.search_query))
-            || !card_matches_filter(card, self.due_filter, today)
-            || self
-                .tag_filter
-                .is_some_and(|tag_id| !card.tag_ids.contains(&tag_id));
+        let dimmed = card_is_dimmed(
+            card,
+            &self.search_query,
+            self.due_filter,
+            self.tag_filter,
+            today,
+        );
         div()
             .w_full()
             .max_w(px(720.))
@@ -3652,7 +3781,11 @@ impl BoardView {
                                 .iter()
                                 .find(|tag| tag.id == *tag_id)
                                 .map(|tag| {
-                                    render_tag_chip(tag, theme_color(cx, UiColor::Foreground))
+                                    render_tag_chip(
+                                        tag,
+                                        theme_color(cx, UiColor::Foreground),
+                                        false,
+                                    )
                                 })
                         }),
                     ))
@@ -3845,12 +3978,27 @@ impl BoardView {
                     // 横並びの行で包んで内容の幅に収める。
                     .child(div().flex().flex_wrap().gap_1().children(
                         card.tag_ids.iter().filter_map(|tag_id| {
+                            let tag_id = *tag_id;
+                            let selected = self.tag_filter == Some(tag_id);
                             self.board
                                 .tags
                                 .iter()
-                                .find(|tag| tag.id == *tag_id)
+                                .find(|tag| tag.id == tag_id)
                                 .map(|tag| {
-                                    render_tag_chip(tag, theme_color(cx, UiColor::Foreground))
+                                    // 絞り込みはヘッダのタグ一覧をやめてここに寄せた。カードの
+                                    // クリックは詳細を開くので、チップの分だけ伝播を止める。
+                                    div()
+                                        .id(format!("card-tag-{card_id}-{tag_id}"))
+                                        .cursor_pointer()
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            cx.stop_propagation();
+                                            this.set_tag_filter(tag_id, cx);
+                                        }))
+                                        .child(render_tag_chip(
+                                            tag,
+                                            theme_color(cx, UiColor::Foreground),
+                                            selected,
+                                        ))
                                 })
                         }),
                     ))
@@ -4299,6 +4447,9 @@ impl Render for BoardView {
                 .as_ref()
                 .map(|editor| self.render_card_panel(editor, cx).into_any_element())
         };
+        let tag_panel = self
+            .tag_panel_open
+            .then(|| self.render_tag_panel(cx).into_any_element());
         div()
             // 記録中は "Board" の文脈から外し、cx.bind_keys で登録した割り当てが
             // 発火しないようにする。そうしないと Cmd+N がカード追加になって記録できない。
@@ -4323,6 +4474,7 @@ impl Render for BoardView {
                 cx.listener(|this, _: &AddColumn, window, cx| this.begin_add_column(window, cx)),
             )
             .on_action(cx.listener(|this, _: &AddTag, window, cx| this.begin_add_tag(window, cx)))
+            .on_action(cx.listener(|this, _: &ManageTags, _, cx| this.open_tag_panel(cx)))
             .on_action(cx.listener(|this, _: &CancelEdit, _, cx| this.cancel_active_edit(cx)))
             .on_action(
                 cx.listener(|this, _: &ClearSearch, window, cx| this.clear_search(window, cx)),
@@ -4445,6 +4597,7 @@ impl Render for BoardView {
                     }),
             )
             .children(card_panel)
+            .children(tag_panel)
     }
 }
 
@@ -4827,14 +4980,43 @@ fn render_checklist_progress(
     div().text_xs().text_color(text_color).child(progress)
 }
 
-fn render_tag_chip(tag: &Tag, text_color: gpui_kit::Hsla) -> impl IntoElement {
+/// タグのチップ。絞り込み中のタグには `✓` を付ける。色だけに意味を持たせない方針
+/// なので、選ばれていることは文言でも分かるようにする。
+fn render_tag_chip(tag: &Tag, text_color: gpui_kit::Hsla, selected: bool) -> impl IntoElement {
     div()
         .px_1()
         .rounded_sm()
         .bg(rgb(tag_color_value(&tag.color)))
         .text_xs()
         .text_color(text_color)
-        .child(tag.name.clone())
+        .child(if selected {
+            format!("✓ {}", tag.name)
+        } else {
+            tag.name.clone()
+        })
+}
+
+/// カードのタグチップを押したあとの絞り込み。同じタグをもう一度押したら解除する。
+fn next_tag_filter(current: Option<TagId>, tag_id: TagId) -> Option<TagId> {
+    if current == Some(tag_id) {
+        None
+    } else {
+        Some(tag_id)
+    }
+}
+
+/// 絞り込みから外れたカードを暗くするかどうか。カードは隠さず減光する方針なので、
+/// 判定をここに集約してボードとアーカイブ表示で同じにする。
+fn card_is_dimmed(
+    card: &Card,
+    search_query: &str,
+    due_filter: DueFilter,
+    tag_filter: Option<TagId>,
+    today: NaiveDate,
+) -> bool {
+    (!search_query.is_empty() && !card_matches_search(card, search_query))
+        || !card_matches_filter(card, due_filter, today)
+        || tag_filter.is_some_and(|tag_id| !card.tag_ids.contains(&tag_id))
 }
 
 fn tag_color_value(color: &str) -> u32 {
@@ -5032,15 +5214,52 @@ fn field_error_note(message: String, color: gpui_kit::Hsla) -> impl IntoElement 
 mod tests {
     use super::{
         board_error_detail, capture_destination, capture_target_is_in_board, capture_title,
-        column_name_for_card, db_error_detail, default_capture_target, field_error_for,
-        moves_selected_card, next_card_id, render_board_markdown, window_title, CaptureTarget,
-        CardDirection, EditorField,
+        card_is_dimmed, column_name_for_card, db_error_detail, default_capture_target,
+        field_error_for, moves_selected_card, next_card_id, next_tag_filter, render_board_markdown,
+        window_title, CaptureTarget, CardDirection, DueFilter, EditorField,
     };
     use crate::{
         db::DbError,
         model::{Board, BoardError},
     };
+    use chrono::NaiveDate;
     use gpui_kit::Modifiers;
+
+    #[test]
+    fn tapping_a_tag_selects_it_and_tapping_the_same_one_clears_it() {
+        assert_eq!(next_tag_filter(None, 3), Some(3));
+        assert_eq!(next_tag_filter(Some(7), 3), Some(3));
+        assert_eq!(next_tag_filter(Some(3), 3), None);
+    }
+
+    #[test]
+    fn tag_filter_dims_only_the_cards_without_that_tag() {
+        let mut board = Board::demo();
+        let tag_id = board.add_tag("重要", "#60a5fa").expect("tag name is new");
+        let tagged_id = board.columns[0].cards[0].id;
+        board
+            .set_card_tags(tagged_id, vec![tag_id])
+            .expect("demo card exists");
+        let today = NaiveDate::from_ymd_opt(2026, 9, 5).expect("valid date");
+        let tagged = &board.columns[0].cards[0];
+        let untagged = &board.columns[0].cards[1];
+
+        assert!(!card_is_dimmed(
+            tagged,
+            "",
+            DueFilter::None,
+            Some(tag_id),
+            today
+        ));
+        assert!(card_is_dimmed(
+            untagged,
+            "",
+            DueFilter::None,
+            Some(tag_id),
+            today
+        ));
+        assert!(!card_is_dimmed(untagged, "", DueFilter::None, None, today));
+    }
 
     #[test]
     fn arrow_navigation_moves_within_and_between_columns() {
