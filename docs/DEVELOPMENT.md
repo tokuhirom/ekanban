@@ -58,7 +58,7 @@ SQLite に 1 トランザクションで保存
 
 ## データモデル
 
-スキーマは v9 です。移行は起動時に自動で走ります（`src/db/mod.rs` の `migrate`）。
+スキーマは v10 です。移行は起動時に自動で走ります（`src/db/mod.rs` の `migrate`）。
 
 ```text
 schema_migrations

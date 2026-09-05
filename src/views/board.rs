@@ -32,9 +32,8 @@ use crate::{
     actions::{
         About, AddBoard, AddCard, AddColumn, AddTag, BackupDatabase, CancelEdit, ClearSearch,
         CloseWindow, DeleteBoard, ExportBoardJson, ExportBoardMarkdown, FocusSearch, ManageTags,
-        Redo, RenameBoard, RevealDatabase, SaveEdit, SetQuickCaptureShortcut, ShowAllCards,
-        ShowOverdueCards, ShowThisWeekCards, ToggleArchiveView, ToggleBoardList, ToggleFullscreen,
-        Undo, UseDarkTheme, UseLightTheme, UseSystemTheme,
+        Redo, RenameBoard, RevealDatabase, SaveEdit, SetQuickCaptureShortcut, ToggleArchiveView,
+        ToggleBoardList, ToggleFullscreen, Undo, UseDarkTheme, UseLightTheme, UseSystemTheme,
     },
     db::{save_board_snapshot, Database, DbError, FilterState, WindowBoundsState},
     hotkey::{QuickCapture, Shortcut},
@@ -239,13 +238,6 @@ struct ActiveSave {
     on_failure: SaveFailure,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum DueFilter {
-    None,
-    Overdue,
-    ThroughThisWeek,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ThemePreference {
     System,
@@ -324,7 +316,6 @@ pub struct BoardView {
     editing_tag: Option<TagEditor>,
     editing_board: Option<BoardEditor>,
     tag_panel_open: bool,
-    due_filter: DueFilter,
     tag_filter: Option<TagId>,
     show_archived: bool,
     selected_card: Option<CardId>,
@@ -376,11 +367,6 @@ impl BoardView {
         cx: &mut Context<Self>,
     ) -> Self {
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("タイトル・説明を検索"));
-        let due_filter = match filter_state.due_filter {
-            1 => DueFilter::Overdue,
-            2 => DueFilter::ThroughThisWeek,
-            _ => DueFilter::None,
-        };
         let search_query = filter_state.search;
         let search_query_for_input = search_query.clone();
         search.update(cx, |state, cx| {
@@ -443,7 +429,6 @@ impl BoardView {
             editing_tag: None,
             editing_board: None,
             tag_panel_open: false,
-            due_filter,
             tag_filter: filter_state.tag_id,
             show_archived: false,
             selected_card: None,
@@ -860,11 +845,6 @@ impl BoardView {
         let state = FilterState {
             search: self.search_query.clone(),
             tag_id: self.tag_filter,
-            due_filter: match self.due_filter {
-                DueFilter::None => 0,
-                DueFilter::Overdue => 1,
-                DueFilter::ThroughThisWeek => 2,
-            },
         };
         let path = self.database_path.clone();
         cx.background_spawn(async move {
@@ -977,7 +957,6 @@ impl BoardView {
         self.selected_card = None;
         self.context_menu_card = None;
         self.context_menu_column = None;
-        self.due_filter = DueFilter::None;
         self.tag_filter = None;
         self.show_archived = false;
         self.search
@@ -2556,17 +2535,6 @@ impl BoardView {
         cx.notify();
     }
 
-    fn set_due_filter(&mut self, filter: DueFilter, cx: &mut Context<Self>) {
-        self.due_filter = if self.due_filter == filter {
-            DueFilter::None
-        } else {
-            filter
-        };
-        self.persist_filter_state(cx);
-        self.set_info("表示フィルターを変更しました");
-        cx.notify();
-    }
-
     fn commit_search(&mut self, cx: &mut Context<Self>) {
         self.search_query = self.search.read(cx).value().to_string();
         if self.search_query.trim().is_empty() {
@@ -3361,46 +3329,10 @@ impl BoardView {
             .child(
                 div()
                     .flex()
-                    // 絞り込みのボタンは常に押せる必要がある。左側が広がっても縮めない。
+                    // アーカイブとカード追加は常に押せる必要がある。左側が広がっても縮めない。
                     .flex_none()
                     .items_center()
                     .gap_2()
-                    .child(
-                        Button::new("filter-none")
-                            .secondary()
-                            .label(if self.due_filter == DueFilter::None {
-                                "✓ すべて"
-                            } else {
-                                "すべて"
-                            })
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.set_due_filter(DueFilter::None, cx)
-                            })),
-                    )
-                    .child(
-                        Button::new("filter-overdue")
-                            .secondary()
-                            .label(if self.due_filter == DueFilter::Overdue {
-                                "✓ 期限切れ"
-                            } else {
-                                "期限切れ"
-                            })
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.set_due_filter(DueFilter::Overdue, cx)
-                            })),
-                    )
-                    .child(
-                        Button::new("filter-week")
-                            .secondary()
-                            .label(if self.due_filter == DueFilter::ThroughThisWeek {
-                                "✓ 今週まで"
-                            } else {
-                                "今週まで"
-                            })
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.set_due_filter(DueFilter::ThroughThisWeek, cx)
-                            })),
-                    )
                     .child(
                         Button::new("archive-view")
                             .secondary()
@@ -3591,13 +3523,7 @@ impl BoardView {
                             column_id,
                             index,
                             card,
-                            card_is_dimmed(
-                                card,
-                                &self.search_query,
-                                self.due_filter,
-                                self.tag_filter,
-                                Local::now().date_naive(),
-                            ),
+                            card_is_dimmed(card, &self.search_query, self.tag_filter),
                             cx,
                         )
                     }))
@@ -3734,13 +3660,7 @@ impl BoardView {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let card_id = card.id;
-        let dimmed = card_is_dimmed(
-            card,
-            &self.search_query,
-            self.due_filter,
-            self.tag_filter,
-            today,
-        );
+        let dimmed = card_is_dimmed(card, &self.search_query, self.tag_filter);
         div()
             .w_full()
             .max_w(px(720.))
@@ -4512,11 +4432,6 @@ impl Render for BoardView {
                 this.set_theme_preference(ThemePreference::System, window, cx)
             }))
             .on_action(
-                cx.listener(|this, _: &ShowAllCards, _, cx| {
-                    this.set_due_filter(DueFilter::None, cx)
-                }),
-            )
-            .on_action(
                 cx.listener(|this, _: &ToggleArchiveView, _, cx| this.toggle_archive_view(cx)),
             )
             .on_action(
@@ -4524,12 +4439,6 @@ impl Render for BoardView {
                     this.toggle_sidebar(window, cx)
                 }),
             )
-            .on_action(cx.listener(|this, _: &ShowOverdueCards, _, cx| {
-                this.set_due_filter(DueFilter::Overdue, cx)
-            }))
-            .on_action(cx.listener(|this, _: &ShowThisWeekCards, _, cx| {
-                this.set_due_filter(DueFilter::ThroughThisWeek, cx)
-            }))
             .on_action(cx.listener(|_, _: &ToggleFullscreen, window, _| {
                 window.toggle_fullscreen();
             }))
@@ -5007,15 +4916,8 @@ fn next_tag_filter(current: Option<TagId>, tag_id: TagId) -> Option<TagId> {
 
 /// 絞り込みから外れたカードを暗くするかどうか。カードは隠さず減光する方針なので、
 /// 判定をここに集約してボードとアーカイブ表示で同じにする。
-fn card_is_dimmed(
-    card: &Card,
-    search_query: &str,
-    due_filter: DueFilter,
-    tag_filter: Option<TagId>,
-    today: NaiveDate,
-) -> bool {
+fn card_is_dimmed(card: &Card, search_query: &str, tag_filter: Option<TagId>) -> bool {
     (!search_query.is_empty() && !card_matches_search(card, search_query))
-        || !card_matches_filter(card, due_filter, today)
         || tag_filter.is_some_and(|tag_id| !card.tag_ids.contains(&tag_id))
 }
 
@@ -5037,20 +4939,6 @@ fn display_date(date: NaiveDate, today: NaiveDate) -> String {
         short_date(date)
     } else {
         format!("{}/{:02}/{:02}", date.year(), date.month(), date.day())
-    }
-}
-
-fn card_matches_filter(card: &Card, filter: DueFilter, today: NaiveDate) -> bool {
-    match filter {
-        DueFilter::None => true,
-        DueFilter::Overdue => matches!(due_status(card.due_date, today), DueStatus::Overdue(_)),
-        DueFilter::ThroughThisWeek => {
-            let Some(due_date) = card.due_date else {
-                return false;
-            };
-            let days_until_sunday = 6 - i64::from(today.weekday().num_days_from_monday());
-            due_date <= today + Duration::days(days_until_sunday)
-        }
     }
 }
 
@@ -5216,7 +5104,7 @@ mod tests {
         board_error_detail, capture_destination, capture_target_is_in_board, capture_title,
         card_is_dimmed, column_name_for_card, db_error_detail, default_capture_target,
         field_error_for, moves_selected_card, next_card_id, next_tag_filter, render_board_markdown,
-        window_title, CaptureTarget, CardDirection, DueFilter, EditorField,
+        window_title, CaptureTarget, CardDirection, EditorField,
     };
     use crate::{
         db::DbError,
@@ -5240,25 +5128,26 @@ mod tests {
         board
             .set_card_tags(tagged_id, vec![tag_id])
             .expect("demo card exists");
-        let today = NaiveDate::from_ymd_opt(2026, 9, 5).expect("valid date");
         let tagged = &board.columns[0].cards[0];
         let untagged = &board.columns[0].cards[1];
 
-        assert!(!card_is_dimmed(
-            tagged,
-            "",
-            DueFilter::None,
-            Some(tag_id),
-            today
-        ));
-        assert!(card_is_dimmed(
-            untagged,
-            "",
-            DueFilter::None,
-            Some(tag_id),
-            today
-        ));
-        assert!(!card_is_dimmed(untagged, "", DueFilter::None, None, today));
+        assert!(!card_is_dimmed(tagged, "", Some(tag_id)));
+        assert!(card_is_dimmed(untagged, "", Some(tag_id)));
+        assert!(!card_is_dimmed(untagged, "", None));
+    }
+
+    #[test]
+    fn a_due_date_alone_never_dims_a_card() {
+        let mut board = Board::demo();
+        let card_id = board.columns[0].cards[0].id;
+        board
+            .set_card_due_date(
+                card_id,
+                Some(NaiveDate::from_ymd_opt(2000, 1, 1).expect("valid date")),
+            )
+            .expect("demo card exists");
+
+        assert!(!card_is_dimmed(&board.columns[0].cards[0], "", None));
     }
 
     #[test]
