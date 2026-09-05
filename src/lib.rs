@@ -1,4 +1,5 @@
 pub mod actions;
+pub mod backup;
 pub mod db;
 pub mod diagnostics;
 pub mod hotkey;
@@ -9,6 +10,7 @@ pub mod views;
 
 use std::path::PathBuf;
 
+use chrono::Local;
 use db::{Database, WindowBoundsState};
 use gpui_kit::component::{Root, Theme};
 use gpui_kit::{
@@ -125,6 +127,19 @@ pub fn run() {
             return;
         }
     };
+
+    // その日ぶんの控えを 1 つ残す。起動を遅らせないよう別のスレッドで取り、
+    // 失敗しても起動は止めない（`docs/DESIGN.md`）。取るのは起動時で、終了時では
+    // ない。終了時に取ると、壊した状態のほうを保存することになる。
+    let backup_source = path.clone();
+    std::thread::spawn(move || {
+        if let Err(error) = backup::run_daily(&backup_source, Local::now().date_naive()) {
+            diagnostics::log(&format!(
+                "failed to back up {}: {error}",
+                backup_source.display()
+            ));
+        }
+    });
 
     gpui_kit::application().run(move |cx: &mut App| {
         gpui_kit::init(cx);

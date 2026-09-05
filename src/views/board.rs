@@ -32,8 +32,9 @@ use crate::{
     actions::{
         About, AddBoard, AddCard, AddColumn, AddTag, BackupDatabase, CancelEdit, ClearSearch,
         CloseWindow, DeleteBoard, ExportBoardJson, ExportBoardMarkdown, FocusSearch, ManageTags,
-        Redo, RenameBoard, RevealDatabase, SaveEdit, SetQuickCaptureShortcut, ToggleArchiveView,
-        ToggleBoardList, ToggleFullscreen, Undo, UseDarkTheme, UseLightTheme, UseSystemTheme,
+        Redo, RenameBoard, RevealBackups, RevealDatabase, SaveEdit, SetQuickCaptureShortcut,
+        ToggleArchiveView, ToggleBoardList, ToggleFullscreen, Undo, UseDarkTheme, UseLightTheme,
+        UseSystemTheme,
     },
     db::{save_board_snapshot, Database, DbError, FilterState, WindowBoundsState},
     hotkey::{QuickCapture, Shortcut},
@@ -2861,6 +2862,22 @@ impl BoardView {
         cx.notify();
     }
 
+    /// 自動バックアップの置き場所を開く。
+    ///
+    /// 控えがあっても場所を知らなければ戻せないので、メニューから辿れるように
+    /// しておく。初回の起動では控えを取り終える前に押されることがあるので、
+    /// ディレクトリが無ければそう言う。
+    fn reveal_backups(&mut self, cx: &mut Context<Self>) {
+        let directory = crate::backup::directory(&self.database_path);
+        if directory.is_dir() {
+            cx.reveal_path(&directory);
+            self.set_info("バックアップの場所を開きました");
+        } else {
+            self.set_info("まだバックアップがありません");
+        }
+        cx.notify();
+    }
+
     fn show_about(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         window.open_alert_dialog(cx, |alert, _, _| {
             alert
@@ -4619,6 +4636,7 @@ impl Render for BoardView {
             }))
             .on_action(cx.listener(|this, _: &BackupDatabase, _, cx| this.backup_database(cx)))
             .on_action(cx.listener(|this, _: &RevealDatabase, _, cx| this.reveal_database(cx)))
+            .on_action(cx.listener(|this, _: &RevealBackups, _, cx| this.reveal_backups(cx)))
             .on_action(cx.listener(|this, _: &UseLightTheme, window, cx| {
                 this.set_theme_preference(ThemePreference::Light, window, cx)
             }))
