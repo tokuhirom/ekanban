@@ -1,5 +1,24 @@
 # Changelog
 
+## [v0.1.1](https://github.com/tokuhirom/ekanban/compare/v0.1.0...v0.1.1) - 2026-09-05
+
+### 変更
+- Save a card when Enter is pressed in its title field by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/44
+- Let a column scroll when it holds more cards than fit by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/46
+- Reach the menu bar's items without a menu bar by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/47
+- Correct the min-height rule to name the axis that matters by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/48
+- Keep a daily generation of the database by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/64
+- Let a closed window come back, and give it a Window menu by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/65
+- Build and test on macOS and Windows too by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/66
+- Let only one process open a database by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/67
+- Open a new database on an empty board by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/68
+- Draw a frame when the compositor will not by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/69
+- Offer the addresses written in a description by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/70
+- Make the addresses in a description read as links by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/72
+- Record the reasoning behind the design rules by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/74
+- Require an ADR for a significant decision by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/76
+- Clear the remaining open issues by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/77
+
 ## [v0.1.0](https://github.com/tokuhirom/ekanban/commits/v0.1.0) - 2026-09-05
 
 ### 変更
