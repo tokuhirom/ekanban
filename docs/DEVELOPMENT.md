@@ -233,6 +233,23 @@ CODESIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" make bundle
 
 ad-hoc 以外の ID を指定したときは hardened runtime（`--options runtime`）とタイムスタンプが自動で付き、公証をそのまま通せる状態になります。entitlements が必要になったら `script/entitlements.plist` を置けば署名時に読み込まれます。
 
+## アプリを動かして確かめるとき
+
+変更が画面でどう見えるかを確かめるときは、**仮想ディスプレイの上で動かします。**
+
+```sh
+Xvfb :99 -screen 0 1600x1200x24 &
+DISPLAY=:99 EKANBAN_DATABASE=$(mktemp -d)/board.sqlite3 ./target/debug/ekanban &
+DISPLAY=:99 import -window root shot.png
+```
+
+デスクトップで動いているものに紛れ込ませないためです。データベースも普段使いのものとは分けます。1 つのデータベースを開けるのは 1 プロセスだけ（[ADR 0004](adr/0004-one-process-per-database.md)）なので、同じものを指すと後から起動したほうが弾かれます。
+
+キーやクリックを送るときは、次の 2 つを守ってください。
+
+- **触るウィンドウを PID で照合する。** `xdotool search --name ekanban` は、すでに開いている別のインスタンスも一緒に拾います。`xdotool getwindowpid <id>` が自分で起動したプロセスと一致することを確かめてから送ります。確かめずに送って、別のインスタンスで編集中だったカードを取り消してしまったことがあります
+- **`import -window root` で撮る。** メニューやポップアップは `deferred` で別の層に描かれるので、`import -window <id>` では写りません。「メニューが開いていない」と見えて、実際には開いていたことがあります
+
 ## マニュアルのスクリーンショット
 
 [マニュアル](MANUAL.md) の画像は `docs/images/` に置き、`script/manual-screenshots` で撮り直します（`make screenshots` でも同じです）。
