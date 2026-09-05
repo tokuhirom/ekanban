@@ -48,7 +48,7 @@
 | OS | ファイル |
 | --- | --- |
 | macOS (Apple Silicon) | `ekanban-<版>-aarch64-apple-darwin.zip`（`Ekanban.app`） |
-| Linux (x86_64) | `ekanban-<版>-x86_64-unknown-linux-gnu.tar.gz` |
+| Linux (x86_64) | `ekanban-<版>-x86_64-unknown-linux-gnu.tar.gz`（実行ファイル、デスクトップエントリ、アイコン、`install-linux`） |
 | Windows (x86_64) | `ekanban-<版>-x86_64-pc-windows-msvc.zip` |
 
 `SHA256SUMS.txt` も一緒に置いてあります。
@@ -72,6 +72,16 @@ macOS では `.app` にすると、Dock のアイコンとアプリ名が正し�
 ```sh
 make open      # .app を作って起動する
 make install   # .app を /Applications に入れる
+```
+
+Linux では `make install-linux` で、アプリ一覧に「Ekanban」として登録できます。実行ファイル・デスクトップエントリ・アイコンを `~/.local` 以下に置くので、root は要りません。消すときは `make uninstall-linux` です。
+
+配布物の `.tar.gz` を展開した場合は、その中の `install-linux` を実行してください。
+
+```sh
+tar xzf ekanban-<版>-x86_64-unknown-linux-gnu.tar.gz
+cd ekanban-<版>-x86_64-unknown-linux-gnu
+./install-linux
 ```
 
 `cargo build` が作るのは実行ファイルだけで、`.app` にはなりません。`make help` でタスクの一覧が出ます。

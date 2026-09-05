@@ -200,10 +200,28 @@ fn adding_a_card_and_saving_it_writes_the_title_to_the_database(cx: &mut TestApp
 | `make bundle` | リリースビルドから `target/release/bundle/Ekanban.app` を作る |
 | `make open` | `.app` を作って起動する |
 | `make install` | `.app` を `/Applications` にコピーする |
+| `make install-linux` | Linux のアプリ一覧に登録する（`~/.local` 以下） |
+| `make uninstall-linux` | `install-linux` で入れたものを消す |
 
 `cargo build` が作るのは実行ファイルだけで、`.app` バンドルにはなりません。Dock のアイコンやアプリ名、Launchpad からの起動を正しく扱うには `make bundle` を使ってください。バンドル生成の実体は `script/bundle-mac` です。
 
 `make bundle` は `assets/icon.png` から `assets/icon.icns` を生成してアイコンに取り込みます。生成には macOS の `sips` と `iconutil` が必要です。
+
+### Linux のデスクトップ統合
+
+Linux でも、実行ファイルだけではアプリ一覧に出ず、タスクバーのアイコンと名前も汎用のものになります。デスクトップ環境がウィンドウをアプリに結びつけるのはデスクトップエントリなので、それを入れる必要があります。
+
+| ファイル | 置き場所 | 何のため |
+| --- | --- | --- |
+| `assets/dev.tokuhirom.ekanban.desktop` | `$XDG_DATA_HOME/applications` | アプリ一覧に出す。`StartupWMClass` がウィンドウとエントリを結びつける |
+| `assets/icons/hicolor/<大きさ>/apps/dev.tokuhirom.ekanban.png` | `$XDG_DATA_HOME/icons/hicolor/…` | アイコン。`assets/icon.png` から縮小したものを 7 種類置いてある |
+| 実行ファイル | `$XDG_BIN_HOME`（既定 `~/.local/bin`） | 本体 |
+
+入れるのは `script/install-linux`（`make install-linux`）です。root は要りません。`--uninstall` で消します。エントリの `Exec=` は、入れた実行ファイルの絶対パスに書き換えてから置きます。`~/.local/bin` が PATH に入っていない環境でも一覧から起動できるようにするためです。
+
+**`StartupWMClass` は `src/lib.rs` の `APP_ID`（`WindowOptions.app_id`）と必ず同じにしてください。** 食い違うと、起動したウィンドウがそのエントリに結びつかず、タスクバーのアイコンと名前が元に戻ります。
+
+アイコンは大きさごとに `assets/icons/` へコミットしてあります。ビルド時に縮小しないのは、Linux のランナーに画像処理のツールを増やさないためです。`assets/icon.png` を差し替えたときは、同じ 7 種類（16 / 32 / 48 / 64 / 128 / 256 / 512）を作り直してください。
 
 ### 署名
 
@@ -288,7 +306,7 @@ git push origin v0.1.0
 | プラットフォーム | ランナー | 成果物 |
 | --- | --- | --- |
 | macOS (Apple Silicon) | `macos-latest` | `ekanban-<版>-aarch64-apple-darwin.zip`（`Ekanban.app`） |
-| Linux (x86_64) | `ubuntu-24.04` | `ekanban-<版>-x86_64-unknown-linux-gnu.tar.gz`（実行ファイル + README + LICENSE） |
+| Linux (x86_64) | `ubuntu-24.04` | `ekanban-<版>-x86_64-unknown-linux-gnu.tar.gz`（実行ファイル + README + LICENSE + `dev.tokuhirom.ekanban.desktop` + `icons/` + `install-linux`） |
 | Windows (x86_64) | `windows-latest` | `ekanban-<版>-x86_64-pc-windows-msvc.zip`（`ekanban.exe` + README + LICENSE） |
 
 あわせて `SHA256SUMS.txt` を置きます。

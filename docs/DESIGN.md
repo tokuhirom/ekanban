@@ -23,6 +23,7 @@ README が使う人向けの入口、[マニュアル](MANUAL.md) が使い方�
 | クイックキャプチャ | グローバルホットキー（macOS / X11）、1 行入力のキャプチャウィンドウ、キャプチャ先のカラム設定 |
 | メニュー | ネイティブメニューバーと `Cmd` 系ショートカット（`src/menu.rs`）、メニューバーが無い環境向けのヘッダの `≡` メニュー |
 | macOS | `.app` バンドルと署名（`script/bundle-mac`、`Makefile`）、OS ごとのデータ・ログ配置（`src/paths.rs`）、起動失敗とパニックの記録（`src/diagnostics.rs`） |
+| Linux | デスクトップエントリとアイコン（`assets/`）、`~/.local` 以下に入れる `script/install-linux` |
 
 スキーマは v10（`boards` / `columns` / `cards` / `tags` / `card_tags` / `checklist_items` / `card_events` / `app_state` / `schema_migrations`）。
 
@@ -56,6 +57,7 @@ README が使う人向けの入口、[マニュアル](MANUAL.md) が使い方�
 - **Wayland ではウィンドウの位置を復元しない。** クライアントが自分の画面上の位置を知ることも指定することもできないため、アプリ側では直せない。大きさだけが戻る。直せないものを直せるように見せず、マニュアルにそう書く
 - **1 つのデータベースを開けるのは 1 プロセスだけ。** 起動時にデータベースの隣のロックファイル（`<データベース名>.lock`）を握り、握れなければ理由を出して終了する。保存は差分の UPSERT のあとに「自分の知らない行」を消すので、2 プロセスが同じファイルを持つと、あとから保存したほうがもう片方の追加を消す。しかも両方の画面が自分の状態を出し続けるため、消えたことに気づけない。印を PID ファイルではなくファイルロックにするのは、異常終了しても OS がロックを落とすため（[ADR 0004](adr/0004-one-process-per-database.md)）
 - **ロックはデータベースのパス単位。** `EKANBAN_DATABASE` を使い分けて並べて動かす使い方を潰さない
+- **Linux のデスクトップ統合はユーザーのディレクトリで完結させる。** デスクトップエントリ・アイコン・実行ファイルを `~/.local`（XDG のユーザーディレクトリ）に入れる `script/install-linux` を持ち、root を要求しない。エントリの `StartupWMClass` は `APP_ID`（`WindowOptions.app_id`）と必ず同じにする。食い違うとウィンドウがエントリに結びつかない。アイコンは縮小済みのものを `assets/icons/` にコミットし、ビルド時には作らない（[ADR 0013](adr/0013-linux-desktop-integration.md)）
 - **矩形を保存するのはボードのウィンドウだけ。** キャプチャウィンドウは毎回画面中央に出す
 - **ウィンドウを前に出すのに `App::activate` を当てにしない。** `App::activate` も `App::hide` も macOS の実装で、Linux では呼んでも何もしない。前に出したいのがウィンドウなら `Window::activate_window` を使う（X11 は `_NET_ACTIVE_WINDOW` を投げる）。アプリ全体を隠す・直前のアプリへフォーカスを返すのは Linux では実現できないので、そこは「ekanban 側では決めない」とマニュアルに OS 別で書く（[ADR 0012](adr/0012-focus-after-quick-capture-on-linux.md)）
 - **macOS ではウィンドウを閉じてもプロセスが残るので、Dock から開き直せるようにする。** gpui の `QuitMode::Default` が macOS でだけ「最後のウィンドウで quit しない」を選ぶ。`Application::on_reopen` に受け口が無いと、`Cmd+W` のあとは `Cmd+Q` で終了して起動し直すしか道が無くなる

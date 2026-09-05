@@ -152,6 +152,8 @@ jobs:
             "target/release/bundle/Ekanban.app" \
             "dist/$ASSET.zip"
 
+      # 実行ファイルだけを配ると、アプリ一覧にもタスクバーにも出てこない。
+      # デスクトップエントリとアイコン、それを入れるスクリプトも同梱する。
       - name: Package the binary
         if: runner.os == 'Linux'
         env:
@@ -161,6 +163,9 @@ jobs:
           mkdir -p "dist/$ASSET"
           cp target/release/ekanban "dist/$ASSET/"
           cp README.md LICENSE "dist/$ASSET/"
+          cp assets/dev.tokuhirom.ekanban.desktop "dist/$ASSET/"
+          cp script/install-linux "dist/$ASSET/"
+          cp -R assets/icons "dist/$ASSET/"
           tar -C dist -czf "dist/$ASSET.tar.gz" "$ASSET"
           rm -rf "dist/$ASSET"
 

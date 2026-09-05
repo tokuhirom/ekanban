@@ -361,6 +361,27 @@ mod tests {
 
     use tempfile::tempdir;
 
+    /// Linux のデスクトップエントリと `APP_ID` の対応（#50）。
+    ///
+    /// `StartupWMClass` はデスクトップ環境が「このウィンドウはこのエントリのもの」
+    /// と判断するための印で、`WindowOptions.app_id` と同じでなければ結びつかない。
+    /// 食い違うと、アプリ一覧からは起動できるのにタスクバーのアイコンと名前が
+    /// 汎用のものに戻る。ファイル名も `<APP_ID>.desktop` である必要があり、
+    /// こちらは `include_str!` のパスがコンパイル時に見ている。
+    #[test]
+    fn the_linux_desktop_entry_points_at_the_app_id() {
+        let entry = include_str!("../assets/dev.tokuhirom.ekanban.desktop");
+        assert!(
+            entry.contains(&format!("\nStartupWMClass={APP_ID}\n")),
+            "StartupWMClass must match WindowOptions.app_id"
+        );
+        assert!(
+            entry.contains(&format!("\nIcon={APP_ID}\n")),
+            "the icon name must match the files under assets/icons"
+        );
+        assert!(entry.contains(&format!("\nName={APP_NAME}\n")));
+    }
+
     /// ウィンドウを開き直すたびに通る経路。閉じている間に変わった内容が出る
     /// ことと、`app_state` に残した表示の状態が戻ることを見る。
     #[test]
