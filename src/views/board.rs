@@ -19,7 +19,7 @@ use gpui_kit::{
         button::{Button, ButtonVariant, ButtonVariants as _},
         ActiveTheme, Root, Theme, ThemeMode,
     },
-    div, point,
+    deferred, div, point,
     prelude::*,
     px, rgb, size, AnyElement, App, Bounds, Context, DragMoveEvent, Entity, FocusHandle,
     Focusable as _, Half, IntoElement, KeyDownEvent, Keystroke, Modifiers, MouseButton,
@@ -340,6 +340,9 @@ pub struct BoardView {
     context_menu_card: Option<CardId>,
     context_menu_column: Option<ColumnId>,
     card_panel_menu_open: bool,
+    /// ヘッダの `≡` から出すメニューが開いているか。ネイティブのメニューバーが
+    /// 無い環境でしか出さない（`crate::menu::shows_in_app_menu`）。
+    app_menu_open: bool,
     board_scroll_handle: ScrollHandle,
     column_scroll_handles: HashMap<ColumnId, ScrollHandle>,
     window_bounds: WindowBoundsState,
@@ -454,6 +457,7 @@ impl BoardView {
             context_menu_card: None,
             context_menu_column: None,
             card_panel_menu_open: false,
+            app_menu_open: false,
             board_scroll_handle: ScrollHandle::new(),
             column_scroll_handles: HashMap::new(),
             window_bounds,
@@ -978,6 +982,7 @@ impl BoardView {
         self.selected_card = None;
         self.context_menu_card = None;
         self.context_menu_column = None;
+        self.app_menu_open = false;
         self.tag_filter = None;
         self.show_archived = false;
         self.search
@@ -1133,6 +1138,14 @@ impl BoardView {
         cx: &mut Context<Self>,
     ) {
         if self.reject_while_saving(cx) {
+            return;
+        }
+        // 最後の 1 枚は SQLite 側でも弾かれる（`DbError::LastBoard`）が、確認
+        // ダイアログに「削除」と答えさせてから断るのは順番が逆なので、ここで
+        // 先に断る。
+        if self.boards.len() <= 1 {
+            self.set_info("最後のボードは削除できません");
+            cx.notify();
             return;
         }
         let Some(summary) = self.boards.iter().find(|summary| summary.id == board_id) else {
@@ -1373,6 +1386,24 @@ impl BoardView {
         self.card_panel_menu_open = !self.card_panel_menu_open;
         self.context_menu_card = None;
         self.context_menu_column = None;
+        self.app_menu_open = false;
+        cx.notify();
+    }
+
+    /// ヘッダの `≡`。ネイティブのメニューバーが無い環境で、メニューバーと同じ
+    /// 項目を出す。
+    ///
+    /// 項目を押すとアクションが飛ぶので、飛び先になるボードへフォーカスを戻して
+    /// おく。入力欄にフォーカスが残ったままだと、そちらがキーとアクションを
+    /// 持っていってしまう。
+    fn toggle_app_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.context_menu_card = None;
+        self.context_menu_column = None;
+        self.card_panel_menu_open = false;
+        self.app_menu_open = !self.app_menu_open;
+        if self.app_menu_open {
+            self.focus_handle.focus(window, cx);
+        }
         cx.notify();
     }
 
@@ -1523,6 +1554,16 @@ impl BoardView {
         if self.capturing_shortcut.is_some() {
             cx.stop_propagation();
             self.capture_shortcut(&event.keystroke, cx);
+            return;
+        }
+
+        // `≡` のメニューは、アーカイブ表示でも編集中でも Escape で閉じられる
+        // ようにする。開いている間はボードにフォーカスがあるので、入力欄から
+        // キーを奪うことにはならない。
+        if self.app_menu_open && event.keystroke.key.as_str() == "escape" {
+            cx.stop_propagation();
+            self.app_menu_open = false;
+            cx.notify();
             return;
         }
 
@@ -2009,6 +2050,7 @@ impl BoardView {
         cx.stop_propagation();
         self.selected_card = Some(card_id);
         self.context_menu_column = None;
+        self.app_menu_open = false;
         self.focus_handle.focus(window, cx);
         self.context_menu_card = Some(card_id);
         cx.notify();
@@ -2016,6 +2058,7 @@ impl BoardView {
 
     fn toggle_column_context_menu(&mut self, column_id: ColumnId, cx: &mut Context<Self>) {
         self.context_menu_card = None;
+        self.app_menu_open = false;
         self.context_menu_column = if self.context_menu_column == Some(column_id) {
             None
         } else {
@@ -2997,34 +3040,11 @@ impl BoardView {
                         )
                     }),
             )
-            .child(if let Some(editor) = editing_board {
-                self.render_board_editor(editor, cx).into_any_element()
-            } else {
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .child(
-                        Button::new("rename-board")
-                            .secondary()
-                            .label("名前を変更")
-                            .on_click(
-                                cx.listener(|this, _, window, cx| {
-                                    this.begin_board_edit(window, cx)
-                                }),
-                            ),
-                    )
-                    .child(
-                        Button::new("delete-board")
-                            .secondary()
-                            .disabled(self.boards.len() <= 1)
-                            .label("ボードを削除")
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.request_delete_board(this.board.id, window, cx)
-                            })),
-                    )
-                    .into_any_element()
-            })
+            // 名前の変更と削除は常用しないので、一覧の下に並べずメニューへ畳んだ
+            // （`docs/DESIGN.md`「常用しない操作を画面に常時出さない」）。
+            .children(
+                editing_board.map(|editor| self.render_board_editor(editor, cx).into_any_element()),
+            )
             .into_any_element()
     }
 
@@ -3350,6 +3370,7 @@ impl BoardView {
         };
         div()
             .w_full()
+            .relative()
             .flex()
             .items_center()
             .justify_between()
@@ -3411,8 +3432,87 @@ impl BoardView {
                             .label("＋ カードを追加")
                             .on_click(cx.listener(|this, _, window, cx| this.add_card(window, cx)))
                             .into_any_element()
+                    })
+                    // ネイティブのメニューバーがある macOS では出さない。二重に
+                    // なるだけで、たどれる操作は増えない。
+                    .when(crate::menu::shows_in_app_menu(), |this| {
+                        // メニューはボタンの真下に出す。ヘッダの高さは検索欄や
+                        // 絞り込みの表示で変わるので、ヘッダではなくボタンを
+                        // 基準にする。
+                        this.child(
+                            div()
+                                .relative()
+                                .child(Button::new("app-menu").ghost().label("≡").on_click(
+                                    cx.listener(|this, _, window, cx| {
+                                        this.toggle_app_menu(window, cx)
+                                    }),
+                                ))
+                                .when(self.app_menu_open, |this| {
+                                    this.child(self.render_app_menu(cx))
+                                }),
+                        )
                     }),
             )
+    }
+
+    /// ネイティブのメニューバーが無い環境で、ヘッダの `≡` から出すメニュー。
+    ///
+    /// 項目は `crate::menu::app_menu` が持ち、押すとメニューバーと同じアクションを
+    /// 投げる。操作の実体はここには置かない。ヘッダはボードの中身より先に描かれる
+    /// ので、`deferred` で最後に描いてカラムの上に載せる。位置は `≡` のボタンを
+    /// 基準にする（ヘッダの高さは絞り込みの表示で変わる）。
+    fn render_app_menu(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let mut menu = div()
+            .id("app-menu-popup")
+            .absolute()
+            .top(px(34.))
+            .right(px(0.))
+            .w(px(280.))
+            // 項目が 20 件ほどあるので、狭いウィンドウでははみ出す。畳まずに
+            // 縦スクロールさせる。
+            .max_h(px(420.))
+            .flex()
+            .flex_col()
+            .gap_1()
+            .p_2()
+            .rounded_md()
+            .border_1()
+            .border_color(theme_color(cx, UiColor::Border))
+            .bg(theme_color(cx, UiColor::Popover))
+            .shadow_lg()
+            .overflow_y_scrollbar()
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
+
+        let mut index = 0_u64;
+        for section in crate::menu::app_menu() {
+            menu = menu.child(
+                div()
+                    .px_2()
+                    .pt_1()
+                    .text_xs()
+                    .text_color(theme_color(cx, UiColor::MutedForeground))
+                    .child(section.title),
+            );
+            for entry in section.entries {
+                let action = entry.action;
+                let button = Button::new(("app-menu-entry", index))
+                    .disabled(entry.disabled)
+                    .label(entry.label)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.app_menu_open = false;
+                        cx.notify();
+                        window.dispatch_action(action.boxed_clone(), cx);
+                    }));
+                menu = menu.child(if entry.danger {
+                    button.danger()
+                } else {
+                    button.ghost()
+                });
+                index += 1;
+            }
+        }
+
+        deferred(menu)
     }
 
     fn render_column(
