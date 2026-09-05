@@ -31,6 +31,7 @@ src/
       view_tests.rs  ウィンドウを開いて確かめるテスト
     capture.rs    クイックキャプチャの 1 行ウィンドウ
     window_chrome.rs  装飾を寄越さない環境で出す自前のタイトルバー
+    description_links.rs  説明欄の中で URL をリンクとして見せ、開けるようにする
 ```
 
 - **UI から SQL を直接実行しません。** SQL は `src/db/` に閉じます

@@ -1569,6 +1569,7 @@ dependencies = [
  "chrono",
  "global-hotkey",
  "gpui-kit",
+ "lsp-types",
  "rusqlite",
  "serde_json",
  "tempfile",
