@@ -6,7 +6,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use chrono::{Datelike, Duration, Local, NaiveDate, Weekday};
+use chrono::{Datelike, Duration, Local, NaiveDate, TimeZone as _, Weekday};
 use global_hotkey::{GlobalHotKeyEvent, HotKeyState};
 use gpui_kit::{
     component::dialog::DialogButtonProps,
@@ -3818,6 +3818,56 @@ impl BoardView {
 
     fn render_archived(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let today = Local::now().date_naive();
+        let total = self.board.archived_cards.len();
+        let filtering = !self.search_query.is_empty() || self.tag_filter.is_some();
+        let groups = archived_groups(
+            &self.board.archived_cards,
+            &self.search_query,
+            self.tag_filter,
+        );
+        let shown = groups.iter().map(|(_, cards)| cards.len()).sum::<usize>();
+
+        // アーカイブは日ごとの見出しとカードを交互に並べる。1 つの `map` の中で
+        // 入れ子にすると `cx` を二重に借りることになるので、先に組んでから渡す。
+        let mut rows: Vec<AnyElement> = Vec::new();
+        for (day, cards) in groups {
+            rows.push(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .pt_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(gpui_kit::FontWeight::BOLD)
+                            .text_color(theme_color(cx, UiColor::Foreground))
+                            .child(archived_day_label(day)),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme_color(cx, UiColor::MutedForeground))
+                            .child(format!("{} 件", cards.len())),
+                    )
+                    .into_any_element(),
+            );
+            for card in cards {
+                rows.push(
+                    self.render_archived_card(card, today, cx)
+                        .into_any_element(),
+                );
+            }
+        }
+
+        let empty_note = if total == 0 {
+            Some("アーカイブ済みのカードはありません".to_string())
+        } else if shown == 0 {
+            Some("絞り込みに一致するカードはありません".to_string())
+        } else {
+            None
+        };
+
         div()
             .id("archived-content")
             .flex_1()
@@ -3828,24 +3878,36 @@ impl BoardView {
             .overflow_y_scroll()
             .child(
                 div()
-                    .text_lg()
-                    .font_weight(gpui_kit::FontWeight::BOLD)
-                    .child("アーカイブ済みカード"),
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_lg()
+                            .font_weight(gpui_kit::FontWeight::BOLD)
+                            .child("アーカイブ済みカード"),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme_color(cx, UiColor::MutedForeground))
+                            // 絞り込み中は「何件のうち何件か」を出す。ここは
+                            // 減光ではなく非表示なので、出さないと消えた分に
+                            // 気づけない。
+                            .child(if filtering {
+                                format!("{shown} / {total} 件")
+                            } else {
+                                format!("{total} 件")
+                            }),
+                    ),
             )
-            .when(self.board.archived_cards.is_empty(), |this| {
-                this.child(
-                    div()
-                        .text_sm()
-                        .text_color(theme_color(cx, UiColor::MutedForeground))
-                        .child("アーカイブ済みのカードはありません"),
-                )
-            })
-            .children(
-                self.board
-                    .archived_cards
-                    .iter()
-                    .map(|card| self.render_archived_card(card, today, cx)),
-            )
+            .children(empty_note.map(|note| {
+                div()
+                    .text_sm()
+                    .text_color(theme_color(cx, UiColor::MutedForeground))
+                    .child(note)
+            }))
+            .children(rows)
     }
 
     fn render_archived_card(
@@ -3855,7 +3917,8 @@ impl BoardView {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let card_id = card.id;
-        let dimmed = card_is_dimmed(card, &self.search_query, self.tag_filter);
+        // ボードと違い、絞り込みから外れたカードはそもそも渡ってこない
+        // （`archived_groups` が落とす）ので、ここに減光は要らない。
         div()
             .w_full()
             .max_w(px(720.))
@@ -3868,7 +3931,6 @@ impl BoardView {
             .bg(theme_color(cx, UiColor::Surface))
             .border_1()
             .border_color(theme_color(cx, UiColor::Border))
-            .when(dimmed, |this| this.opacity(0.35))
             .child(
                 div()
                     .flex_1()
@@ -5188,6 +5250,55 @@ fn card_is_dimmed(card: &Card, search_query: &str, tag_filter: Option<TagId>) ->
         || tag_filter.is_some_and(|tag_id| !card.tag_ids.contains(&tag_id))
 }
 
+/// アーカイブ表示に出すカードを、アーカイブした日ごとにまとめる。新しい日が先。
+///
+/// ボードでは絞り込みでカードを隠さず減光するが、アーカイブ表示では隠す。
+/// アーカイブは溜まる場所なので、100 枚が薄く並んでいても探せない。ここには
+/// D&D が無いため、隠すことで挿入位置が曖昧になる問題も起きない
+/// （`docs/DESIGN.md`）。
+///
+/// 並びは `archived_at` の新しい順。読み込み時の SQL は同じ順で返すが、その
+/// セッションでアーカイブしたカードは末尾に積まれるので、ここでそろえる。
+fn archived_groups<'a>(
+    cards: &'a [Card],
+    search_query: &str,
+    tag_filter: Option<TagId>,
+) -> Vec<(Option<NaiveDate>, Vec<&'a Card>)> {
+    let mut matched = cards
+        .iter()
+        .filter(|card| !card_is_dimmed(card, search_query, tag_filter))
+        .collect::<Vec<_>>();
+    matched.sort_by_key(|card| (std::cmp::Reverse(card.archived_at), card.id));
+
+    let mut groups: Vec<(Option<NaiveDate>, Vec<&Card>)> = Vec::new();
+    for card in matched {
+        let day = archived_on(card);
+        match groups.last_mut() {
+            Some((last_day, cards)) if *last_day == day => cards.push(card),
+            _ => groups.push((day, vec![card])),
+        }
+    }
+    groups
+}
+
+/// アーカイブした日。`archived_at` はミリ秒の UNIX 時刻なので、手元の時間帯の
+/// 日付に直してから見出しに使う。
+fn archived_on(card: &Card) -> Option<NaiveDate> {
+    Local
+        .timestamp_millis_opt(card.archived_at?)
+        .single()
+        .map(|at| at.date_naive())
+}
+
+fn archived_day_label(day: Option<NaiveDate>) -> String {
+    match day {
+        Some(day) => format!("{}/{:02}/{:02}", day.year(), day.month(), day.day()),
+        // `archived_cards` に入っているのに `archived_at` が無い行は、本来
+        // 作られない。出す場所が無くて消えるより、見出しを付けて出す。
+        None => "日付なし".to_string(),
+    }
+}
+
 fn tag_color_value(color: &str) -> u32 {
     let value = color.trim().trim_start_matches('#');
     if value.len() == 6 {
@@ -5371,17 +5482,100 @@ mod view_tests;
 #[cfg(test)]
 mod tests {
     use super::{
-        board_error_detail, capture_destination, capture_target_is_in_board, capture_title,
-        card_is_dimmed, column_name_for_card, db_error_detail, default_capture_target,
-        field_error_for, moves_selected_card, next_card_id, next_tag_filter, render_board_markdown,
-        window_title, CaptureTarget, CardDirection, EditorField,
+        archived_day_label, archived_groups, board_error_detail, capture_destination,
+        capture_target_is_in_board, capture_title, card_is_dimmed, column_name_for_card,
+        db_error_detail, default_capture_target, field_error_for, moves_selected_card,
+        next_card_id, next_tag_filter, render_board_markdown, window_title, CaptureTarget,
+        CardDirection, EditorField,
     };
     use crate::{
         db::DbError,
-        model::{Board, BoardError},
+        model::{Board, BoardError, Card},
     };
-    use chrono::NaiveDate;
+    use chrono::{Local, NaiveDate, TimeZone as _};
     use gpui_kit::Modifiers;
+
+    /// アーカイブ表示のテスト用に、決まった日にアーカイブされたカードを作る。
+    fn archived_on_day(id: i64, title: &str, year: i32, month: u32, day: u32) -> Card {
+        let at = Local
+            .with_ymd_and_hms(year, month, day, 12, 0, 0)
+            .single()
+            .expect("a valid local time");
+        Card {
+            id,
+            column_id: 1,
+            title: title.to_string(),
+            description: String::new(),
+            position: 0,
+            created_at: at.timestamp_millis(),
+            updated_at: at.timestamp_millis(),
+            due_date: None,
+            tag_ids: Vec::new(),
+            checklist_items: Vec::new(),
+            archived_at: Some(at.timestamp_millis()),
+        }
+    }
+
+    /// 受け入れ条件「アーカイブ表示で検索して、目的のカードに辿り着ける」（#58）。
+    ///
+    /// ボードでは絞り込みから外れたカードを減光するが、アーカイブ表示では落とす。
+    #[test]
+    fn searching_the_archive_drops_the_cards_that_do_not_match() {
+        let cards = vec![
+            archived_on_day(1, "請求書を出す", 2026, 9, 5),
+            archived_on_day(2, "議事録を書く", 2026, 9, 5),
+            archived_on_day(3, "請求書をしまう", 2026, 9, 3),
+        ];
+
+        let groups = archived_groups(&cards, "請求書", None);
+        let titles = groups
+            .iter()
+            .flat_map(|(_, cards)| cards.iter().map(|card| card.title.as_str()))
+            .collect::<Vec<_>>();
+        assert_eq!(titles, vec!["請求書を出す", "請求書をしまう"]);
+        assert_eq!(groups.len(), 2, "the two days keep their own heading");
+    }
+
+    #[test]
+    fn groups_the_archive_by_the_day_it_was_archived_newest_first() {
+        // 読み込み直後は新しい順だが、そのセッションでアーカイブしたカードは
+        // 末尾に積まれる。並べ直さないと見出しが日ごとに割れる。
+        let cards = vec![
+            archived_on_day(1, "古い", 2026, 9, 3),
+            archived_on_day(2, "新しい", 2026, 9, 5),
+            archived_on_day(3, "同じ日のもう 1 枚", 2026, 9, 3),
+        ];
+
+        let groups = archived_groups(&cards, "", None);
+        assert_eq!(groups.len(), 2);
+        assert_eq!(
+            archived_day_label(groups[0].0),
+            "2026/09/05",
+            "the newest day comes first"
+        );
+        assert_eq!(groups[0].1.len(), 1);
+        assert_eq!(archived_day_label(groups[1].0), "2026/09/03");
+        assert_eq!(
+            groups[1].1.len(),
+            2,
+            "cards archived on the same day share one heading"
+        );
+    }
+
+    #[test]
+    fn finds_an_archived_card_by_its_number() {
+        let cards = vec![
+            archived_on_day(11, "請求書を出す", 2026, 9, 5),
+            archived_on_day(12, "議事録を書く", 2026, 9, 5),
+        ];
+
+        let groups = archived_groups(&cards, "#12", None);
+        let titles = groups
+            .iter()
+            .flat_map(|(_, cards)| cards.iter().map(|card| card.title.as_str()))
+            .collect::<Vec<_>>();
+        assert_eq!(titles, vec!["議事録を書く"]);
+    }
 
     #[test]
     fn tapping_a_tag_selects_it_and_tapping_the_same_one_clears_it() {

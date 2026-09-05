@@ -83,6 +83,23 @@ impl Harness {
         })
     }
 
+    /// アーカイブ表示に並ぶカードの題名。日ごとの見出しごとに分かれる。
+    ///
+    /// アーカイブ表示は絞り込みから外れたカードを減光ではなく非表示にするので、
+    /// ここは「暗いか」ではなく「並んでいるか」を見る。
+    fn archived_titles(&self, cx: &mut VisualTestContext) -> Vec<String> {
+        self.view.read_with(cx, |view, _| {
+            super::archived_groups(
+                &view.board.archived_cards,
+                &view.search_query,
+                view.tag_filter,
+            )
+            .into_iter()
+            .flat_map(|(_, cards)| cards.into_iter().map(|card| card.title.clone()))
+            .collect()
+        })
+    }
+
     fn status_text(&self, cx: &mut VisualTestContext) -> Option<String> {
         self.view
             .read_with(cx, |view, _| view.status.as_ref().map(|s| s.text.clone()))
@@ -419,6 +436,49 @@ fn undo_takes_back_a_saved_card(cx: &mut TestAppContext) {
             .iter()
             .any(|column| column.cards.iter().any(|card| card.title == "あとで消す")),
         "undo reaches the database, not only the screen"
+    );
+}
+
+#[gpui_kit::test]
+fn searching_while_the_archive_is_shown_narrows_the_archive(cx: &mut TestAppContext) {
+    let (harness, cx) = open_seeded_board(cx, |database, board| {
+        let column_id = board.columns[0].id;
+        let kept = board
+            .add_card(column_id, "請求書を出す", "")
+            .expect("the column exists");
+        let dropped = board
+            .add_card(column_id, "議事録を書く", "")
+            .expect("the column exists");
+        board.archive_card(kept).expect("the card can be archived");
+        board
+            .archive_card(dropped)
+            .expect("the card can be archived");
+        database.save_board(board).expect("the board is stored");
+    });
+    focus_board(&harness, cx);
+
+    cx.dispatch_action(ToggleArchiveView);
+    cx.run_until_parked();
+    assert_eq!(
+        harness.archived_titles(cx),
+        vec!["請求書を出す".to_string(), "議事録を書く".to_string()],
+        "both archived cards are listed before filtering"
+    );
+
+    cx.dispatch_action(FocusSearch);
+    cx.run_until_parked();
+    cx.simulate_input("請求書");
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+
+    assert!(
+        harness.view.read_with(cx, |view, _| view.show_archived),
+        "searching does not leave the archive view"
+    );
+    assert_eq!(
+        harness.archived_titles(cx),
+        vec!["請求書を出す".to_string()],
+        "the archive lists only what the search matched"
     );
 }
 
