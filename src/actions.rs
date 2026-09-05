@@ -27,6 +27,7 @@ gpui_kit::actions!([
     DeleteBoard,
     ExportBoardJson,
     ExportBoardMarkdown,
+    RevealBackups,
     RevealDatabase,
     SetQuickCaptureShortcut,
 ]);

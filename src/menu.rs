@@ -5,8 +5,8 @@ use crate::hotkey::platform_support;
 use crate::actions::{
     About, AddBoard, AddCard, AddColumn, AddTag, BackupDatabase, CancelEdit, ClearSearch,
     CloseWindow, DeleteBoard, ExportBoardJson, ExportBoardMarkdown, FocusSearch, HideApplication,
-    HideOtherApplications, ManageTags, Quit, Redo, RenameBoard, RevealDatabase, SaveEdit,
-    SetQuickCaptureShortcut, ShowAllApplications, ToggleArchiveView, ToggleBoardList,
+    HideOtherApplications, ManageTags, Quit, Redo, RenameBoard, RevealBackups, RevealDatabase,
+    SaveEdit, SetQuickCaptureShortcut, ShowAllApplications, ToggleArchiveView, ToggleBoardList,
     ToggleFullscreen, Undo, UseDarkTheme, UseLightTheme, UseSystemTheme,
 };
 
@@ -101,6 +101,7 @@ pub fn menus() -> Vec<Menu> {
         Menu::new("ヘルプ").items([
             MenuItem::action("データベースをコピー…", BackupDatabase),
             MenuItem::action("データベースの場所をFinderで開く", RevealDatabase),
+            MenuItem::action("バックアップの場所をFinderで開く", RevealBackups),
             MenuItem::separator(),
             MenuItem::action("ekanbanについて", About),
         ]),
@@ -206,6 +207,7 @@ pub fn app_menu() -> Vec<AppMenuSection> {
                 AppMenuEntry::new("ボードを書き出す（Markdown）", ExportBoardMarkdown),
                 AppMenuEntry::new("データベースをコピー…", BackupDatabase),
                 AppMenuEntry::new("データベースの場所を開く", RevealDatabase),
+                AppMenuEntry::new("バックアップの場所を開く", RevealBackups),
             ],
         },
         AppMenuSection {

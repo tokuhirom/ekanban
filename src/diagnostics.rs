@@ -22,6 +22,14 @@ fn stderr_is_invisible() -> bool {
     !std::io::stderr().is_terminal()
 }
 
+/// 致命的ではない出来事をログに残す。
+///
+/// 画面には出さない。起動のたびに必ず起こることを通知に出すと、通知そのものが
+/// 読まれなくなるため。
+pub fn log(message: &str) {
+    append_to_log(message);
+}
+
 /// 致命的なエラーを stderr、ログファイル、(GUI 起動なら) ダイアログに出す。
 pub fn report_fatal(message: &str) {
     eprintln!("{message}");
