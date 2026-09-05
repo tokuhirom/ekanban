@@ -5,7 +5,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::json;
 use thiserror::Error;
 
-use crate::model::{Board, BoardId, BoardSummary, Card, ChecklistItem, Column, Tag};
+use crate::model::{Board, BoardId, BoardSummary, Card, ChecklistItem, Column, ColumnId, Tag};
 
 const CURRENT_SCHEMA_VERSION: i64 = 9;
 
@@ -18,6 +18,8 @@ const FILTER_DUE_STATE_KEY: &str = "filter_due";
 const THEME_PREFERENCE_STATE_KEY: &str = "theme_preference";
 const SIDEBAR_COLLAPSED_STATE_KEY: &str = "sidebar_collapsed";
 const QUICK_CAPTURE_SHORTCUT_STATE_KEY: &str = "quick_capture_shortcut";
+const CAPTURE_BOARD_STATE_KEY: &str = "capture_board_id";
+const CAPTURE_COLUMN_STATE_KEY: &str = "capture_column_id";
 const BOARD_ID_NAMESPACE_SHIFT: u32 = 32;
 
 #[derive(Debug, Error)]
@@ -242,6 +244,53 @@ impl Database {
             Some(shortcut) => self.set_app_state(QUICK_CAPTURE_SHORTCUT_STATE_KEY, shortcut),
             None => self.delete_app_state(QUICK_CAPTURE_SHORTCUT_STATE_KEY),
         }
+    }
+
+    /// クイックキャプチャの入れ先。ボードとカラムの組で持つ。
+    pub fn load_capture_target(&self) -> Result<Option<(BoardId, ColumnId)>, DbError> {
+        let Some(board_id) = self.load_app_state(CAPTURE_BOARD_STATE_KEY)? else {
+            return Ok(None);
+        };
+        let Some(column_id) = self.load_app_state(CAPTURE_COLUMN_STATE_KEY)? else {
+            return Ok(None);
+        };
+        match (board_id.parse::<BoardId>(), column_id.parse::<ColumnId>()) {
+            (Ok(board_id), Ok(column_id)) => Ok(Some((board_id, column_id))),
+            // 壊れた値は無かったことにする。起動を妨げない。
+            _ => Ok(None),
+        }
+    }
+
+    /// キャプチャ先を保存する。`None` で既定（開いているボードの先頭カラム）に戻す。
+    pub fn set_capture_target(&self, target: Option<(BoardId, ColumnId)>) -> Result<(), DbError> {
+        match target {
+            Some((board_id, column_id)) => {
+                self.set_app_state(CAPTURE_BOARD_STATE_KEY, board_id.to_string())?;
+                self.set_app_state(CAPTURE_COLUMN_STATE_KEY, column_id.to_string())
+            }
+            None => {
+                self.delete_app_state(CAPTURE_BOARD_STATE_KEY)?;
+                self.delete_app_state(CAPTURE_COLUMN_STATE_KEY)
+            }
+        }
+    }
+
+    /// カラムの名前。そのボードに属していなければ `None`。
+    ///
+    /// キャプチャ先がまだ生きているかを、ボードを丸ごと読まずに確かめるために使う。
+    pub fn load_column_name(
+        &self,
+        board_id: BoardId,
+        column_id: ColumnId,
+    ) -> Result<Option<String>, DbError> {
+        self.connection
+            .query_row(
+                "SELECT name FROM columns WHERE id = ?1 AND board_id = ?2",
+                params![column_id, board_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(DbError::from)
     }
 
     pub fn export_board_json(&self, board: &Board) -> Result<String, DbError> {
@@ -1389,6 +1438,49 @@ mod tests {
 
         database.set_quick_capture_shortcut(None).unwrap();
         assert_eq!(database.load_quick_capture_shortcut().unwrap(), None);
+    }
+
+    #[test]
+    fn persists_and_clears_the_capture_target() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("board.sqlite3");
+        let database = Database::open(&path).unwrap();
+        let board = database.load_boards().unwrap()[0].id;
+        let column = database.load_board_by_id(board).unwrap().columns[1].id;
+
+        assert_eq!(database.load_capture_target().unwrap(), None);
+
+        database.set_capture_target(Some((board, column))).unwrap();
+        assert_eq!(
+            database.load_capture_target().unwrap(),
+            Some((board, column))
+        );
+
+        database.set_capture_target(None).unwrap();
+        assert_eq!(database.load_capture_target().unwrap(), None);
+    }
+
+    #[test]
+    fn reads_a_column_name_only_within_its_own_board() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("board.sqlite3");
+        let mut database = Database::open(&path).unwrap();
+        let board = database
+            .load_board_by_id(database.load_boards().unwrap()[0].id)
+            .unwrap();
+        let column = &board.columns[0];
+
+        assert_eq!(
+            database.load_column_name(board.id, column.id).unwrap(),
+            Some(column.name.clone())
+        );
+
+        let other = database.create_board("別のボード".to_string()).unwrap();
+        assert_eq!(
+            database.load_column_name(other.id, column.id).unwrap(),
+            None
+        );
+        assert_eq!(database.load_column_name(board.id, 9999).unwrap(), None);
     }
 
     #[test]
