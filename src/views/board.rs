@@ -17,7 +17,7 @@ use gpui_kit::{
     component::WindowExt as _,
     component::{
         button::{Button, ButtonVariant, ButtonVariants as _},
-        ActiveTheme, Root, Theme, ThemeMode,
+        window_border, ActiveTheme, Root, Theme, ThemeMode,
     },
     deferred, div, point,
     prelude::*,
@@ -28,6 +28,7 @@ use gpui_kit::{
 };
 
 use super::capture::CaptureView;
+use super::window_chrome;
 use crate::{
     actions::{
         About, AddBoard, AddCard, AddColumn, AddTag, BackupDatabase, CancelEdit, ClearSearch,
@@ -4584,7 +4585,13 @@ impl Render for BoardView {
         let tag_panel = self
             .tag_panel_open
             .then(|| self.render_tag_panel(cx).into_any_element());
-        div()
+        // ウィンドウマネージャが枠を描かない環境（GNOME の Wayland など）では、
+        // 移動もリサイズもクローズも画面内に出さないと手が無い。判定は
+        // `Decorations` で行い、Wayland かどうかでは見ない。
+        let own_chrome = window_chrome::draws_own_chrome(window.window_decorations());
+        let title_bar = own_chrome
+            .then(|| window_chrome::title_bar(self.window_title.clone(), cx).into_any_element());
+        let board = div()
             // 記録中は "Board" の文脈から外し、cx.bind_keys で登録した割り当てが
             // 発火しないようにする。そうしないと Cmd+N がカード追加になって記録できない。
             .key_context(if self.capturing_shortcut.is_some() {
@@ -4665,7 +4672,8 @@ impl Render for BoardView {
             .on_action(cx.listener(|_, _: &ZoomWindow, window, _| {
                 window.zoom_window();
             }))
-            .size_full()
+            .flex_1()
+            .min_h_0()
             .flex()
             .bg(theme_color(cx, UiColor::Background))
             .text_color(theme_color(cx, UiColor::Foreground))
@@ -4737,7 +4745,18 @@ impl Render for BoardView {
                     }),
             )
             .children(card_panel)
-            .children(tag_panel)
+            .children(tag_panel);
+
+        // `window_border` は縁・影・8 方向のリサイズを引き受ける。装飾が Server の
+        // ときは透明な `div` を 1 枚挟むだけで、見た目も当たり判定も変わらない。
+        window_border().child(
+            div()
+                .size_full()
+                .flex()
+                .flex_col()
+                .children(title_bar)
+                .child(board),
+        )
     }
 }
 
