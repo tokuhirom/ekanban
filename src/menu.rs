@@ -6,9 +6,8 @@ use crate::actions::{
     About, AddBoard, AddCard, AddColumn, AddTag, BackupDatabase, CancelEdit, ClearSearch,
     CloseWindow, DeleteBoard, ExportBoardJson, ExportBoardMarkdown, FocusSearch, HideApplication,
     HideOtherApplications, ManageTags, Quit, Redo, RenameBoard, RevealDatabase, SaveEdit,
-    SetQuickCaptureShortcut, ShowAllApplications, ShowAllCards, ShowOverdueCards,
-    ShowThisWeekCards, ToggleArchiveView, ToggleBoardList, ToggleFullscreen, Undo, UseDarkTheme,
-    UseLightTheme, UseSystemTheme,
+    SetQuickCaptureShortcut, ShowAllApplications, ToggleArchiveView, ToggleBoardList,
+    ToggleFullscreen, Undo, UseDarkTheme, UseLightTheme, UseSystemTheme,
 };
 
 pub fn install(cx: &mut App) {
@@ -26,9 +25,6 @@ pub fn install(cx: &mut App) {
         KeyBinding::new("secondary-s", SaveEdit, Some("Board")),
         KeyBinding::new("secondary-shift-a", ToggleArchiveView, Some("Board")),
         KeyBinding::new("cmd-ctrl-s", ToggleBoardList, Some("Board")),
-        KeyBinding::new("secondary-0", ShowAllCards, Some("Board")),
-        KeyBinding::new("secondary-1", ShowOverdueCards, Some("Board")),
-        KeyBinding::new("secondary-2", ShowThisWeekCards, Some("Board")),
         KeyBinding::new("secondary-shift-f", ClearSearch, Some("Board")),
         KeyBinding::new("secondary-w", CloseWindow, Some("Board")),
         KeyBinding::new("cmd-ctrl-f", ToggleFullscreen, Some("Board")),
@@ -84,9 +80,6 @@ pub fn install(cx: &mut App) {
         ]),
         Menu::new("表示").items([
             MenuItem::action("検索にフォーカス", FocusSearch),
-            MenuItem::action("すべてのカード", ShowAllCards),
-            MenuItem::action("期限切れのカード", ShowOverdueCards),
-            MenuItem::action("今週までのカード", ShowThisWeekCards),
             MenuItem::separator(),
             MenuItem::action("ボード一覧の表示を切り替え", ToggleBoardList),
             MenuItem::action("アーカイブ表示を切り替え", ToggleArchiveView),

@@ -7,14 +7,13 @@ use thiserror::Error;
 
 use crate::model::{Board, BoardId, BoardSummary, Card, ChecklistItem, Column, ColumnId, Tag};
 
-const CURRENT_SCHEMA_VERSION: i64 = 9;
+const CURRENT_SCHEMA_VERSION: i64 = 10;
 
 const LAST_BOARD_STATE_KEY: &str = "last_board_id";
 const NEXT_BOARD_STATE_KEY: &str = "next_board_id";
 const WINDOW_BOUNDS_STATE_KEY: &str = "window_bounds";
 const FILTER_SEARCH_STATE_KEY: &str = "filter_search";
 const FILTER_TAG_STATE_KEY: &str = "filter_tag_id";
-const FILTER_DUE_STATE_KEY: &str = "filter_due";
 const THEME_PREFERENCE_STATE_KEY: &str = "theme_preference";
 const SIDEBAR_COLLAPSED_STATE_KEY: &str = "sidebar_collapsed";
 const QUICK_CAPTURE_SHORTCUT_STATE_KEY: &str = "quick_capture_shortcut";
@@ -54,7 +53,6 @@ pub struct WindowBoundsState {
 pub struct FilterState {
     pub search: String,
     pub tag_id: Option<i64>,
-    pub due_filter: i64,
 }
 
 /// Opens the database on the caller's thread and persists a board snapshot.
@@ -186,19 +184,7 @@ impl Database {
             .load_app_state(FILTER_TAG_STATE_KEY)?
             .map(|value| value.parse::<i64>().map_err(|_| DbError::InvalidAppState))
             .transpose()?;
-        let due_filter = self
-            .load_app_state(FILTER_DUE_STATE_KEY)?
-            .map(|value| value.parse::<i64>().map_err(|_| DbError::InvalidAppState))
-            .transpose()?
-            .unwrap_or_default();
-        if !matches!(due_filter, 0..=2) {
-            return Err(DbError::InvalidAppState);
-        }
-        Ok(FilterState {
-            search,
-            tag_id,
-            due_filter,
-        })
+        Ok(FilterState { search, tag_id })
     }
 
     pub fn set_filter_state(&self, state: &FilterState) -> Result<(), DbError> {
@@ -207,7 +193,7 @@ impl Database {
             Some(tag_id) => self.set_app_state(FILTER_TAG_STATE_KEY, tag_id.to_string())?,
             None => self.delete_app_state(FILTER_TAG_STATE_KEY)?,
         }
-        self.set_app_state(FILTER_DUE_STATE_KEY, state.due_filter.to_string())
+        Ok(())
     }
 
     pub fn load_theme_preference(&self) -> Result<Option<String>, DbError> {
@@ -1264,6 +1250,21 @@ impl Database {
             )?;
             transaction.execute(
                 "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, ?2)",
+                params![9, now()],
+            )?;
+            transaction.commit()?;
+        }
+
+        if version < 10 {
+            // 期限での絞り込みを外したので、保存していた選択も残さない。読まれない
+            // 行を全ユーザーの DB に置いたままにしない。
+            let transaction = self.connection.transaction()?;
+            transaction.execute(
+                "DELETE FROM app_state WHERE key = ?1",
+                params!["filter_due"],
+            )?;
+            transaction.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, ?2)",
                 params![CURRENT_SCHEMA_VERSION, now()],
             )?;
             transaction.commit()?;
@@ -1307,7 +1308,9 @@ mod tests {
     use serde_json::Value;
     use tempfile::tempdir;
 
-    use super::{save_board_snapshot, Database, FilterState, WindowBoundsState};
+    use super::{
+        save_board_snapshot, Database, FilterState, WindowBoundsState, CURRENT_SCHEMA_VERSION,
+    };
     use crate::model::{Board, ChecklistItemDraft};
 
     #[test]
@@ -1406,7 +1409,6 @@ mod tests {
         let filters = FilterState {
             search: "日本語".to_string(),
             tag_id: Some(42),
-            due_filter: 2,
         };
 
         database.set_window_bounds(bounds).unwrap();
@@ -1837,6 +1839,42 @@ mod tests {
     }
 
     #[test]
+    fn drops_the_saved_due_filter_when_migrating_a_version_nine_database() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("board.sqlite3");
+        {
+            // v9 まで進んだ DB を作り、当時の絞り込みの選択を残しておく。
+            let database = Database::open(&path).unwrap();
+            database
+                .connection
+                .execute("DELETE FROM schema_migrations WHERE version = ?1", [10])
+                .unwrap();
+            database
+                .connection
+                .execute(
+                    "INSERT INTO app_state (key, value) VALUES ('filter_due', '2')",
+                    [],
+                )
+                .unwrap();
+        }
+
+        let database = Database::open(&path).unwrap();
+
+        assert_eq!(database.load_app_state("filter_due").unwrap(), None);
+        assert_eq!(
+            database.load_filter_state().unwrap(),
+            FilterState::default()
+        );
+        let version = database
+            .connection
+            .query_row("SELECT MAX(version) FROM schema_migrations", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap();
+        assert_eq!(version, CURRENT_SCHEMA_VERSION);
+    }
+
+    #[test]
     fn migrates_a_version_one_database_and_initializes_id_counters() {
         let directory = tempdir().unwrap();
         let path = directory.path().join("board.sqlite3");
@@ -1896,7 +1934,7 @@ mod tests {
                 row.get::<_, i64>(0)
             })
             .unwrap();
-        assert_eq!(version, 9);
+        assert_eq!(version, CURRENT_SCHEMA_VERSION);
         assert_eq!(board.columns[0].cards[0].id, 34);
         assert_eq!(board.columns[0].cards[0].due_date, None);
         assert_eq!(
