@@ -93,3 +93,4 @@
 | [0011](0011-due-counts-in-the-board-list.md) | 期限の件数を、ボード一覧の各行に出す | 2026-09-05 | 有効 |
 | [0012](0012-focus-after-quick-capture-on-linux.md) | クイックキャプチャを閉じたあとの行き先は、Linux では 1 つだけ保証する | 2026-09-05 | 有効 |
 | [0013](0013-linux-desktop-integration.md) | Linux のデスクトップ統合は、`~/.local` 以下に入れるスクリプトで行う | 2026-09-05 | 有効 |
+| [0014](0014-unsigned-apple-silicon-only-macos-builds.md) | macOS は Apple Silicon 向けの未公証ビルドだけを配る | 2026-09-05 | 有効 |
