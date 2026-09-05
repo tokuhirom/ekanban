@@ -1,5 +1,7 @@
 use gpui_kit::{App, KeyBinding, Menu, MenuItem, OsAction, SystemMenuType};
 
+use crate::hotkey::platform_support;
+
 use crate::actions::{
     About, AddBoard, AddCard, AddColumn, AddTag, BackupDatabase, CancelEdit, ClearSearch,
     CloseWindow, DeleteBoard, ExportBoardJson, ExportBoardMarkdown, FocusSearch, HideApplication,
@@ -41,10 +43,7 @@ pub fn install(cx: &mut App) {
         Menu::new("ekanban").items([
             MenuItem::action("ekanbanについて", About),
             MenuItem::separator(),
-            MenuItem::action(
-                "クイックキャプチャのショートカット…",
-                SetQuickCaptureShortcut,
-            ),
+            quick_capture_menu_item(),
             MenuItem::separator(),
             MenuItem::os_submenu("サービス", SystemMenuType::Services),
             MenuItem::separator(),
@@ -103,4 +102,22 @@ pub fn install(cx: &mut App) {
             MenuItem::action("ekanbanについて", About),
         ]),
     ]);
+}
+
+/// 「クイックキャプチャのショートカット…」。
+///
+/// 使えない環境では灰色にする。灰色の項目は押せず理由を出す先が無いので、理由は
+/// 文言に入れる。判定は起動中に変わらないので、ここで 1 回決めれば足りる。
+fn quick_capture_menu_item() -> MenuItem {
+    match platform_support() {
+        Ok(()) => MenuItem::action(
+            "クイックキャプチャのショートカット…",
+            SetQuickCaptureShortcut,
+        ),
+        Err(reason) => MenuItem::action(
+            format!("クイックキャプチャのショートカット…（{reason}）"),
+            SetQuickCaptureShortcut,
+        )
+        .disabled(true),
+    }
 }

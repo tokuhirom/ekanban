@@ -158,6 +158,73 @@ fn key_code(key: &str) -> Option<Code> {
     Code::from_str(&name).ok()
 }
 
+/// この環境でグローバルホットキーを使えるか。使えないときは理由を返す。
+///
+/// `global-hotkey` の X11 実装は、使えない環境でも成功したように見える
+/// （`GlobalHotKeyManager::new()` はスレッドを起こすだけで必ず成功し、
+/// `register()` はそのスレッドが死んでいても `Ok` を返す）。戻り値を信じずに
+/// 環境そのものを先に判定する。
+pub fn platform_support() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        Ok(())
+    }
+
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "dragonfly",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "netbsd"
+    ))]
+    {
+        fn env(key: &str) -> Option<String> {
+            std::env::var(key).ok().filter(|value| !value.is_empty())
+        }
+        x11_support(
+            env("WAYLAND_DISPLAY").as_deref(),
+            env("XDG_SESSION_TYPE").as_deref(),
+            env("DISPLAY").as_deref(),
+        )
+    }
+
+    #[cfg(not(any(
+        target_os = "macos",
+        target_os = "linux",
+        target_os = "dragonfly",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "netbsd"
+    )))]
+    {
+        Err("この OS はまだ対象外です".to_string())
+    }
+}
+
+/// Linux / BSD での判定。環境変数を引数に取り、テストできるようにしてある。
+///
+/// Wayland にはアプリから使えるグローバルホットキーの共通の仕組みが無い。
+/// XWayland 越しに登録しても、Wayland のクライアントが前面にいる間はイベントが
+/// 来ないので、使えるとは言えない。
+fn x11_support(
+    wayland_display: Option<&str>,
+    session_type: Option<&str>,
+    x11_display: Option<&str>,
+) -> Result<(), String> {
+    if wayland_display.is_some()
+        || session_type.is_some_and(|value| value.eq_ignore_ascii_case("wayland"))
+    {
+        return Err(
+            "Wayland ではグローバルホットキーを使えません。X11 のセッションで起動してください"
+                .to_string(),
+        );
+    }
+    if x11_display.is_none() {
+        return Err("X11 のディスプレイが見つかりません".to_string());
+    }
+    Ok(())
+}
+
 /// アプリ全体で 1 つだけ持つホットキーの登録状態。
 ///
 /// `GlobalHotKeyManager` はメインスレッドで作り、ここに置いたまま動かさない。
@@ -172,7 +239,17 @@ impl Global for QuickCapture {}
 
 impl QuickCapture {
     /// マネージャの生成を試みる。失敗しても起動は続ける。
+    ///
+    /// 使えない環境ではマネージャを作らない。X サーバに繋がらないスレッドを
+    /// 起こしっぱなしにしないため。
     pub fn new() -> Self {
+        if let Err(reason) = platform_support() {
+            return Self {
+                manager: None,
+                registered: None,
+                unavailable: Some(reason),
+            };
+        }
         match GlobalHotKeyManager::new() {
             Ok(manager) => Self {
                 manager: Some(manager),
@@ -236,7 +313,7 @@ impl Default for QuickCapture {
 
 #[cfg(test)]
 mod tests {
-    use super::{key_code, Shortcut, ShortcutError};
+    use super::{key_code, x11_support, Shortcut, ShortcutError};
     use global_hotkey::hotkey::Code;
     use gpui_kit::Keystroke;
 
@@ -295,5 +372,23 @@ mod tests {
         assert_eq!(key_code("left"), Some(Code::ArrowLeft));
         assert_eq!(key_code("space"), Some(Code::Space));
         assert_eq!(key_code("§"), None);
+    }
+
+    #[test]
+    fn wayland_has_no_global_hotkeys() {
+        assert!(x11_support(Some("wayland-0"), None, Some(":0")).is_err());
+        assert!(x11_support(None, Some("wayland"), Some(":0")).is_err());
+        assert!(x11_support(None, Some("Wayland"), Some(":0")).is_err());
+    }
+
+    #[test]
+    fn an_x11_display_is_enough() {
+        assert_eq!(x11_support(None, Some("x11"), Some(":0")), Ok(()));
+        assert_eq!(x11_support(None, None, Some(":0")), Ok(()));
+    }
+
+    #[test]
+    fn no_display_means_no_global_hotkeys() {
+        assert!(x11_support(None, None, None).is_err());
     }
 }
