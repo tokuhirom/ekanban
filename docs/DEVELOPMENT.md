@@ -29,6 +29,7 @@ src/
     board/
       view_tests.rs  ウィンドウを開いて確かめるテスト
     capture.rs    クイックキャプチャの 1 行ウィンドウ
+    window_chrome.rs  装飾を寄越さない環境で出す自前のタイトルバー
 ```
 
 - **UI から SQL を直接実行しません。** SQL は `src/db/` に閉じます
