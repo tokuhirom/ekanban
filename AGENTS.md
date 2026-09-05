@@ -49,4 +49,10 @@ Work in progress is tracked in GitHub issues, not in a roadmap document. When yo
 
 `docs/DESIGN.md` holds only what outlives a single issue: the design rules new code must follow, what is out of scope, what was considered and deliberately rejected, and the completion checklist every change must satisfy. Do not add task lists or schedules to it. It is the list of rules **as they stand now**, so rewrite an entry when the decision behind it changes.
 
-`docs/adr/` keeps the reasoning those rules came from, one file per decision. Add an ADR when a decision has alternatives worth recording or would otherwise be re-litigated; link to it from the matching rule in `docs/DESIGN.md`. **Never edit an existing ADR** — supersede it with a new one and mark the old one's status. Do not repeat the same text in both places: rules in `DESIGN.md`, reasoning in the ADR. See `docs/adr/README.md` for the template.
+`docs/adr/` keeps the reasoning those rules came from, one file per decision.
+
+**A significant decision must be recorded as an ADR before its issue is closed** — it is item 10 on the completion checklist in `docs/DESIGN.md`. Decide whether one is needed while designing, not after the code is written. `docs/adr/README.md` has the test; it is needed when the change adds, rewrites or breaks a rule in `docs/DESIGN.md`, reverses an earlier decision, picks between real alternatives, changes something visible from outside (where data lives, its format, key bindings, per-platform differences), adds or swaps a dependency, or settles a question the issue's acceptance criteria did not cover.
+
+Bug fixes, wording, refactoring, and implementing an issue exactly as its acceptance criteria describe need no ADR. Writing one for everything is how they stop being read.
+
+Link the ADR from the matching rule in `docs/DESIGN.md`. **Never edit an existing ADR** — supersede it with a new one and mark the old one's status. Do not repeat the same text in both places: rules in `DESIGN.md`, reasoning in the ADR. See `docs/adr/README.md` for the template.
