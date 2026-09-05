@@ -16,7 +16,7 @@ use gpui_kit::{
     WindowOptions,
 };
 use hotkey::{QuickCapture, Shortcut};
-use views::{parse_theme_preference, window_title, BoardView, QuickCaptureState};
+use views::{parse_theme_preference, window_title, BoardView, CaptureTarget, QuickCaptureState};
 
 /// ウィンドウタイトルやバンドルに使うアプリ名。`script/bundle-mac` の `APP_NAME` と揃える。
 pub const APP_NAME: &str = "Ekanban";
@@ -59,6 +59,7 @@ pub fn run() {
         theme_preference,
         sidebar_collapsed,
         quick_capture_shortcut,
+        saved_capture_target,
     ) = match Database::open(&path).and_then(|database| {
         let boards = database.load_boards()?;
         let board_id = database
@@ -81,6 +82,32 @@ pub fn run() {
             parse_theme_preference(database.load_theme_preference().ok().flatten().as_deref());
         let sidebar_collapsed = database.load_sidebar_collapsed().unwrap_or(false);
         let quick_capture_shortcut = database.load_quick_capture_shortcut().unwrap_or(None);
+        // キャプチャ先のボードやカラムが消えていたら、黙って既定に戻す。
+        // フィルター状態の復元と同じ扱いで、起動を妨げない。
+        let capture_target = match database.load_capture_target().unwrap_or(None) {
+            Some((capture_board_id, capture_column_id)) => {
+                let column_name = database
+                    .load_column_name(capture_board_id, capture_column_id)
+                    .unwrap_or(None);
+                let board_name = boards
+                    .iter()
+                    .find(|summary| summary.id == capture_board_id)
+                    .map(|summary| summary.name.clone());
+                match (board_name, column_name) {
+                    (Some(board_name), Some(column_name)) => Some(CaptureTarget {
+                        board_id: capture_board_id,
+                        column_id: capture_column_id,
+                        board_name,
+                        column_name,
+                    }),
+                    _ => {
+                        database.set_capture_target(None)?;
+                        None
+                    }
+                }
+            }
+            None => None,
+        };
         Ok((
             board,
             boards,
@@ -89,6 +116,7 @@ pub fn run() {
             theme_preference,
             sidebar_collapsed,
             quick_capture_shortcut,
+            capture_target,
         ))
     }) {
         Ok(value) => value,
@@ -108,7 +136,12 @@ pub fn run() {
         cx.on_action(|_: &actions::ShowAllApplications, cx| cx.unhide_other_apps());
         menu::install(cx);
         cx.set_global(QuickCapture::new());
-        let quick_capture = register_saved_shortcut(quick_capture_shortcut, cx);
+        let (shortcut, shortcut_error) = register_saved_shortcut(quick_capture_shortcut, cx);
+        let quick_capture = QuickCaptureState {
+            shortcut,
+            error: shortcut_error,
+            capture_target: saved_capture_target,
+        };
         let bounds = restored_window_bounds(saved_window_bounds, cx);
         cx.open_window(
             WindowOptions {
@@ -156,37 +189,31 @@ pub fn run() {
 /// 登録できなかった理由は捨てずに持ち回し、`BoardView` の通知に出す。起動のたび
 /// 黙って失敗する状態を作らない。設定そのものは消さない（ほかのアプリを閉じれば
 /// 次の起動では通る可能性があるため）。
-fn register_saved_shortcut(saved: Option<String>, cx: &mut App) -> QuickCaptureState {
+fn register_saved_shortcut(
+    saved: Option<String>,
+    cx: &mut App,
+) -> (Option<Shortcut>, Option<String>) {
     let Some(saved) = saved else {
-        return QuickCaptureState {
-            shortcut: None,
-            error: None,
-        };
+        return (None, None);
     };
 
     let shortcut = match Shortcut::parse(&saved) {
         Ok(shortcut) => shortcut,
         Err(error) => {
-            return QuickCaptureState {
-                shortcut: None,
-                error: Some(format!(
+            return (
+                None,
+                Some(format!(
                     "保存されているクイックキャプチャの割り当てを読み取れませんでした: {error}"
                 )),
-            }
+            )
         }
     };
 
     match cx.update_global::<QuickCapture, _>(|quick_capture, _| {
         quick_capture.set(Some(shortcut.clone()))
     }) {
-        Ok(()) => QuickCaptureState {
-            shortcut: Some(shortcut),
-            error: None,
-        },
-        Err(message) => QuickCaptureState {
-            shortcut: None,
-            error: Some(message),
-        },
+        Ok(()) => (Some(shortcut), None),
+        Err(message) => (None, Some(message)),
     }
 }
 

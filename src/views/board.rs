@@ -126,12 +126,24 @@ struct ShortcutCapture {
     error: Option<String>,
 }
 
+/// クイックキャプチャの入れ先。アプリ全体で 1 つだけ持ち、ボードごとには持たない。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CaptureTarget {
+    pub board_id: BoardId,
+    pub column_id: ColumnId,
+    /// 表示用に覚えておく名前。別のボードのカラムでも「どこに入るか」を出せるように。
+    pub board_name: String,
+    pub column_name: String,
+}
+
 /// 起動時に読み込んだクイックキャプチャの設定。
 pub(crate) struct QuickCaptureState {
     /// 登録できた割り当て。未設定なら `None`。
     pub shortcut: Option<Shortcut>,
     /// 読み込みや登録に失敗した理由。成功していれば `None`。
     pub error: Option<String>,
+    /// 保存されていたキャプチャ先。消えていれば `None`（既定に戻る）。
+    pub capture_target: Option<CaptureTarget>,
 }
 
 struct BoardEditor {
@@ -332,6 +344,8 @@ pub struct BoardView {
     quick_capture_shortcut: Option<Shortcut>,
     capturing_shortcut: Option<ShortcutCapture>,
     capture_window: Option<CaptureWindow>,
+    /// 設定されたキャプチャ先。`None` なら既定（開いているボードの先頭カラム）。
+    capture_target: Option<CaptureTarget>,
     /// キャプチャからの保存の id。`finish_save` で結果を返す先を見分ける。
     capture_save: Option<u64>,
     _quick_capture_task: Task<()>,
@@ -448,6 +462,7 @@ impl BoardView {
             quick_capture_shortcut: quick_capture.shortcut,
             capturing_shortcut: None,
             capture_window: None,
+            capture_target: quick_capture.capture_target,
             capture_save: None,
             _quick_capture_task: quick_capture_task,
         };
@@ -558,7 +573,7 @@ impl BoardView {
             return;
         }
 
-        let Some(destination) = capture_destination(&self.board) else {
+        let Some(destination) = self.capture_destination() else {
             window.activate_window();
             self.set_error("キャプチャ先のカラムがありません。カラムを追加してください。");
             cx.notify();
@@ -629,14 +644,19 @@ impl BoardView {
         let Some(title) = capture_title(title) else {
             return Err("タイトルを入力してください".to_string());
         };
-        let Some(column_id) = capture_column_id(&self.board) else {
+        let Some(target) = self.resolve_capture_target() else {
             return Err("キャプチャ先のカラムがありません".to_string());
         };
+
+        if target.board_id != self.board.id {
+            self.capture_into_another_board(target, title.to_string(), cx);
+            return Ok(());
+        }
 
         let before = self.board.clone();
         // 説明は空のまま。あとで書く前提の文言を置かない。
         self.board
-            .add_card(column_id, title, "")
+            .add_card(target.column_id, title, "")
             .map_err(|error| board_error_detail(&error))?;
         self.enqueue_save(
             before,
@@ -647,6 +667,127 @@ impl BoardView {
         self.capture_save = Some(self.next_save_id);
         cx.notify();
         Ok(())
+    }
+
+    /// 開いていないボードへのキャプチャ。
+    ///
+    /// そのボードを読み込んで書く。`save_lock` を共有するのでボード側の保存と
+    /// 直列化される。画面に無いボードなので、このセッションの Undo には積めない。
+    fn capture_into_another_board(
+        &mut self,
+        target: CaptureTarget,
+        title: String,
+        cx: &mut Context<Self>,
+    ) {
+        let path = self.database_path.clone();
+        let save_lock = self.save_lock.clone();
+        self.set_info("保存中…");
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    let _guard = save_lock.lock().expect("save worker mutex was poisoned");
+                    let board = {
+                        let database = Database::open(&path)?;
+                        let mut board = database.load_board_by_id(target.board_id)?;
+                        board
+                            .add_card(target.column_id, &title, "")
+                            .map_err(|_| DbError::NoBoard)?;
+                        board
+                    };
+                    save_board_snapshot(path, board)
+                })
+                .await;
+            let _ = this.update(cx, |view, cx| {
+                let outcome = result
+                    .map_err(|error| format!("保存に失敗しました: {}", db_error_detail(&error)));
+                match &outcome {
+                    Ok(()) => view.set_success("クイックキャプチャでカードを追加しました"),
+                    Err(message) => view.set_error(message.clone()),
+                }
+                view.finish_capture(outcome, cx);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// 今のキャプチャ先。設定が消えていたら既定（先頭カラム）に落とす。
+    fn resolve_capture_target(&mut self) -> Option<CaptureTarget> {
+        if let Some(target) = self.capture_target.clone() {
+            if self.capture_target_is_alive(&target) {
+                return Some(target);
+            }
+            // 消えていたら黙って既定に戻す。次のキャプチャを失敗させない。
+            self.capture_target = None;
+            let path = self.database_path.clone();
+            let _ = Database::open(path).and_then(|database| database.set_capture_target(None));
+        }
+        default_capture_target(&self.board)
+    }
+
+    /// 保存されたキャプチャ先がまだ生きているか。
+    ///
+    /// 開いているボードならメモリ上で確かめる。別のボードならカラム名を 1 行
+    /// 引くだけで済ませ、ボードを丸ごと読み込まない。
+    fn capture_target_is_alive(&self, target: &CaptureTarget) -> bool {
+        if target.board_id == self.board.id {
+            return capture_target_is_in_board(&self.board, target);
+        }
+        Database::open(&self.database_path)
+            .and_then(|database| database.load_column_name(target.board_id, target.column_id))
+            .is_ok_and(|name| name.is_some())
+    }
+
+    /// キャプチャウィンドウに出す「〇〇ボード / △△カラム」。
+    fn capture_destination(&mut self) -> Option<SharedString> {
+        self.resolve_capture_target()
+            .map(|target| capture_destination(&target))
+    }
+
+    /// カラムの `…` メニューの「クイックキャプチャ先にする」。
+    fn set_capture_target(&mut self, column_id: ColumnId, cx: &mut Context<Self>) {
+        self.context_menu_column = None;
+        let Some(column) = self
+            .board
+            .columns
+            .iter()
+            .find(|column| column.id == column_id)
+        else {
+            self.set_error("カラムが見つかりません。画面を更新してください。");
+            cx.notify();
+            return;
+        };
+        let target = CaptureTarget {
+            board_id: self.board.id,
+            column_id,
+            board_name: self.board.name.clone(),
+            column_name: column.name.clone(),
+        };
+
+        match Database::open(&self.database_path).and_then(|database| {
+            database.set_capture_target(Some((target.board_id, target.column_id)))
+        }) {
+            Ok(()) => {
+                let label = capture_destination(&target);
+                self.capture_target = Some(target);
+                self.set_success(format!("クイックキャプチャ先を「{label}」にしました"));
+            }
+            Err(error) => self.present_db_error("キャプチャ先を保存できませんでした", error),
+        }
+        cx.notify();
+    }
+
+    /// このカラムがキャプチャ先か。既定（先頭カラム）のときも印を出す。
+    fn is_capture_column(&self, column_id: ColumnId) -> bool {
+        match self.capture_target.as_ref() {
+            Some(target) => target.board_id == self.board.id && target.column_id == column_id,
+            None => self
+                .board
+                .columns
+                .first()
+                .is_some_and(|column| column.id == column_id),
+        }
     }
 
     /// キャプチャからの保存が終わったとき。
@@ -3183,6 +3324,7 @@ impl BoardView {
         let wip_over = column
             .wip_limit
             .is_some_and(|limit| column.cards.len() as i64 > limit);
+        let is_capture_column = self.is_capture_column(column_id);
         let card_count_label = column
             .wip_limit
             .map(|limit| format!("{} / {limit}", column.cards.len()))
@@ -3215,6 +3357,15 @@ impl BoardView {
                         .text_color(theme_color(cx, UiColor::Foreground))
                         .child(column.name.clone()),
                 )
+                // 色だけに意味を持たせない。文言でキャプチャ先だと分かるようにする。
+                .when(is_capture_column, |this| {
+                    this.child(
+                        div()
+                            .text_xs()
+                            .text_color(theme_color(cx, UiColor::MutedForeground))
+                            .child("⚡ クイックキャプチャ先"),
+                    )
+                })
                 .into_any_element()
         };
         div()
@@ -3393,6 +3544,15 @@ impl BoardView {
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.request_archive_column(column_id, window, cx)
                     })),
+            )
+            .child(
+                Button::new(("context-capture-column", column_id as u64))
+                    .ghost()
+                    .label("クイックキャプチャ先にする")
+                    .disabled(self.is_capture_column(column_id))
+                    .on_click(
+                        cx.listener(move |this, _, _, cx| this.set_capture_target(column_id, cx)),
+                    ),
             )
             .child(
                 Button::new(("context-edit-column", column_id as u64))
@@ -4343,18 +4503,29 @@ fn moves_selected_card(modifiers: &Modifiers) -> bool {
     modifiers.secondary() && modifiers.alt && modifiers.number_of_modifiers() == 2
 }
 
-/// キャプチャ先のカラム。今は開いているボードの先頭。選べるようにするのは #13。
-fn capture_column_id(board: &Board) -> Option<ColumnId> {
-    board.columns.first().map(|column| column.id)
+/// 既定のキャプチャ先。開いているボードの先頭カラム。
+fn default_capture_target(board: &Board) -> Option<CaptureTarget> {
+    let column = board.columns.first()?;
+    Some(CaptureTarget {
+        board_id: board.id,
+        column_id: column.id,
+        board_name: board.name.clone(),
+        column_name: column.name.clone(),
+    })
+}
+
+/// キャプチャ先がこのボードのカラムを指していて、それがまだあるか。
+fn capture_target_is_in_board(board: &Board, target: &CaptureTarget) -> bool {
+    target.board_id == board.id
+        && board
+            .columns
+            .iter()
+            .any(|column| column.id == target.column_id)
 }
 
 /// キャプチャウィンドウに出す「〇〇ボード / △△カラム」。
-fn capture_destination(board: &Board) -> Option<SharedString> {
-    let column = board.columns.first()?;
-    Some(SharedString::from(format!(
-        "{} / {}",
-        board.name, column.name
-    )))
+fn capture_destination(target: &CaptureTarget) -> SharedString {
+    SharedString::from(format!("{} / {}", target.board_name, target.column_name))
 }
 
 /// キャプチャで受け付けるタイトル。前後の空白を落とし、空なら受け付けない。
@@ -4859,9 +5030,10 @@ fn field_error_note(message: String, color: gpui_kit::Hsla) -> impl IntoElement 
 #[cfg(test)]
 mod tests {
     use super::{
-        board_error_detail, capture_destination, capture_title, column_name_for_card,
-        db_error_detail, field_error_for, moves_selected_card, next_card_id, render_board_markdown,
-        window_title, CardDirection, EditorField,
+        board_error_detail, capture_destination, capture_target_is_in_board, capture_title,
+        column_name_for_card, db_error_detail, default_capture_target, field_error_for,
+        moves_selected_card, next_card_id, render_board_markdown, window_title, CaptureTarget,
+        CardDirection, EditorField,
     };
     use crate::{
         db::DbError,
@@ -5054,15 +5226,56 @@ mod tests {
     #[test]
     fn capture_destination_names_the_board_and_the_column() {
         let board = Board::demo();
-        let destination = capture_destination(&board).expect("the demo board has columns");
+        let target = default_capture_target(&board).expect("the demo board has columns");
+        let destination = capture_destination(&target);
         assert!(destination.contains(&board.name));
         assert!(destination.contains(board.columns[0].name.as_str()));
     }
 
     #[test]
-    fn capture_destination_is_undecided_without_a_column() {
+    fn default_capture_target_is_the_first_column() {
+        let board = Board::demo();
+        let target = default_capture_target(&board).expect("the demo board has columns");
+        assert_eq!(target.board_id, board.id);
+        assert_eq!(target.column_id, board.columns[0].id);
+    }
+
+    #[test]
+    fn default_capture_target_is_undecided_without_a_column() {
         let mut board = Board::demo();
         board.columns.clear();
-        assert_eq!(capture_destination(&board), None);
+        assert_eq!(default_capture_target(&board), None);
+    }
+
+    #[test]
+    fn capture_target_survives_while_its_column_exists() {
+        let board = Board::demo();
+        let target = CaptureTarget {
+            board_id: board.id,
+            column_id: board.columns[2].id,
+            board_name: board.name.clone(),
+            column_name: board.columns[2].name.clone(),
+        };
+        assert!(capture_target_is_in_board(&board, &target));
+    }
+
+    #[test]
+    fn capture_target_is_dropped_when_its_column_is_gone() {
+        let board = Board::demo();
+        let removed = CaptureTarget {
+            board_id: board.id,
+            column_id: 9999,
+            board_name: board.name.clone(),
+            column_name: "消えたカラム".to_string(),
+        };
+        assert!(!capture_target_is_in_board(&board, &removed));
+
+        let other_board = CaptureTarget {
+            board_id: board.id + 1,
+            column_id: board.columns[0].id,
+            board_name: "別のボード".to_string(),
+            column_name: board.columns[0].name.clone(),
+        };
+        assert!(!capture_target_is_in_board(&board, &other_board));
     }
 }
