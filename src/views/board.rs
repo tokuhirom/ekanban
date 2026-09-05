@@ -5180,6 +5180,9 @@ fn field_error_note(message: String, color: gpui_kit::Hsla) -> impl IntoElement 
 }
 
 #[cfg(test)]
+mod view_tests;
+
+#[cfg(test)]
 mod tests {
     use super::{
         board_error_detail, capture_destination, capture_target_is_in_board, capture_title,

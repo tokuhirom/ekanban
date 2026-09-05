@@ -14,6 +14,9 @@ serde_json = "1.0"
 thiserror = "2.0"
 
 [dev-dependencies]
+# GPUI のヘッドレステスト基盤 (TestPlatform / #[gpui_kit::test]) を使うための feature。
+# 本体のビルドには要らないので dev-dependencies 側でだけ有効にする。
+gpui-kit = { version = "0.6.0", features = ["test-support"] }
 tempfile = "3.23"
 
 [lints.rust]
