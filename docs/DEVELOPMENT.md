@@ -301,43 +301,40 @@ git push origin v0.1.0
 
 Actions の Release ワークフローを `workflow_dispatch` で、`tag` を空のまま実行すると、3 つのプラットフォームでビルドが通るかだけ見ます。リリースには何も上がりません。
 
-### tagpr を入れるとき
+### tagpr
 
-バージョン上げとタグ打ちは、いずれ [tagpr](https://github.com/Songmu/tagpr) に任せます。設定 (`.tagpr`) は先に置いてあるので、残っているのはワークフローを足すことだけです。
+バージョン上げとタグ打ちは [tagpr](https://github.com/Songmu/tagpr) に任せています（`.github/workflows/tagpr.yml`）。
 
-```yaml
-# .github/workflows/tagpr.yml
-name: tagpr
-on:
-  push:
-    branches: ["main"]
-
-permissions:
-  contents: write
-  pull-requests: write
-
-jobs:
-  tagpr:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable  # postVersionCommand の cargo update に要る
-      - id: tagpr
-        uses: Songmu/tagpr@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      # GITHUB_TOKEN で打たれたタグは push イベントを発火しない。
-      # workflow_dispatch は再帰防止の例外なので、こちらから呼ぶ。
-      - if: steps.tagpr.outputs.tag != ''
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh workflow run release.yml -f tag='${{ steps.tagpr.outputs.tag }}'
+```text
+main に push
+    ↓
+tagpr がリリース用の pull request を作る / 更新する
+    ↓
+その pull request を merge
+    ↓
+tagpr が Cargo.toml と Cargo.lock を上げ、タグを打ち、GitHub Release を作る
+    ↓
+タグの push が release.yml を動かし、成果物を Release に足す
 ```
 
-入れる前に気をつけることが 3 つあります。
+バージョンは semver です。上げ幅は merge した pull request のラベルで決まります。`major` が付いていれば major、`minor` なら minor、どちらも無ければ patch です。
 
-- **Settings → Actions → General の「Allow GitHub Actions to create and approve pull requests」を有効にします。** tagpr がリリース用の pull request を作れません
-- **`main` のルールセットが `Check and test` を必須にしています。** tagpr の pull request も CI を通ってから merge されます
-- **`.tagpr` の `postVersionCommand` は `cargo update --workspace` です。** tagpr は `*.lock` を触らないので、これが無いと `Cargo.lock` の `ekanban` のバージョンだけ取り残されます。ワークフローに Rust を入れておいてください
+**タグを打つのは GitHub App のインストールトークンです。** `GITHUB_TOKEN` で作られたイベントは他のワークフローを起動しないため、それだとタグを打っても `release.yml` が動きません。App のトークンにはその制限が掛からないので、タグがそのままリリースまで繋がります。次の 2 つがリポジトリに要ります。
 
-tagpr は自分で GitHub Release を作ります。Release ワークフローは、既にある Release には成果物を足すだけにしてあるので、上書きも二重作成も起きません。ただし Release が先にでき、ビルドが終わるまで数分は成果物が空になります。
+| 種類 | 名前 | 中身 |
+| --- | --- | --- |
+| Variable | `TAGPR_APP_ID` | GitHub App の App ID |
+| Secret | `TAGPR_APP_PRIVATE_KEY` | その App の秘密鍵 |
+
+App には Contents と Pull requests の write 権限が要ります。あわせて Settings → Actions → General の「Allow GitHub Actions to create and approve pull requests」を有効にしてください。無効のままだと tagpr がリリース用の pull request を作れません。
+
+`.tagpr` で気をつけているところが 2 つあります。
+
+- **`versionFile = Cargo.toml`。** tag だけでなく `Cargo.toml` も上げます。`script/bundle-mac` がここから `.app` の `CFBundleShortVersionString` を作るので、置いていかれるとバンドルのバージョンがタグと食い違います
+- **`postVersionCommand = cargo update --workspace`。** tagpr は `*.lock` を対象外にするので、これが無いと `Cargo.lock` の `ekanban` のバージョンだけ取り残されます
+
+`main` のルールセットが `Check and test` を必須にしているので、tagpr の pull request も CI を通ってから merge されます。
+
+tagpr は自分で GitHub Release を作ります。`release.yml` は、既にある Release には成果物を足すだけにしてあるので、上書きも二重作成も起きません。ただし Release が先にでき、ビルドが終わるまで数分は成果物が空になります。
+
+ワークフローのアクションは [pinact](https://github.com/suzuki-shunsuke/pinact) でコミットハッシュに固定しています。バージョンを上げたら `pinact run` を掛け直してください。

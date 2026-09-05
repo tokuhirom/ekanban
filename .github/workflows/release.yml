@@ -3,13 +3,13 @@ name: Release
 # タグを打つとビルドして GitHub Release に上げます。
 #
 # 入口は 2 つあります。
-#   push (tags)       手で `git push origin v0.1.0` したとき
+#   push (tags)       tagpr が打ったタグと、手で `git push origin v0.1.0` したとき
 #   workflow_dispatch tag を渡すとそのタグで公開し、空ならビルドの確認だけします
 #
-# 後から tagpr を入れるときは workflow_dispatch のほうを使います。GITHUB_TOKEN で
-# 打たれたタグは push イベントを発火しない (GitHub の再帰防止) ので、tagpr の
-# ワークフローから `gh workflow run release.yml -f tag=<タグ>` で呼びます。
-# workflow_dispatch は再帰防止の例外なので、GITHUB_TOKEN のままで動きます。
+# tagpr は GitHub App のインストールトークンでタグを打ちます。GITHUB_TOKEN と違い
+# App のトークンで作られたイベントは push を発火するので、tagpr のタグはそのまま
+# ここに届きます (tagpr.yml を見てください)。workflow_dispatch のほうは、手で
+# やり直したいときと、リリースを伴わないビルド確認のために残してあります。
 
 on:
   push:
@@ -98,7 +98,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.setup.outputs.ref }}
 
@@ -123,7 +123,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: release-${{ matrix.target }}
 
@@ -178,7 +178,7 @@ jobs:
           Remove-Item -Recurse -Force "dist/$env:ASSET"
 
       - name: Upload the built asset
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ matrix.target }}
           path: dist/*
@@ -194,7 +194,7 @@ jobs:
 
     steps:
       - name: Download the built assets
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: artifacts
 
