@@ -23,6 +23,8 @@ Run the application with `cargo run`. It stores its database under the OS data d
 
 These are the same checks enforced by GitHub Actions. The bundled SQLite dependency means no database server is required.
 
+To see a change in the running app, start it on a virtual display (`Xvfb`) with an `EKANBAN_DATABASE` of its own, and match a window's PID against the process you started before sending it a click. A copy of the app the user is already running answers to the same window name, and clicking that one discards whatever they were editing. Capture with `import -window root`; `import -window <id>` leaves out menus and other popups. The アプリを動かして確かめるとき section of `docs/DEVELOPMENT.md` has the details.
+
 ## Coding Style and Naming
 
 Use Rust 2021 conventions and four-space indentation; let `rustfmt` determine layout. Use `snake_case` for functions, variables, and modules, and `PascalCase` for types. Prefer `Result` with the existing `thiserror` error types for fallible operations. Preserve UTF-8/Japanese text handling and use one SQLite transaction for board moves or reorder operations.
