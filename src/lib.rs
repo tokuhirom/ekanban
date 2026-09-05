@@ -3,6 +3,7 @@ pub mod backup;
 pub mod db;
 pub mod diagnostics;
 pub mod hotkey;
+pub mod instance;
 pub mod menu;
 pub mod model;
 pub mod paths;
@@ -228,6 +229,27 @@ pub fn run() {
             }
         }
     }
+
+    // データベースを開くより前に握る。開いてからでは `migrate` と
+    // `seed_if_empty` が 2 つのプロセスから走る。ロックは `run()` が終わるまで
+    // 持ったままにする（落とすと外れる）。
+    let _instance = match instance::acquire(&path) {
+        Ok(lock) => lock,
+        Err(instance::InstanceError::AlreadyRunning(_)) => {
+            diagnostics::report_fatal(&format!(
+                "ekanban はすでに起動しています（{}）。\n\n\
+                 同じデータベースを 2 つのプロセスで開くと、あとから保存したほうが\n\
+                 もう片方で足したカードを消してしまうため、2 つ目は起動しません。\n\
+                 開いているウィンドウを使ってください。",
+                path.display()
+            ));
+            return;
+        }
+        Err(error) => {
+            diagnostics::report_fatal(&format!("起動中かどうかを確かめられませんでした: {error}"));
+            return;
+        }
+    };
 
     let state = match load_startup_state(&path) {
         Ok(state) => state,
