@@ -90,3 +90,4 @@
 | [0008](0008-reaching-a-card-by-its-number.md) | カード番号へは、検索欄に `#12` と打って辿る | 2026-09-05 | 有効 |
 | [0009](0009-per-platform-key-bindings.md) | `cmd-ctrl-*` に頼る操作には、macOS 以外の割り当てを別に持つ | 2026-09-05 | 有効 |
 | [0010](0010-hiding-instead-of-dimming-in-the-archive.md) | アーカイブ表示では、絞り込みから外れたカードを隠す | 2026-09-05 | 有効 |
+| [0011](0011-due-counts-in-the-board-list.md) | 期限の件数を、ボード一覧の各行に出す | 2026-09-05 | 有効 |

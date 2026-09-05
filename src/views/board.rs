@@ -43,7 +43,7 @@ use crate::{
     model::{
         card_matches_search, due_status, parse_due_date, parse_wip_limit, Board, BoardError,
         BoardId, BoardSummary, Card, CardId, ChecklistItem, ChecklistItemDraft, ChecklistItemId,
-        Column, ColumnId, DueStatus, Tag, TagId,
+        Column, ColumnId, DueCounts, DueStatus, Tag, TagId,
     },
 };
 
@@ -961,6 +961,7 @@ impl BoardView {
             summary.name = self.board.name.clone();
             summary.created_at = self.board.created_at;
             summary.updated_at = self.board.updated_at;
+            summary.due = self.board.due_counts(Local::now().date_naive());
         }
     }
 
@@ -1013,6 +1014,10 @@ impl BoardView {
             cx.notify();
             return;
         }
+
+        // 離れるボードの期限の件数を、いまの盤面から確定させる。切り替えたあとは
+        // メモリ上の盤面が入れ替わるので、ここで書き戻さないと一覧が古いままになる。
+        self.sync_current_board_summary();
 
         let result = Database::open(&self.database_path)
             .and_then(|database| database.load_board_by_id(board_id));
@@ -1094,6 +1099,8 @@ impl BoardView {
                             name: board.name.clone(),
                             created_at: board.created_at,
                             updated_at: board.updated_at,
+                            // 作ったばかりのボードにカードは無い。
+                            due: DueCounts::default(),
                         };
                         self.boards.push(summary);
                         self.board = board;
@@ -2961,7 +2968,33 @@ impl BoardView {
 
     /// 畳んだときのレール。開くボタンだけを置く。ボードの切り替え・追加・名前変更・
     /// 削除はボードメニューとファイルメニューから届くので、ここには並べない。
+    /// 一覧の 1 行に出す期限の件数。
+    ///
+    /// 開いているボードだけはメモリ上の盤面から数える。まだ保存が終わっていない
+    /// 編集も画面には出ているので、そちらと食い違わせない。ほかのボードは読み込み
+    /// のときに SQL が数えた値をそのまま使う。
+    fn due_counts_for(&self, summary: &BoardSummary, today: NaiveDate) -> DueCounts {
+        if summary.id == self.board.id {
+            self.board.due_counts(today)
+        } else {
+            summary.due
+        }
+    }
+
+    /// すべてのボードを合わせた期限の件数。畳んだ帯に出す印に使う。
+    fn total_due_counts(&self, today: NaiveDate) -> DueCounts {
+        self.boards
+            .iter()
+            .fold(DueCounts::default(), |mut total, summary| {
+                let counts = self.due_counts_for(summary, today);
+                total.overdue += counts.overdue;
+                total.today += counts.today;
+                total
+            })
+    }
+
     fn render_sidebar_rail(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let totals = self.total_due_counts(Local::now().date_naive());
         div()
             .w(px(44.))
             .h_full()
@@ -2980,6 +3013,9 @@ impl BoardView {
                     .label("›")
                     .on_click(cx.listener(|this, _, window, cx| this.toggle_sidebar(window, cx))),
             )
+            // 畳んでいる間はボード名が出ないので、どのボードかまでは言えない。
+            // 「開いて確かめる価値があるか」だけを伝える。
+            .children(render_rail_due_mark(totals, cx.theme()))
     }
 
     fn render_sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -2987,6 +3023,7 @@ impl BoardView {
             return self.render_sidebar_rail(cx).into_any_element();
         }
         let editing_board = self.editing_board.as_ref();
+        let today = Local::now().date_naive();
         div()
             .w(px(220.))
             .h_full()
@@ -3061,9 +3098,21 @@ impl BoardView {
                             }))
                             .child(
                                 div()
-                                    .text_sm()
-                                    .text_color(theme_color(cx, UiColor::Foreground))
-                                    .child(summary.name.clone()),
+                                    .flex()
+                                    .flex_col()
+                                    .gap_1()
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .text_color(theme_color(cx, UiColor::Foreground))
+                                            .child(summary.name.clone()),
+                                    )
+                                    // 縦並びの直下に置くとチップが幅いっぱいに
+                                    // 伸びるので、横並びの行で包む。
+                                    .children(render_due_counts(
+                                        self.due_counts_for(summary, today),
+                                        cx.theme(),
+                                    )),
                             )
                     }))
                     .when(self.boards.is_empty(), |this| {
@@ -5173,6 +5222,60 @@ fn markdown_inline(value: &str) -> String {
         .replace('`', "\\`")
         .replace('[', "\\[")
         .replace(']', "\\]")
+}
+
+/// ボード一覧の 1 行に出す期限の件数。
+///
+/// 色だけに意味を持たせない決まりなので、数の隣に何の件数かを書く。件数が 0 の
+/// ものは出さない。両方 0 なら行は名前だけになる。
+fn render_due_counts(counts: DueCounts, theme: &Theme) -> Option<impl IntoElement> {
+    if counts.is_empty() {
+        return None;
+    }
+    Some(
+        div()
+            .flex()
+            .flex_wrap()
+            .gap_2()
+            .children((counts.overdue > 0).then(|| {
+                div()
+                    .text_xs()
+                    // `danger_foreground` は danger 背景の上に載せる文字色なので、
+                    // 素の面では読めない。背景色のほうを文字色に使う。
+                    .text_color(theme.danger)
+                    .child(format!("⚠ 期限切れ {}", counts.overdue))
+            }))
+            .children((counts.today > 0).then(|| {
+                div()
+                    .text_xs()
+                    .text_color(theme.warning)
+                    .child(format!("◷ 今日 {}", counts.today))
+            })),
+    )
+}
+
+/// 畳んだ帯に出す印。幅が 44px しかないので、記号と数だけにする。
+///
+/// 期限切れがあればそちらを出す。先に知りたいのは過ぎているほうで、両方を並べる
+/// 幅は無い。
+fn render_rail_due_mark(counts: DueCounts, theme: &Theme) -> Option<impl IntoElement> {
+    if counts.overdue > 0 {
+        Some(
+            div()
+                .text_xs()
+                .text_color(theme.danger)
+                .child(format!("⚠{}", counts.overdue)),
+        )
+    } else if counts.today > 0 {
+        Some(
+            div()
+                .text_xs()
+                .text_color(theme.warning)
+                .child(format!("◷{}", counts.today)),
+        )
+    } else {
+        None
+    }
 }
 
 fn render_due_badge(due_date: NaiveDate, today: NaiveDate, theme: &Theme) -> impl IntoElement {

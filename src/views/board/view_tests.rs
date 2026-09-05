@@ -15,6 +15,7 @@
 
 use std::{cell::RefCell, path::PathBuf, rc::Rc};
 
+use chrono::{Duration, Local};
 use gpui_kit::{
     component::{Root, Theme},
     AppContext as _, Entity, TestAppContext, VisualTestContext,
@@ -437,6 +438,59 @@ fn undo_takes_back_a_saved_card(cx: &mut TestAppContext) {
             .any(|column| column.cards.iter().any(|card| card.title == "あとで消す")),
         "undo reaches the database, not only the screen"
     );
+}
+
+/// 受け入れ条件「ボードを開かなくても、どのボードに期限切れ / 本日期限の
+/// カードがあるか分かる」（#62）。
+#[gpui_kit::test]
+fn the_board_list_shows_the_due_counts_of_a_board_that_is_not_open(cx: &mut TestAppContext) {
+    let today = Local::now().date_naive();
+    let (harness, cx) = open_seeded_board(cx, |database, _| {
+        let mut other = database
+            .create_board("仕事")
+            .expect("a second board is made");
+        let column_id = other.columns[0].id;
+        let overdue = other
+            .add_card(column_id, "過ぎている", "")
+            .expect("the column exists");
+        let due_today = other
+            .add_card(column_id, "今日まで", "")
+            .expect("the column exists");
+        other
+            .set_card_due_date(overdue, Some(today - Duration::days(1)))
+            .expect("the card exists");
+        other
+            .set_card_due_date(due_today, Some(today))
+            .expect("the card exists");
+        database
+            .save_board(&mut other)
+            .expect("the board is stored");
+    });
+
+    let counts = harness.view.read_with(cx, |view, _| {
+        let other = view
+            .boards
+            .iter()
+            .find(|summary| summary.id != view.board.id)
+            .expect("the second board is listed")
+            .clone();
+        view.due_counts_for(&other, today)
+    });
+
+    assert_eq!(counts.overdue, 1);
+    assert_eq!(counts.today, 1);
+
+    // 開いているほうは期限を持たないので、行は名前だけになる。
+    let open_board = harness.view.read_with(cx, |view, _| {
+        let summary = view
+            .boards
+            .iter()
+            .find(|summary| summary.id == view.board.id)
+            .expect("the open board is listed")
+            .clone();
+        view.due_counts_for(&summary, today)
+    });
+    assert!(open_board.is_empty());
 }
 
 #[gpui_kit::test]

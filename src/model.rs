@@ -15,6 +15,24 @@ pub struct BoardSummary {
     pub name: String,
     pub created_at: i64,
     pub updated_at: i64,
+    /// ボードを開かずに読み取れる期限の件数。ボード一覧の各行に出す。
+    pub due: DueCounts,
+}
+
+/// 期限切れと本日期限のカードの枚数。
+///
+/// 期限は表示するだけで通知しないので、見に行かなければ気づけない。ボードが
+/// 増えると見に行く先も増えるので、開かなくても分かるようにこれを一覧に出す（#62）。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DueCounts {
+    pub overdue: usize,
+    pub today: usize,
+}
+
+impl DueCounts {
+    pub fn is_empty(&self) -> bool {
+        self.overdue == 0 && self.today == 0
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -508,6 +526,23 @@ impl Board {
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
         }
+    }
+
+    /// 開いているボードの期限の件数。
+    ///
+    /// 一覧に出す件数は SQL 側で数えるが、開いているボードだけは、まだ保存されて
+    /// いない編集も含めて画面と一致していてほしいのでここで数える。アーカイブ済みの
+    /// カードは数えない。終わったものに期限切れも本日期限も無い。
+    pub fn due_counts(&self, today: NaiveDate) -> DueCounts {
+        let mut counts = DueCounts::default();
+        for card in self.columns.iter().flat_map(|column| column.cards.iter()) {
+            match due_status(card.due_date, today) {
+                DueStatus::Overdue(_) => counts.overdue += 1,
+                DueStatus::Today => counts.today += 1,
+                _ => {}
+            }
+        }
+        counts
     }
 
     pub fn rename(&mut self, name: impl Into<String>) -> Result<bool, BoardError> {
@@ -2936,6 +2971,34 @@ mod tests {
         assert_eq!(parse_card_number_query("#12a"), None);
         assert_eq!(parse_card_number_query("イベント"), None);
         assert!(card_matches_search(card, "#イベント"));
+    }
+
+    #[test]
+    fn counts_only_the_cards_that_are_overdue_or_due_today() {
+        let mut board = Board::fixture();
+        let today = NaiveDate::from_ymd_opt(2026, 9, 5).unwrap();
+        let column_id = board.columns[0].id;
+        let overdue = board.add_card(column_id, "過ぎている", "").unwrap();
+        let due_today = board.add_card(column_id, "今日まで", "").unwrap();
+        let later = board.add_card(column_id, "まだ先", "").unwrap();
+        let archived = board.add_card(column_id, "終わったもの", "").unwrap();
+        board
+            .set_card_due_date(overdue, NaiveDate::from_ymd_opt(2026, 8, 30))
+            .unwrap();
+        board.set_card_due_date(due_today, Some(today)).unwrap();
+        board
+            .set_card_due_date(later, NaiveDate::from_ymd_opt(2026, 9, 30))
+            .unwrap();
+        board
+            .set_card_due_date(archived, NaiveDate::from_ymd_opt(2026, 8, 1))
+            .unwrap();
+        board.archive_card(archived).unwrap();
+
+        let counts = board.due_counts(today);
+        assert_eq!(counts.overdue, 1, "the archived card is not counted");
+        assert_eq!(counts.today, 1);
+        assert!(!counts.is_empty());
+        assert!(Board::fixture().due_counts(today).is_empty());
     }
 
     #[test]
