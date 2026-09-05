@@ -29,7 +29,11 @@ Use Rust 2021 conventions and four-space indentation; let `rustfmt` determine la
 
 ## Testing Guidelines
 
-Name tests after observable behavior, for example `moves_card_to_another_column`. Add model tests for ordering and invalid IDs, and database tests using `tempfile` rather than the real `.ekanban.sqlite3`. Run formatting, Clippy, and all-feature tests before submitting changes.
+Name tests after observable behavior, for example `moves_card_to_another_column`. Add model tests for ordering and invalid IDs, and database tests using `tempfile` rather than the real `.ekanban.sqlite3`.
+
+View behavior is tested against a real window. `src/views/board/view_tests.rs` uses GPUI's headless test platform through `#[gpui_kit::test]`: it opens a `BoardView` in a `TestAppContext` window, dispatches the actions and keystrokes a user would, and asserts on both the on-screen state and what reached SQLite. Wait with `run_until_parked()` rather than `sleep`, take the key bindings from `crate::menu::install` instead of redefining them, and read the saved result back through `Harness::stored_board`. See the テスト section of `docs/DEVELOPMENT.md` for the details.
+
+Run formatting, Clippy, and all-feature tests before submitting changes.
 
 ## Commits and Pull Requests
 

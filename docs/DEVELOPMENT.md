@@ -25,11 +25,13 @@ src/
   views/
     mod.rs
     board.rs      ボードの描画、入力、ドラッグ＆ドロップ
+    board/
+      view_tests.rs  ウィンドウを開いて確かめるテスト
     capture.rs    クイックキャプチャの 1 行ウィンドウ
 ```
 
 - **UI から SQL を直接実行しません。** SQL は `src/db/` に閉じます
-- テストは実装と同じモジュールの `#[cfg(test)]` に置きます。データベースのテストは `tempfile` を使い、実物のデータベースを触りません
+- テストは実装と同じモジュールの `#[cfg(test)]` に置きます。データベースのテストは `tempfile` を使い、実物のデータベースを触りません。ビューのテストについては [テスト](#テスト) を見てください
 - カード移動やカラム移動の保存は、必ず 1 つのトランザクションで行います
 
 ## UI の基盤
@@ -143,6 +145,43 @@ app_state
 - 日本語の文字列をキーイベントから自前で組み立てません
 - IME の変換中の Enter や Escape を、ショートカットとして取り上げません
 - 入力欄を追加・変更したら、日本語 IME での入力を実機で確認してください
+
+## テスト
+
+テストは 2 種類あります。
+
+**関数のテスト。** 実装と同じモジュールの `#[cfg(test)]` に置きます。モデルの並べ替え、期限の判定、エラー文言の組み立てのように、ウィンドウが無くても答えの出るものはこちらで書きます。データベースのテストは `tempfile` を使い、実物のデータベースを触りません。
+
+**ビューのテスト。** `src/views/board/view_tests.rs` にあります。GPUI にはヘッドレスのテスト用プラットフォーム（`TestPlatform`）があり、`#[gpui_kit::test]` を付けると GPU もウィンドウマネージャも無いまま `App` と `Window` が立ち上がります。ここでは `BoardView` を本物のウィンドウに載せ、キー入力とアクションを流し込んで、画面の状態と SQLite に書かれた内容の両方を確かめます。使うには `test-support` feature が要るので、`Cargo.toml` の `[dev-dependencies]` で `gpui-kit` にだけ付けてあります（製品ビルドには入りません）。
+
+```rust
+#[gpui_kit::test]
+fn adding_a_card_and_saving_it_writes_the_title_to_the_database(cx: &mut TestAppContext) {
+    let (harness, cx) = open_board(cx);
+    focus_board(&harness, cx);
+
+    cx.dispatch_action(AddCard);
+    cx.run_until_parked();
+    cx.simulate_input("牛乳を買う");
+    cx.dispatch_action(SaveEdit);
+    cx.run_until_parked();
+
+    assert!(harness.stored_board().columns[0]
+        .cards
+        .iter()
+        .any(|card| card.title == "牛乳を買う"));
+}
+```
+
+書くときの決まりごと:
+
+- **待ち時間は `run_until_parked()` で決めます。** テストの時計は偽物なので、`sleep` は使いません。非同期の保存を挟む操作は、確かめる前に必ず `run_until_parked()` します
+- **キー入力の前にボードへフォーカスを戻します**（`focus_board`）。入力欄にフォーカスがある間はボードのショートカットが効かないためです
+- **割り当ては `crate::menu::install` が入れた本物を使います。** テスト用に定義し直すと、`src/menu.rs` の割り当てを変えたときにテストだけ通ってしまいます
+- **確かめるのは画面とディスクの両方です。** `Harness::stored_board` がデータベースを開き直して読みます。メモリ上のモデルだけを見ると、保存の経路が壊れても気づけません
+- ウィンドウのルートは本番と同じ `Root` にします。確認ダイアログと通知がここに載ります
+
+`TestPlatform` は実際の描画も IME もウィンドウ管理もしません。日本語 IME での入力とライト／ダークの見え方は、これまで通り実機で確認してください。
 
 ## ビルド
 
