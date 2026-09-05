@@ -17,7 +17,7 @@ use std::{cell::RefCell, path::PathBuf, rc::Rc};
 
 use chrono::{Duration, Local};
 use gpui_kit::{
-    component::{Root, Theme},
+    component::{Root, Theme, WindowExt as _},
     AppContext as _, Entity, TestAppContext, VisualTestContext,
 };
 use tempfile::TempDir;
@@ -101,9 +101,13 @@ impl Harness {
         })
     }
 
-    fn status_text(&self, cx: &mut VisualTestContext) -> Option<String> {
-        self.view
-            .read_with(cx, |view, _| view.status.as_ref().map(|s| s.text.clone()))
+    /// ダイアログが開いているか。
+    ///
+    /// ヘッダの常時表示をやめたので、アプリが何か言ったかどうかはここで見る
+    /// （#86）。伝えるのは失敗と、アプリの外にファイルを書けたときだけなので、
+    /// 拒否やキャンセルのあとはここが `false` のままであることが答えになる。
+    fn dialog_is_open(&self, cx: &mut VisualTestContext) -> bool {
+        cx.update(|window, cx| window.has_active_dialog(cx))
     }
 
     fn selected_card(&self, cx: &mut VisualTestContext) -> Option<CardId> {
@@ -241,8 +245,8 @@ fn opens_a_window_showing_the_stored_board(cx: &mut TestAppContext) {
         "the window shows exactly the columns and cards that are stored"
     );
     assert!(
-        harness.status_text(cx).is_none(),
-        "opening the board reports nothing"
+        !harness.dialog_is_open(cx),
+        "opening the board says nothing at all"
     );
 }
 
@@ -437,6 +441,39 @@ fn undo_takes_back_a_saved_card(cx: &mut TestAppContext) {
             .iter()
             .any(|column| column.cards.iter().any(|card| card.title == "あとで消す")),
         "undo reaches the database, not only the screen"
+    );
+}
+
+/// 保存に失敗したら、ダイアログで知らせる（#86）。
+///
+/// 失敗すると `SaveFailure::Restore*` が編集内容を巻き戻す。以前はそれを
+/// ヘッダの小さな文字でしか伝えていなかったので、黙って編集が取り消されたように
+/// 見えていた。いちばん見逃されたら困るものが、いちばん見逃されやすかった。
+///
+/// 失敗させるには、データベースのファイルをディレクトリに差し替える。保存は
+/// そのつどパスを開き直す（`save_board_snapshot`）ので、どの OS でも開けなくなる。
+#[gpui_kit::test]
+fn a_failed_save_opens_a_dialog_instead_of_quietly_undoing_the_edit(cx: &mut TestAppContext) {
+    let (harness, cx) = open_board(cx);
+    focus_board(&harness, cx);
+
+    std::fs::remove_file(&harness.database_path).expect("the database file exists");
+    std::fs::create_dir(&harness.database_path).expect("a directory takes its place");
+
+    cx.dispatch_action(AddCard);
+    cx.run_until_parked();
+    cx.simulate_input("保存できないカード");
+    cx.dispatch_action(SaveEdit);
+    cx.run_until_parked();
+
+    assert!(
+        harness.dialog_is_open(cx),
+        "a save that failed says so instead of rolling back in silence"
+    );
+    assert_eq!(
+        harness.editing_title(cx).as_deref(),
+        Some("保存できないカード"),
+        "and what was typed is handed back rather than thrown away"
     );
 }
 
@@ -672,9 +709,9 @@ fn cards_cannot_be_added_while_the_archive_is_shown(cx: &mut TestAppContext) {
     cx.run_until_parked();
 
     assert_eq!(harness.columns_of(cx)[0].1.len(), before);
-    assert_eq!(
-        harness.status_text(cx).as_deref(),
-        Some("アーカイブ表示中はカードを追加できません")
+    assert!(
+        !harness.dialog_is_open(cx),
+        "the refusal is silent: the archive view simply has nowhere to add a card"
     );
 }
 
@@ -871,10 +908,9 @@ fn deleting_the_only_board_is_refused_before_the_dialog(cx: &mut TestAppContext)
     cx.dispatch_action(DeleteBoard);
     cx.run_until_parked();
 
-    assert_eq!(
-        harness.status_text(cx).as_deref(),
-        Some("最後のボードは削除できません"),
-        "the reason is shown instead of a confirmation dialog"
+    assert!(
+        !harness.dialog_is_open(cx),
+        "no confirmation dialog is opened for a deletion that would be refused"
     );
     assert_eq!(
         harness.view.read_with(cx, |view, _| view.board.id),
