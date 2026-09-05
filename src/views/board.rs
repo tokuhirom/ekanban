@@ -40,9 +40,9 @@ use crate::{
     db::{save_board_snapshot, Database, DbError, FilterState, WindowBoundsState},
     hotkey::{QuickCapture, Shortcut},
     model::{
-        card_matches_search, due_status, parse_due_date, parse_wip_limit, Board, BoardError,
-        BoardId, BoardSummary, Card, CardId, ChecklistItem, ChecklistItemDraft, ChecklistItemId,
-        Column, ColumnId, DueStatus, Tag, TagId,
+        card_matches_search, due_status, find_urls, parse_due_date, parse_wip_limit, Board,
+        BoardError, BoardId, BoardSummary, Card, CardId, ChecklistItem, ChecklistItemDraft,
+        ChecklistItemId, Column, ColumnId, DueStatus, Tag, TagId,
     },
 };
 
@@ -4344,8 +4344,46 @@ impl BoardView {
             )
     }
 
+    /// 説明に貼られた URL を、説明欄の下に並べる。
+    ///
+    /// 説明そのものはプレーンテキストのままにする（`docs/DESIGN.md`）。文中を
+    /// リンクに差し替えると、`Textarea` を読むだけの表示と入れ替える形になり、
+    /// 編集と IME の挙動に手を入れることになる。別の行に出せば、編集の経路には
+    /// 一切触らない。
+    fn render_description_links(
+        &self,
+        description: &str,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let urls = find_urls(description)
+            .into_iter()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        if urls.is_empty() {
+            return None;
+        }
+
+        let mut links = div().flex().flex_col().gap_1().child(
+            div()
+                .text_xs()
+                .text_color(theme_color(cx, UiColor::MutedForeground))
+                .child("リンク"),
+        );
+        for (index, url) in urls.into_iter().enumerate() {
+            let opened = url.clone();
+            links = links.child(
+                Button::new(("description-link", index as u64))
+                    .ghost()
+                    .label(url)
+                    .on_click(cx.listener(move |_, _, _, cx| cx.open_url(&opened))),
+            );
+        }
+        Some(links.into_any_element())
+    }
+
     fn render_card_editor(&self, editor: &CardEditor, cx: &mut Context<Self>) -> impl IntoElement {
         let title_value = editor.title.read(cx).value().to_string();
+        let description_value = editor.description.read(cx).value().to_string();
         let title_error = if title_value.trim().is_empty() {
             Some("タイトルを入力してください".to_string())
         } else {
@@ -4405,6 +4443,7 @@ impl BoardView {
                 Textarea::new(&editor.description).h(px(96.)),
                 cx,
             ))
+            .children(self.render_description_links(&description_value, cx))
             .child(
                 div()
                     .text_xs()

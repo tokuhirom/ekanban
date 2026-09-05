@@ -749,3 +749,73 @@ fn a_column_with_more_cards_than_fit_scrolls_inside_the_window(cx: &mut TestAppC
          max_offset {max_offset:?}"
     );
 }
+
+#[gpui_kit::test]
+fn shows_the_links_found_in_a_description(cx: &mut TestAppContext) {
+    let (harness, cx) = open_seeded_board(cx, |database, board| {
+        let column_id = board.columns[0].id;
+        let card_id = board
+            .add_card(column_id, "参照つきのカード", "")
+            .expect("the column takes a card");
+        board
+            .update_card(
+                card_id,
+                "参照つきのカード",
+                "設計は https://example.com/design 。PR は https://example.com/pull/1",
+            )
+            .expect("the description is written");
+        database
+            .save_board(board)
+            .expect("the seeded card is stored");
+    });
+    focus_board(&harness, cx);
+
+    let card_id = harness
+        .view
+        .read_with(cx, |view, _| {
+            view.board.columns[0]
+                .cards
+                .iter()
+                .find(|card| card.title == "参照つきのカード")
+                .map(|card| card.id)
+        })
+        .expect("the seeded card is on the board");
+
+    cx.update(|window, cx| {
+        harness
+            .view
+            .update(cx, |view, cx| view.open_card_panel(card_id, window, cx))
+    });
+    cx.run_until_parked();
+
+    let (description, has_links, plain_has_links) = cx.update(|_, cx| {
+        harness.view.update(cx, |view, cx| {
+            let description = view
+                .editing_card
+                .as_ref()
+                .expect("the panel is open")
+                .description
+                .read(cx)
+                .value()
+                .to_string();
+            let has_links = view.render_description_links(&description, cx).is_some();
+            // 同じ画面でも、URL の無い説明には行を出さない。
+            let plain_has_links = view.render_description_links("ただの説明", cx).is_some();
+            (description, has_links, plain_has_links)
+        })
+    });
+
+    assert_eq!(
+        crate::model::find_urls(&description),
+        ["https://example.com/design", "https://example.com/pull/1"],
+        "both addresses are in the description, and the full stop after the first is not part of one"
+    );
+    assert!(
+        has_links,
+        "so the panel puts a link row under the description"
+    );
+    assert!(
+        !plain_has_links,
+        "a description without an address gets no row at all"
+    );
+}

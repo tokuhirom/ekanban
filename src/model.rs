@@ -389,6 +389,79 @@ pub fn card_matches_search(card: &Card, query: &str) -> bool {
         || normalize_search_text(&card.description).contains(&query)
 }
 
+/// 説明の中の `http(s)://` を、出てきた順に取り出す。
+///
+/// 説明はプレーンテキストのままにする方針（`docs/DESIGN.md` の「やらないこと」に
+/// Markdown の描画がある）なので、ここでやるのは URL を見つけることだけ。見出しも
+/// 強調も解釈しない。
+///
+/// 拾うのは `http://` と `https://` だけ。裸の `example.com` や `ftp://` まで
+/// 拾うと、URL でない文字列がリンクになる（受け入れ条件「URL 以外の文字列が
+/// リンクとして誤検出されない」）。
+pub fn find_urls(text: &str) -> Vec<&str> {
+    const SCHEMES: [&str; 2] = ["https://", "http://"];
+
+    let mut found: Vec<&str> = Vec::new();
+    let mut rest = text;
+    while !rest.is_empty() {
+        let Some((start, scheme)) = SCHEMES
+            .iter()
+            .filter_map(|scheme| rest.find(scheme).map(|at| (at, *scheme)))
+            .min_by_key(|(at, _)| *at)
+        else {
+            break;
+        };
+
+        let candidate = &rest[start..];
+        let end = candidate
+            .find(char::is_whitespace)
+            .unwrap_or(candidate.len());
+        let url = trim_url_tail(&candidate[..end]);
+
+        // スキームだけのものは URL として扱わない。
+        if url.len() > scheme.len() && !found.contains(&url) {
+            found.push(url);
+        }
+        rest = &candidate[end..];
+    }
+    found
+}
+
+/// URL の末尾に付いてきた句読点や閉じ括弧を落とす。
+///
+/// 「詳しくは https://example.com/a 。」の `。` は URL ではない。ただし `)` は、
+/// 対応する `(` が URL の中にあるなら残す。`https://ja.wikipedia.org/wiki/Rust_(プログラミング言語)`
+/// のようなアドレスを壊さないため。
+fn trim_url_tail(url: &str) -> &str {
+    const TAIL: [char; 20] = [
+        '.', ',', ';', ':', '!', '?', '"', '\'', ']', '}', '>', '。', '、', '！', '？', '」', '』',
+        '】', '）', ')',
+    ];
+
+    let mut url = url;
+    while let Some(last) = url.chars().next_back() {
+        if !TAIL.contains(&last) {
+            break;
+        }
+        // 対応する開き括弧があるなら、閉じ括弧は URL の一部。
+        let opening = match last {
+            ')' => Some('('),
+            '）' => Some('（'),
+            ']' => Some('['),
+            '}' => Some('{'),
+            _ => None,
+        };
+        if let Some(opening) = opening {
+            let body = &url[..url.len() - last.len_utf8()];
+            if body.matches(opening).count() > body.matches(last).count() {
+                break;
+            }
+        }
+        url = &url[..url.len() - last.len_utf8()];
+    }
+    url
+}
+
 impl Board {
     pub(crate) fn new_empty(
         id: BoardId,
@@ -2475,8 +2548,8 @@ mod tests {
     use chrono::NaiveDate;
 
     use super::{
-        card_matches_search, due_status, normalize_search_text, parse_due_date, Board, BoardError,
-        CardEventKind, ChecklistItemDraft, DueStatus,
+        card_matches_search, due_status, find_urls, normalize_search_text, parse_due_date, Board,
+        BoardError, CardEventKind, ChecklistItemDraft, DueStatus,
     };
 
     #[test]
@@ -3139,6 +3212,62 @@ mod tests {
                 }],
             ),
             Err(BoardError::EmptyChecklistItemText)
+        );
+    }
+
+    #[test]
+    fn finds_the_urls_in_a_description() {
+        assert_eq!(
+            find_urls("設計は https://example.com/design 、PR は https://example.com/pull/1 です"),
+            ["https://example.com/design", "https://example.com/pull/1"],
+            "the links come back in the order they were written"
+        );
+        assert_eq!(
+            find_urls("改行のあと\nhttp://example.com/plain"),
+            ["http://example.com/plain"]
+        );
+    }
+
+    #[test]
+    fn leaves_plain_text_alone() {
+        for description in [
+            "",
+            "URL のない説明",
+            "example.com は裸のホスト名なので拾わない",
+            "ftp://example.com/file は http でも https でもない",
+            "https:// だけではアドレスにならない",
+        ] {
+            assert!(
+                find_urls(description).is_empty(),
+                "nothing in {description:?} is a link"
+            );
+        }
+    }
+
+    #[test]
+    fn drops_trailing_punctuation_but_keeps_a_balanced_bracket() {
+        assert_eq!(
+            find_urls("詳しくは https://example.com/a 。"),
+            ["https://example.com/a"],
+            "the full stop after the address is not part of it"
+        );
+        assert_eq!(
+            find_urls("(https://example.com/b) を見る"),
+            ["https://example.com/b"],
+            "and neither is a bracket that only wraps it"
+        );
+        assert_eq!(
+            find_urls("https://ja.wikipedia.org/wiki/Rust_(プログラミング言語)"),
+            ["https://ja.wikipedia.org/wiki/Rust_(プログラミング言語)"],
+            "but a bracket the address opened itself stays"
+        );
+    }
+
+    #[test]
+    fn lists_a_repeated_url_once() {
+        assert_eq!(
+            find_urls("https://example.com/a と https://example.com/a は同じ"),
+            ["https://example.com/a"]
         );
     }
 }
