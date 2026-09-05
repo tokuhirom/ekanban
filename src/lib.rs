@@ -370,7 +370,10 @@ mod tests {
     /// こちらは `include_str!` のパスがコンパイル時に見ている。
     #[test]
     fn the_linux_desktop_entry_points_at_the_app_id() {
-        let entry = include_str!("../assets/dev.tokuhirom.ekanban.desktop");
+        // 見たいのは中身であって行末ではない。`.gitattributes` が LF に固定して
+        // いるが、それが外れたときにここが落ちても理由が読み取れないので、
+        // 読んだ時点でそろえる。
+        let entry = include_str!("../assets/dev.tokuhirom.ekanban.desktop").replace("\r\n", "\n");
         assert!(
             entry.contains(&format!("\nStartupWMClass={APP_ID}\n")),
             "StartupWMClass must match WindowOptions.app_id"
