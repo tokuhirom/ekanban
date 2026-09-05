@@ -47,4 +47,6 @@ Work in progress is tracked in GitHub issues, not in a roadmap document. When yo
 
 `README.md` is user-facing: what the app does, how to install and run it, where its data lives. Developer-facing material (module layout, schema, bundling, signing, CI) belongs in `docs/DEVELOPMENT.md`, and usage in `docs/MANUAL.md`.
 
-`docs/DESIGN.md` holds only what outlives a single issue: the design rules new code must follow, what is out of scope, what was considered and deliberately rejected, and the completion checklist every change must satisfy. Do not add task lists or schedules to it. When you make a decision that constrains future work, or reverse an earlier one, record it there with the reasoning.
+`docs/DESIGN.md` holds only what outlives a single issue: the design rules new code must follow, what is out of scope, what was considered and deliberately rejected, and the completion checklist every change must satisfy. Do not add task lists or schedules to it. It is the list of rules **as they stand now**, so rewrite an entry when the decision behind it changes.
+
+`docs/adr/` keeps the reasoning those rules came from, one file per decision. Add an ADR when a decision has alternatives worth recording or would otherwise be re-litigated; link to it from the matching rule in `docs/DESIGN.md`. **Never edit an existing ADR** — supersede it with a new one and mark the old one's status. Do not repeat the same text in both places: rules in `DESIGN.md`, reasoning in the ADR. See `docs/adr/README.md` for the template.

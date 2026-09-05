@@ -267,7 +267,7 @@ GitHub Actions（`.github/workflows/ci.yml`）が、`main` への push と pull 
 
 macOS と Windows を回すのは、そこでしかコンパイルされないコードがあるためです。`src/menu.rs` のネイティブメニューバー（`cx.set_menus` が実際に効くのは macOS だけ）、`src/paths.rs` と `src/diagnostics.rs` の `#[cfg(windows)]` / `#[cfg(target_os = "macos")]` の分岐が該当します。fmt と clippy はプラットフォームに依らないので ubuntu だけで回します。
 
-**`check` ジョブを matrix にしてはいけません。** matrix にすると check run の名前が `Check and test (ubuntu-latest)` になり、ルールセットが必須にしている `Check and test` がどこにも現れなくなって、すべての pull request がマージ不能になります。プラットフォームを足すときは、別ジョブとして足してください。
+**`check` ジョブを matrix にしてはいけません。**（この判断の経緯は [ADR 0006](adr/0006-ci-on-three-platforms.md)） matrix にすると check run の名前が `Check and test (ubuntu-latest)` になり、ルールセットが必須にしている `Check and test` がどこにも現れなくなって、すべての pull request がマージ不能になります。プラットフォームを足すときは、別ジョブとして足してください。
 
 `main` には `Check and test` を必須にしたルールセットが掛かっているので、直接 push はできません。`main` からブランチを切り、`Closes #<issue>` を書いた pull request を出してください。
 
