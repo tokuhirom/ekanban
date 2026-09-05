@@ -1,6 +1,8 @@
 use std::{
+    cell::RefCell,
     collections::{HashMap, VecDeque},
     path::{Path, PathBuf},
+    rc::Rc,
     sync::{Arc, Mutex},
 };
 
@@ -15,15 +17,17 @@ use gpui_kit::{
     component::WindowExt as _,
     component::{
         button::{Button, ButtonVariant, ButtonVariants as _},
-        ActiveTheme, Theme, ThemeMode,
+        ActiveTheme, Root, Theme, ThemeMode,
     },
     div, point,
     prelude::*,
-    px, rgb, App, Bounds, Context, DragMoveEvent, Entity, FocusHandle, Focusable as _, Half,
+    px, rgb, size, App, Bounds, Context, DragMoveEvent, Entity, FocusHandle, Focusable as _, Half,
     IntoElement, KeyDownEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent, Pixels, Point,
-    Render, ScrollHandle, SharedString, Subscription, Task, Window,
+    Render, ScrollHandle, SharedString, Subscription, Task, Window, WindowBounds, WindowHandle,
+    WindowKind, WindowOptions,
 };
 
+use super::capture::CaptureView;
 use crate::{
     actions::{
         About, AddBoard, AddCard, AddColumn, AddTag, BackupDatabase, CancelEdit, ClearSearch,
@@ -327,7 +331,19 @@ pub struct BoardView {
     window_title: String,
     quick_capture_shortcut: Option<Shortcut>,
     capturing_shortcut: Option<ShortcutCapture>,
+    capture_window: Option<CaptureWindow>,
+    /// キャプチャからの保存の id。`finish_save` で結果を返す先を見分ける。
+    capture_save: Option<u64>,
     _quick_capture_task: Task<()>,
+}
+
+/// 開いているキャプチャウィンドウ。
+struct CaptureWindow {
+    handle: WindowHandle<Root>,
+    view: Entity<CaptureView>,
+    /// 開いたときにボードのウィンドウが前面でなかったか。閉じるときに直前の
+    /// アプリへフォーカスを返すかの判断に使う。
+    restore_previous_app: bool,
 }
 
 impl BoardView {
@@ -431,6 +447,8 @@ impl BoardView {
             window_title,
             quick_capture_shortcut: quick_capture.shortcut,
             capturing_shortcut: None,
+            capture_window: None,
+            capture_save: None,
             _quick_capture_task: quick_capture_task,
         };
         if let Some(error) = quick_capture_error {
@@ -528,13 +546,151 @@ impl BoardView {
         cx.notify();
     }
 
-    /// ホットキーが押されたとき。
-    ///
-    /// 1 行入力のキャプチャウィンドウは #12 で足す。ここではアプリを前面に出す。
+    /// ホットキーが押されたとき。1 行入力のウィンドウを画面中央に出す。
     fn on_quick_capture(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         cx.activate(true);
-        window.activate_window();
-        self.set_info("クイックキャプチャのショートカットで前面に出しました");
+
+        if let Some(capture) = self.capture_window.as_ref() {
+            // 既に出ているなら前に出すだけ。二重に開かない。
+            let _ = capture.handle.update(cx, |_, window, _| {
+                window.activate_window();
+            });
+            return;
+        }
+
+        let Some(destination) = capture_destination(&self.board) else {
+            window.activate_window();
+            self.set_error("キャプチャ先のカラムがありません。カラムを追加してください。");
+            cx.notify();
+            return;
+        };
+
+        // ホットキーを押した時点でボードが前面だったかを覚えておく。閉じるときに
+        // アプリごと隠すかどうかがこれで決まる。
+        let restore_previous_app = !window.is_window_active();
+        let board_view = cx.entity().downgrade();
+        let bounds = Bounds::centered(None, size(px(520.), px(132.)), cx);
+        let created: Rc<RefCell<Option<Entity<CaptureView>>>> = Rc::default();
+
+        let opened = cx.open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                // 矩形は保存しない。毎回中央に出す。
+                titlebar: None,
+                kind: WindowKind::PopUp,
+                is_resizable: false,
+                is_minimizable: false,
+                focus: true,
+                show: true,
+                app_id: Some(crate::APP_ID.to_string()),
+                ..Default::default()
+            },
+            {
+                let created = created.clone();
+                move |window, cx| {
+                    let view = cx.new(|cx| CaptureView::new(board_view, destination, window, cx));
+                    *created.borrow_mut() = Some(view.clone());
+                    cx.new(|cx| Root::new(view, window, cx))
+                }
+            },
+        );
+
+        match opened {
+            Ok(handle) => {
+                let Some(view) = created.borrow_mut().take() else {
+                    return;
+                };
+                self.capture_window = Some(CaptureWindow {
+                    handle,
+                    view,
+                    restore_previous_app,
+                });
+            }
+            Err(error) => {
+                window.activate_window();
+                self.set_error(format!(
+                    "クイックキャプチャのウィンドウを開けませんでした: {error}"
+                ));
+                cx.notify();
+            }
+        }
+    }
+
+    /// キャプチャウィンドウからのカード追加。
+    ///
+    /// 既存のカード追加と同じ経路を通すので、カラムの末尾に足り、1 回の保存で
+    /// 永続化され、Undo の対象になり、`created` イベントが 1 件積まれる。
+    /// 結果は保存が終わってから `finish_save` 経由でウィンドウに返る。
+    pub(crate) fn capture_card(
+        &mut self,
+        title: &str,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        let Some(title) = capture_title(title) else {
+            return Err("タイトルを入力してください".to_string());
+        };
+        let Some(column_id) = capture_column_id(&self.board) else {
+            return Err("キャプチャ先のカラムがありません".to_string());
+        };
+
+        let before = self.board.clone();
+        // 説明は空のまま。あとで書く前提の文言を置かない。
+        self.board
+            .add_card(column_id, title, "")
+            .map_err(|error| board_error_detail(&error))?;
+        self.enqueue_save(
+            before,
+            "クイックキャプチャでカードを追加しました",
+            SaveFailure::None,
+            cx,
+        );
+        self.capture_save = Some(self.next_save_id);
+        cx.notify();
+        Ok(())
+    }
+
+    /// キャプチャからの保存が終わったとき。
+    fn finish_capture(&mut self, result: Result<(), String>, cx: &mut Context<Self>) {
+        match result {
+            Ok(()) => self.close_capture_window(cx),
+            Err(message) => {
+                let Some(capture) = self.capture_window.as_ref() else {
+                    return;
+                };
+                capture
+                    .view
+                    .update(cx, |view, cx| view.show_save_error(message, cx));
+            }
+        }
+    }
+
+    /// キャプチャウィンドウを閉じ、フォーカスを戻す。
+    fn close_capture_window(&mut self, cx: &mut Context<Self>) {
+        let Some(capture) = self.capture_window.take() else {
+            return;
+        };
+        let _ = capture.handle.update(cx, |_, window, _| {
+            window.remove_window();
+        });
+        self.restore_focus_after_capture(capture.restore_previous_app, cx);
+    }
+
+    /// キャプチャウィンドウが自分で閉じたとき（`Escape`）。
+    pub(crate) fn on_capture_window_closed(&mut self, cx: &mut Context<Self>) {
+        let Some(capture) = self.capture_window.take() else {
+            return;
+        };
+        self.capture_save = None;
+        self.restore_focus_after_capture(capture.restore_previous_app, cx);
+    }
+
+    fn restore_focus_after_capture(&mut self, restore_previous_app: bool, cx: &mut Context<Self>) {
+        if restore_previous_app {
+            // ほかのアプリを使っている途中で呼ばれたので、そのアプリに戻す。
+            cx.hide();
+        } else {
+            cx.activate(true);
+        }
         cx.notify();
     }
 
@@ -969,6 +1125,16 @@ impl BoardView {
             self.active_save = Some(active);
             return;
         }
+        let capture_result = self
+            .capture_save
+            .take_if(|save_id| *save_id == id)
+            .map(|_| {
+                result
+                    .as_ref()
+                    .map(|_| ())
+                    .map_err(|error| format!("保存に失敗しました: {}", db_error_detail(error)))
+            });
+
         match result {
             Ok(()) => {
                 if self.pending_saves.is_empty() {
@@ -1005,6 +1171,9 @@ impl BoardView {
                 self.sync_current_board_summary();
                 self.present_db_error("保存に失敗しました", error);
             }
+        }
+        if let Some(capture_result) = capture_result {
+            self.finish_capture(capture_result, cx);
         }
         cx.notify();
     }
@@ -4122,7 +4291,7 @@ impl Render for BoardView {
 }
 
 #[derive(Clone, Copy)]
-enum UiColor {
+pub(crate) enum UiColor {
     Background,
     InputBackground,
     Surface,
@@ -4142,7 +4311,7 @@ enum UiColor {
     Popover,
 }
 
-fn theme_color(cx: &gpui_kit::App, color: UiColor) -> gpui_kit::Hsla {
+pub(crate) fn theme_color(cx: &gpui_kit::App, color: UiColor) -> gpui_kit::Hsla {
     let theme = cx.theme();
     match color {
         UiColor::Background => theme.background,
@@ -4172,6 +4341,26 @@ fn theme_color(cx: &gpui_kit::App, color: UiColor) -> gpui_kit::Hsla {
 /// `!control` のような並びが非 macOS では意味が反転するため。
 fn moves_selected_card(modifiers: &Modifiers) -> bool {
     modifiers.secondary() && modifiers.alt && modifiers.number_of_modifiers() == 2
+}
+
+/// キャプチャ先のカラム。今は開いているボードの先頭。選べるようにするのは #13。
+fn capture_column_id(board: &Board) -> Option<ColumnId> {
+    board.columns.first().map(|column| column.id)
+}
+
+/// キャプチャウィンドウに出す「〇〇ボード / △△カラム」。
+fn capture_destination(board: &Board) -> Option<SharedString> {
+    let column = board.columns.first()?;
+    Some(SharedString::from(format!(
+        "{} / {}",
+        board.name, column.name
+    )))
+}
+
+/// キャプチャで受け付けるタイトル。前後の空白を落とし、空なら受け付けない。
+fn capture_title(input: &str) -> Option<&str> {
+    let title = input.trim();
+    (!title.is_empty()).then_some(title)
 }
 
 /// グローバルホットキーのイベントを GPUI のメインループ側で受け取る。
@@ -4670,9 +4859,9 @@ fn field_error_note(message: String, color: gpui_kit::Hsla) -> impl IntoElement 
 #[cfg(test)]
 mod tests {
     use super::{
-        board_error_detail, column_name_for_card, db_error_detail, field_error_for,
-        moves_selected_card, next_card_id, render_board_markdown, window_title, CardDirection,
-        EditorField,
+        board_error_detail, capture_destination, capture_title, column_name_for_card,
+        db_error_detail, field_error_for, moves_selected_card, next_card_id, render_board_markdown,
+        window_title, CardDirection, EditorField,
     };
     use crate::{
         db::DbError,
@@ -4849,5 +5038,31 @@ mod tests {
             ..Modifiers::none()
         };
         assert!(!moves_selected_card(&alt_only));
+    }
+
+    #[test]
+    fn capture_title_drops_surrounding_whitespace() {
+        assert_eq!(capture_title("  買い物  "), Some("買い物"));
+    }
+
+    #[test]
+    fn capture_title_rejects_a_blank_input() {
+        assert_eq!(capture_title(""), None);
+        assert_eq!(capture_title("   \t "), None);
+    }
+
+    #[test]
+    fn capture_destination_names_the_board_and_the_column() {
+        let board = Board::demo();
+        let destination = capture_destination(&board).expect("the demo board has columns");
+        assert!(destination.contains(&board.name));
+        assert!(destination.contains(board.columns[0].name.as_str()));
+    }
+
+    #[test]
+    fn capture_destination_is_undecided_without_a_column() {
+        let mut board = Board::demo();
+        board.columns.clear();
+        assert_eq!(capture_destination(&board), None);
     }
 }

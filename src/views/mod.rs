@@ -1,4 +1,5 @@
 mod board;
+mod capture;
 
 pub use board::BoardView;
 pub(crate) use board::QuickCaptureState;
