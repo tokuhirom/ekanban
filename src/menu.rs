@@ -5,9 +5,10 @@ use crate::hotkey::platform_support;
 use crate::actions::{
     About, AddBoard, AddCard, AddColumn, AddTag, BackupDatabase, CancelEdit, ClearSearch,
     CloseWindow, DeleteBoard, ExportBoardJson, ExportBoardMarkdown, FocusSearch, HideApplication,
-    HideOtherApplications, ManageTags, Quit, Redo, RenameBoard, RevealBackups, RevealDatabase,
-    SaveEdit, SetQuickCaptureShortcut, ShowAllApplications, ToggleArchiveView, ToggleBoardList,
-    ToggleFullscreen, Undo, UseDarkTheme, UseLightTheme, UseSystemTheme,
+    HideOtherApplications, ManageTags, MinimizeWindow, Quit, Redo, RenameBoard, RevealBackups,
+    RevealDatabase, SaveEdit, SetQuickCaptureShortcut, ShowAllApplications, ToggleArchiveView,
+    ToggleBoardList, ToggleFullscreen, Undo, UseDarkTheme, UseLightTheme, UseSystemTheme,
+    ZoomWindow,
 };
 
 pub fn install(cx: &mut App) {
@@ -30,6 +31,9 @@ pub fn install(cx: &mut App) {
         KeyBinding::new("cmd-ctrl-f", ToggleFullscreen, Some("Board")),
         KeyBinding::new("secondary-z", Undo, Some("Board")),
         KeyBinding::new("secondary-shift-z", Redo, Some("Board")),
+        // macOS の「しまう」。`Cmd` を持たない環境では何も起きず、最小化は
+        // ウィンドウマネージャの仕事になる。
+        KeyBinding::new("cmd-m", MinimizeWindow, Some("Board")),
         KeyBinding::new("cmd-q", Quit, None),
         KeyBinding::new("cmd-h", HideApplication, None),
         KeyBinding::new("cmd-alt-h", HideOtherApplications, None),
@@ -97,7 +101,15 @@ pub fn menus() -> Vec<Menu> {
             MenuItem::action("システムに合わせる", UseSystemTheme),
             MenuItem::action("フルスクリーンにする", ToggleFullscreen),
         ]),
-        Menu::new("ウインドウ").items([MenuItem::action("ウインドウを閉じる", CloseWindow)]),
+        // macOS の標準の Window メニューは gpui からは組めない（`SystemMenuType` は
+        // `Services` しか持たない）ので、項目を自分で並べる。`Cmd+M` はメニューに
+        // 項目があってはじめて効く。
+        Menu::new("ウインドウ").items([
+            MenuItem::action("しまう", MinimizeWindow),
+            MenuItem::action("拡大／縮小", ZoomWindow),
+            MenuItem::separator(),
+            MenuItem::action("ウインドウを閉じる", CloseWindow),
+        ]),
         Menu::new("ヘルプ").items([
             MenuItem::action("データベースをコピー…", BackupDatabase),
             MenuItem::action("データベースの場所をFinderで開く", RevealDatabase),
@@ -252,6 +264,9 @@ mod tests {
     ///   キーを持っている。`Cmd/Ctrl+S` と `Escape` で足りる
     /// - 「ウインドウを閉じる」「終了」「隠す」「すべてを表示」はウィンドウ
     ///   マネージャと OS 側の操作
+    /// - 「しまう」「拡大／縮小」は macOS のウィンドウ操作。macOS の `Cmd+M` は
+    ///   メニュー項目があってはじめて効くので置いているが、ほかの環境では
+    ///   ウィンドウマネージャの仕事で、アプリのメニューに出す意味がない
     fn kept_out_of_app_menu() -> Vec<&'static str> {
         vec![
             gpui_kit::NoAction.name(),
@@ -262,6 +277,8 @@ mod tests {
             HideApplication.name(),
             HideOtherApplications.name(),
             ShowAllApplications.name(),
+            MinimizeWindow.name(),
+            ZoomWindow.name(),
         ]
     }
 
@@ -305,6 +322,22 @@ mod tests {
             missing.is_empty(),
             "these menu bar actions cannot be reached without a menu bar: {missing:?}"
         );
+    }
+
+    /// 受け入れ条件「Linux / Windows の `≡` メニューには増えない」（#54）。
+    #[test]
+    fn keeps_the_window_commands_out_of_the_app_menu() {
+        let in_menu_bar = menu_bar_action_names();
+        for command in [MinimizeWindow.name(), ZoomWindow.name()] {
+            assert!(
+                in_menu_bar.contains(&command),
+                "{command} is on the menu bar, where macOS needs it to make Cmd+M work"
+            );
+            assert!(
+                !app_menu_action_names().contains(&command),
+                "{command} is a macOS window command and does not belong in the in-app menu"
+            );
+        }
     }
 
     #[test]
