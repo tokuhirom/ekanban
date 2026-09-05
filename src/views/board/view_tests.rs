@@ -761,33 +761,68 @@ fn shortcuts_stay_out_of_the_way_while_a_field_has_focus(cx: &mut TestAppContext
     );
 }
 
+/// メニューの項目もショートカットの表示も `"Board"` の文脈にぶら下がっている。
+/// 開いた時点でどこにもフォーカスが無いと、メニューから飛ばしたアクションが誰にも
+/// 届かず、押しても何も起きない（#79）。
 #[gpui_kit::test]
-fn the_app_menu_opens_and_escape_closes_it(cx: &mut TestAppContext) {
+fn focuses_the_board_when_the_window_opens(cx: &mut TestAppContext) {
     let (harness, cx) = open_board(cx);
-    focus_board(&harness, cx);
 
-    cx.update(|window, cx| {
+    let focused = cx.update(|window, cx| {
         harness
             .view
-            .update(cx, |view, cx| view.toggle_app_menu(window, cx))
+            .read_with(cx, |view, _| view.focus_handle.is_focused(window))
     });
-    cx.run_until_parked();
-    assert!(
-        harness.view.read_with(cx, |view, _| view.app_menu_open),
-        "the ≡ menu is open"
-    );
-
-    cx.simulate_keystrokes("escape");
-    cx.run_until_parked();
 
     assert!(
-        !harness.view.read_with(cx, |view, _| view.app_menu_open),
-        "escape closes it again"
+        focused,
+        "the board holds focus from the start, so menu actions reach it"
     );
 }
 
 #[gpui_kit::test]
-fn opening_the_app_menu_closes_the_column_menu(cx: &mut TestAppContext) {
+fn draws_a_menu_bar_where_the_operating_system_does_not(cx: &mut TestAppContext) {
+    let (harness, cx) = open_board(cx);
+
+    assert_eq!(
+        harness
+            .view
+            .read_with(cx, |view, _| view.menu_bar.is_some()),
+        !cfg!(target_os = "macos"),
+        "macOS gets its menu bar from the system; everywhere else the board draws one"
+    );
+}
+
+/// `AppMenuBar` が読むのは `GlobalState::app_menus` で、`cx.set_menus` はそこまで
+/// 運んでくれない。橋渡しが外れるとメニューバーが空のまま出るので、届いていることを
+/// 見ておく（#79）。
+#[gpui_kit::test]
+fn hands_the_menu_definitions_to_the_menu_bar(cx: &mut TestAppContext) {
+    let (_harness, cx) = open_board(cx);
+
+    let published = cx.update(|_, cx| {
+        gpui_kit::component::GlobalState::global(cx)
+            .app_menus()
+            .iter()
+            .map(|menu| menu.name.to_string())
+            .collect::<Vec<_>>()
+    });
+    let defined = crate::menu::menus()
+        .iter()
+        .map(|menu| menu.name.to_string())
+        .collect::<Vec<_>>();
+
+    assert!(!defined.is_empty(), "the menu bar has menus to show");
+    assert_eq!(
+        published, defined,
+        "the menu bar reads the same definitions the menu bar action does"
+    );
+}
+
+/// メニューバーは別の部品で、ボードの `…` や右クリックのメニューのことを知らない。
+/// 触られたら畳んで、2 枚を同時に出したままにしない（#79）。
+#[gpui_kit::test]
+fn touching_the_menu_bar_closes_the_column_menu(cx: &mut TestAppContext) {
     let (harness, cx) = open_board(cx);
     focus_board(&harness, cx);
 
@@ -805,23 +840,19 @@ fn opening_the_app_menu_closes_the_column_menu(cx: &mut TestAppContext) {
         Some(column_id)
     );
 
-    cx.update(|window, cx| {
+    cx.update(|_, cx| {
         harness
             .view
-            .update(cx, |view, cx| view.toggle_app_menu(window, cx))
+            .update(cx, |view, cx| view.dismiss_board_menus(cx))
     });
     cx.run_until_parked();
 
-    assert!(
-        harness.view.read_with(cx, |view, _| view.app_menu_open),
-        "the ≡ menu takes over"
-    );
     assert_eq!(
         harness
             .view
             .read_with(cx, |view, _| view.context_menu_column),
         None,
-        "and only one menu is open at a time"
+        "only one menu is open at a time"
     );
 }
 

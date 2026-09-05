@@ -1,4 +1,5 @@
-use gpui_kit::{Action, App, KeyBinding, Menu, MenuItem, OsAction, SharedString, SystemMenuType};
+use gpui_kit::component::GlobalState;
+use gpui_kit::{App, KeyBinding, Menu, MenuItem, OsAction, SystemMenuType};
 
 use crate::hotkey::platform_support;
 
@@ -16,6 +17,20 @@ pub fn install(cx: &mut App) {
     cx.bind_keys(platform_key_bindings());
 
     cx.set_menus(menus());
+    publish_menus_to_the_component_layer(cx);
+}
+
+/// 同じメニューを `AppMenuBar` からも読めるようにする。
+///
+/// `AppMenuBar` が読むのは `GlobalState::app_menus` で、`cx.set_menus` はそこまでは
+/// 運ばない。橋渡しはアプリの仕事。
+///
+/// `cx.get_menus()` で読み返さずに [`menus`] をもう一度組むのは、しまうかどうかが
+/// プラットフォーム任せだから。macOS・Linux・Windows は返すが、テストの
+/// プラットフォームは何も返さず、メニューバーが空のまま出る。
+fn publish_menus_to_the_component_layer(cx: &mut App) {
+    let menus = menus().into_iter().map(Menu::owned).collect();
+    GlobalState::global_mut(cx).set_app_menus(menus);
 }
 
 /// どの OS でも同じ割り当て。
@@ -78,11 +93,24 @@ fn platform_key_bindings() -> Vec<KeyBinding> {
     ]
 }
 
-/// ネイティブのメニューバー。
+/// メニューバーの中身。
 ///
-/// これを OS が出してくれるのは macOS だけ。ほかの環境では `cx.set_menus` が
-/// 何もしないので、[`app_menu`] を画面の中に出す。
+/// OS が描いてくれるのは macOS だけ。ほかの環境では [`crate::views::menu_bar`] が
+/// 同じ定義を読んで自分で描く（[ADR 0015](../docs/adr/0015-a-menu-bar-on-every-platform.md)）。
+///
+/// 構成は OS ごとに違う。macOS のシステムメニューとウィンドウ操作は、ほかの環境では
+/// 意味を成さないため。どちらも `cfg` を付けずに定義して、テストがどの OS でも両方を
+/// 突き合わせられるようにする。
 pub fn menus() -> Vec<Menu> {
+    if cfg!(target_os = "macos") {
+        macos_menus()
+    } else {
+        drawn_menus()
+    }
+}
+
+/// macOS のネイティブなメニューバー。
+fn macos_menus() -> Vec<Menu> {
     vec![
         Menu::new("ekanban").items([
             MenuItem::action("ekanbanについて", About),
@@ -108,35 +136,9 @@ pub fn menus() -> Vec<Menu> {
             MenuItem::action("保存", SaveEdit),
             MenuItem::action("ウインドウを閉じる", CloseWindow),
         ]),
-        Menu::new("編集").items([
-            MenuItem::os_action("元に戻す", Undo, OsAction::Undo),
-            MenuItem::os_action("やり直す", Redo, OsAction::Redo),
-            MenuItem::separator(),
-            MenuItem::os_action("カット", gpui_kit::NoAction, OsAction::Cut),
-            MenuItem::os_action("コピー", gpui_kit::NoAction, OsAction::Copy),
-            MenuItem::os_action("ペースト", gpui_kit::NoAction, OsAction::Paste),
-            MenuItem::os_action("すべてを選択", gpui_kit::NoAction, OsAction::SelectAll),
-            MenuItem::separator(),
-            MenuItem::action("編集をキャンセル", CancelEdit),
-            MenuItem::action("検索をクリア", ClearSearch),
-        ]),
-        Menu::new("ボード").items([
-            MenuItem::action("ボード名を変更", RenameBoard),
-            MenuItem::action("現在のボードを削除", DeleteBoard),
-            MenuItem::separator(),
-            MenuItem::action("タグを整理…", ManageTags),
-        ]),
-        Menu::new("表示").items([
-            MenuItem::action("検索にフォーカス", FocusSearch),
-            MenuItem::separator(),
-            MenuItem::action("ボード一覧の表示を切り替え", ToggleBoardList),
-            MenuItem::action("アーカイブ表示を切り替え", ToggleArchiveView),
-            MenuItem::separator(),
-            MenuItem::action("ライトモード", UseLightTheme),
-            MenuItem::action("ダークモード", UseDarkTheme),
-            MenuItem::action("システムに合わせる", UseSystemTheme),
-            MenuItem::action("フルスクリーンにする", ToggleFullscreen),
-        ]),
+        Menu::new("編集").items(edit_menu_items()),
+        Menu::new("ボード").items(board_menu_items()),
+        Menu::new("表示").items(view_menu_items()),
         // macOS の標準の Window メニューは gpui からは組めない（`SystemMenuType` は
         // `Services` しか持たない）ので、項目を自分で並べる。`Cmd+M` はメニューに
         // 項目があってはじめて効く。
@@ -156,117 +158,90 @@ pub fn menus() -> Vec<Menu> {
     ]
 }
 
-/// ネイティブのメニューバーがあるかどうか。
+/// Linux と Windows で、アプリが自分で描くメニューバー。
 ///
-/// 出してくれるのは macOS だけで、Linux と Windows では `cx.set_menus` が何も
-/// しない。無い環境では、同じ項目を [`app_menu`] としてヘッダの `≡` から出す。
-pub fn shows_in_app_menu() -> bool {
-    !cfg!(target_os = "macos")
-}
-
-/// 画面の中に出すメニューの 1 項目。
-pub struct AppMenuEntry {
-    pub label: SharedString,
-    /// 押したときに投げるアクション。メニューバーと同じものを投げるので、
-    /// 操作の実体は `BoardView` の `on_action` 1 か所で済む。
-    pub action: Box<dyn Action>,
-    /// 押せない項目。灰色の項目は押せず理由を出す先が無いので、理由は
-    /// `label` に含める。
-    pub disabled: bool,
-    /// 消える操作。`danger`（赤）で出す。
-    pub danger: bool,
-}
-
-impl AppMenuEntry {
-    fn new(label: impl Into<SharedString>, action: impl Action) -> Self {
-        Self {
-            label: label.into(),
-            action: Box::new(action),
-            disabled: false,
-            danger: false,
-        }
-    }
-
-    fn danger(mut self) -> Self {
-        self.danger = true;
-        self
-    }
-
-    fn disabled(mut self, disabled: bool) -> Self {
-        self.disabled = disabled;
-        self
-    }
-}
-
-/// 画面の中に出すメニューの見出しと、その下の項目。
-pub struct AppMenuSection {
-    pub title: SharedString,
-    pub entries: Vec<AppMenuEntry>,
-}
-
-/// ネイティブのメニューバーが無い環境で、ヘッダの `≡` から出すメニュー。
-///
-/// [`menus`] と同じ操作をたどれるようにする。片方にだけ項目が増えていないかは
-/// このモジュールのテストが見ている。
-pub fn app_menu() -> Vec<AppMenuSection> {
-    let (quick_capture_label, quick_capture_disabled) = quick_capture_item();
+/// macOS との違いはアプリメニューとウインドウメニューが無いことで、そのぶん
+/// 「終了」は ファイル に、「ekanbanについて」とクイックキャプチャの設定は
+/// ヘルプ に移す。macOS のシステム項目（サービス・隠す・すべてを表示）と
+/// ウィンドウ操作（しまう・拡大／縮小）は、ほかの環境ではウィンドウマネージャの
+/// 仕事なので出さない。
+fn drawn_menus() -> Vec<Menu> {
     vec![
-        AppMenuSection {
-            title: "ボード".into(),
-            entries: vec![
-                AppMenuEntry::new("ボードを追加", AddBoard),
-                AppMenuEntry::new("ボード名を変更", RenameBoard),
-                AppMenuEntry::new("現在のボードを削除", DeleteBoard).danger(),
-            ],
-        },
-        AppMenuSection {
-            title: "カード".into(),
-            entries: vec![
-                AppMenuEntry::new("カードを追加", AddCard),
-                AppMenuEntry::new("カラムを追加", AddColumn),
-                AppMenuEntry::new("タグを追加", AddTag),
-                AppMenuEntry::new("タグを整理…", ManageTags),
-            ],
-        },
-        AppMenuSection {
-            title: "編集".into(),
-            entries: vec![
-                AppMenuEntry::new("元に戻す", Undo),
-                AppMenuEntry::new("やり直す", Redo),
-            ],
-        },
-        AppMenuSection {
-            title: "表示".into(),
-            entries: vec![
-                AppMenuEntry::new("検索にフォーカス", FocusSearch),
-                AppMenuEntry::new("検索をクリア", ClearSearch),
-                AppMenuEntry::new("ボード一覧の表示を切り替え", ToggleBoardList),
-                AppMenuEntry::new("アーカイブ表示を切り替え", ToggleArchiveView),
-                AppMenuEntry::new("ライトモード", UseLightTheme),
-                AppMenuEntry::new("ダークモード", UseDarkTheme),
-                AppMenuEntry::new("システムに合わせる", UseSystemTheme),
-                AppMenuEntry::new("フルスクリーンにする", ToggleFullscreen),
-            ],
-        },
-        AppMenuSection {
-            title: "データ".into(),
-            entries: vec![
-                AppMenuEntry::new("ボードを書き出す（JSON）", ExportBoardJson),
-                AppMenuEntry::new("ボードを書き出す（Markdown）", ExportBoardMarkdown),
-                AppMenuEntry::new("データベースをコピー…", BackupDatabase),
-                AppMenuEntry::new("データベースの場所を開く", RevealDatabase),
-                AppMenuEntry::new("バックアップの場所を開く", RevealBackups),
-            ],
-        },
-        AppMenuSection {
-            title: "その他".into(),
-            entries: vec![
-                AppMenuEntry::new(quick_capture_label, SetQuickCaptureShortcut)
-                    .disabled(quick_capture_disabled),
-                AppMenuEntry::new("ekanbanについて", About),
-            ],
-        },
+        Menu::new("ファイル").items([
+            MenuItem::action("ボードを追加", AddBoard),
+            MenuItem::action("カードを追加", AddCard),
+            MenuItem::action("カラムを追加", AddColumn),
+            MenuItem::action("タグを追加", AddTag),
+            MenuItem::separator(),
+            MenuItem::action("ボードを書き出す（JSON）", ExportBoardJson),
+            MenuItem::action("ボードを書き出す（Markdown）", ExportBoardMarkdown),
+            MenuItem::separator(),
+            MenuItem::action("保存", SaveEdit),
+            MenuItem::action("ウインドウを閉じる", CloseWindow),
+            MenuItem::action("終了", Quit),
+        ]),
+        Menu::new("編集").items(edit_menu_items()),
+        Menu::new("ボード").items(board_menu_items()),
+        Menu::new("表示").items(view_menu_items()),
+        Menu::new("ヘルプ").items([
+            quick_capture_menu_item(),
+            MenuItem::separator(),
+            MenuItem::action("データベースをコピー…", BackupDatabase),
+            MenuItem::action("データベースの場所をフォルダで開く", RevealDatabase),
+            MenuItem::action("バックアップの場所をフォルダで開く", RevealBackups),
+            MenuItem::separator(),
+            MenuItem::action("ekanbanについて", About),
+        ]),
     ]
+}
+
+/// どの OS でも同じ「編集」メニュー。
+fn edit_menu_items() -> Vec<MenuItem> {
+    vec![
+        MenuItem::os_action("元に戻す", Undo, OsAction::Undo),
+        MenuItem::os_action("やり直す", Redo, OsAction::Redo),
+        MenuItem::separator(),
+        MenuItem::os_action("カット", gpui_kit::NoAction, OsAction::Cut),
+        MenuItem::os_action("コピー", gpui_kit::NoAction, OsAction::Copy),
+        MenuItem::os_action("ペースト", gpui_kit::NoAction, OsAction::Paste),
+        MenuItem::os_action("すべてを選択", gpui_kit::NoAction, OsAction::SelectAll),
+        MenuItem::separator(),
+        MenuItem::action("編集をキャンセル", CancelEdit),
+        MenuItem::action("検索をクリア", ClearSearch),
+    ]
+}
+
+/// どの OS でも同じ「ボード」メニュー。
+fn board_menu_items() -> Vec<MenuItem> {
+    vec![
+        MenuItem::action("ボード名を変更", RenameBoard),
+        MenuItem::action("現在のボードを削除", DeleteBoard),
+        MenuItem::separator(),
+        MenuItem::action("タグを整理…", ManageTags),
+    ]
+}
+
+/// どの OS でも同じ「表示」メニュー。
+fn view_menu_items() -> Vec<MenuItem> {
+    vec![
+        MenuItem::action("検索にフォーカス", FocusSearch),
+        MenuItem::separator(),
+        MenuItem::action("ボード一覧の表示を切り替え", ToggleBoardList),
+        MenuItem::action("アーカイブ表示を切り替え", ToggleArchiveView),
+        MenuItem::separator(),
+        MenuItem::action("ライトモード", UseLightTheme),
+        MenuItem::action("ダークモード", UseDarkTheme),
+        MenuItem::action("システムに合わせる", UseSystemTheme),
+        MenuItem::action("フルスクリーンにする", ToggleFullscreen),
+    ]
+}
+
+/// メニューバーを OS が描くかどうか。
+///
+/// 描いてくれるのは macOS だけ。ほかの環境では [`crate::views::menu_bar`] が
+/// [`menus`] を読んで画面の中に描く。
+pub fn draws_its_own_menu_bar() -> bool {
+    !cfg!(target_os = "macos")
 }
 
 /// 「クイックキャプチャのショートカット…」の文言と、押せるかどうか。
@@ -292,24 +267,17 @@ fn quick_capture_menu_item() -> MenuItem {
 mod tests {
     use super::*;
 
-    /// メニューバーには出すが、画面内メニューには出さないアクション。
+    use gpui_kit::Action as _;
+
+    /// macOS のメニューバーにしか出さないアクション。
     ///
-    /// - クリップボードと「すべてを選択」は OS の仕事で、`NoAction` を割り当てた
-    ///   見出しでしかない
-    /// - 「保存」「編集をキャンセル」は編集中しか意味がなく、そのときは入力欄が
-    ///   キーを持っている。`Cmd/Ctrl+S` と `Escape` で足りる
-    /// - 「ウインドウを閉じる」「終了」「隠す」「すべてを表示」はウィンドウ
-    ///   マネージャと OS 側の操作
+    /// - 「サービス」「隠す」「ほかを隠す」「すべてを表示」は macOS のシステム
+    ///   メニューの項目
     /// - 「しまう」「拡大／縮小」は macOS のウィンドウ操作。macOS の `Cmd+M` は
-    ///   メニュー項目があってはじめて効くので置いているが、ほかの環境では
-    ///   ウィンドウマネージャの仕事で、アプリのメニューに出す意味がない
-    fn kept_out_of_app_menu() -> Vec<&'static str> {
+    ///   メニュー項目があってはじめて効くので置いているが、ほかの環境では最小化も
+    ///   最大化もウィンドウマネージャの仕事で、アプリのメニューに出す意味がない
+    fn macos_only() -> Vec<&'static str> {
         vec![
-            gpui_kit::NoAction.name(),
-            SaveEdit.name(),
-            CancelEdit.name(),
-            CloseWindow.name(),
-            Quit.name(),
             HideApplication.name(),
             HideOtherApplications.name(),
             ShowAllApplications.name(),
@@ -318,7 +286,7 @@ mod tests {
         ]
     }
 
-    fn menu_bar_action_names() -> Vec<&'static str> {
+    fn action_names(menus: Vec<Menu>) -> Vec<&'static str> {
         fn collect(items: &[MenuItem], names: &mut Vec<&'static str>) {
             for item in items {
                 match item {
@@ -330,48 +298,82 @@ mod tests {
         }
 
         let mut names = Vec::new();
-        for menu in menus() {
+        for menu in menus {
             collect(&menu.items, &mut names);
         }
         names
     }
 
-    fn app_menu_action_names() -> Vec<&'static str> {
-        app_menu()
-            .iter()
-            .flat_map(|section| section.entries.iter())
-            .map(|entry| entry.action.name())
-            .collect()
-    }
-
+    /// 受け入れ条件「macOS でたどれる操作は Linux・Windows でもたどれる」（#79）。
+    ///
+    /// 定義が 2 本ある以上、片方にだけ項目が増える事故は起きる。両方を `cfg` 無しで
+    /// 定義してあるので、この照合はどの OS の CI でも同じように働く。
     #[test]
-    fn offers_every_menu_bar_action_in_the_app_menu() {
-        let excluded = kept_out_of_app_menu();
-        let in_app = app_menu_action_names();
-        let missing = menu_bar_action_names()
+    fn offers_every_macos_action_on_the_other_platforms_too() {
+        let macos_only = macos_only();
+        let drawn = action_names(drawn_menus());
+        let missing = action_names(macos_menus())
             .into_iter()
-            .filter(|name| !excluded.contains(name))
-            .filter(|name| !in_app.contains(name))
+            .filter(|name| !macos_only.contains(name))
+            .filter(|name| !drawn.contains(name))
             .collect::<Vec<_>>();
 
         assert!(
             missing.is_empty(),
-            "these menu bar actions cannot be reached without a menu bar: {missing:?}"
+            "these actions are on the macOS menu bar but nowhere on the drawn one: {missing:?}"
         );
     }
 
-    /// 受け入れ条件「Linux / Windows の `≡` メニューには増えない」（#54）。
+    /// 受け入れ条件「Linux・Windows のメニューに macOS 専用の項目が入らない」（#79）。
     #[test]
-    fn keeps_the_window_commands_out_of_the_app_menu() {
-        let in_menu_bar = menu_bar_action_names();
-        for command in [MinimizeWindow.name(), ZoomWindow.name()] {
+    fn keeps_the_macos_system_commands_off_the_drawn_menu_bar() {
+        let on_macos = action_names(macos_menus());
+        let drawn = action_names(drawn_menus());
+        for command in macos_only() {
             assert!(
-                in_menu_bar.contains(&command),
-                "{command} is on the menu bar, where macOS needs it to make Cmd+M work"
+                on_macos.contains(&command),
+                "{command} belongs on the macOS menu bar"
             );
             assert!(
-                !app_menu_action_names().contains(&command),
-                "{command} is a macOS window command and does not belong in the in-app menu"
+                !drawn.contains(&command),
+                "{command} is a macOS-only command and does not belong on the drawn menu bar"
+            );
+        }
+    }
+
+    /// 「サービス」は macOS のシステムメニューで、ほかの環境では出しようがない。
+    #[test]
+    fn keeps_the_services_submenu_off_the_drawn_menu_bar() {
+        fn has_system_menu(items: &[MenuItem]) -> bool {
+            items.iter().any(|item| match item {
+                MenuItem::SystemMenu(_) => true,
+                MenuItem::Submenu(menu) => has_system_menu(&menu.items),
+                _ => false,
+            })
+        }
+
+        assert!(
+            macos_menus()
+                .iter()
+                .any(|menu| has_system_menu(&menu.items)),
+            "the macOS application menu carries the Services submenu"
+        );
+        assert!(
+            !drawn_menus()
+                .iter()
+                .any(|menu| has_system_menu(&menu.items)),
+            "there is no system menu to hand these items to outside macOS"
+        );
+    }
+
+    /// メニューバーが無い環境でも、終了とアプリについては手が届く必要がある（#79）。
+    #[test]
+    fn reaches_quit_and_about_from_the_drawn_menu_bar() {
+        let drawn = action_names(drawn_menus());
+        for action in [Quit.name(), About.name(), SetQuickCaptureShortcut.name()] {
+            assert!(
+                drawn.contains(&action),
+                "{action} has no home on the drawn menu bar"
             );
         }
     }
@@ -479,12 +481,30 @@ mod tests {
         );
     }
 
+    /// 1 つのメニューの中に同じ操作が二度出ていないか。
+    ///
+    /// メニューをまたぐ重なりは数えない。macOS では「ウインドウを閉じる」が
+    /// ファイル と ウインドウ に、「ekanbanについて」が ekanban と ヘルプ に出るのが
+    /// 作法どおり。`NoAction` はクリップボード操作に付けた見出しで、アクションでは
+    /// ないので除く。
     #[test]
-    fn keeps_the_app_menu_free_of_duplicates() {
-        let mut names = app_menu_action_names();
-        let before = names.len();
-        names.sort_unstable();
-        names.dedup();
-        assert_eq!(before, names.len(), "the app menu lists an action twice");
+    fn keeps_each_menu_free_of_duplicates() {
+        for (bar, menus) in [("macOS", macos_menus()), ("drawn", drawn_menus())] {
+            for menu in menus {
+                let name = menu.name.clone();
+                let mut names = action_names(vec![menu])
+                    .into_iter()
+                    .filter(|action| *action != gpui_kit::NoAction.name())
+                    .collect::<Vec<_>>();
+                let before = names.len();
+                names.sort_unstable();
+                names.dedup();
+                assert_eq!(
+                    before,
+                    names.len(),
+                    "the {name} menu on the {bar} menu bar lists an action twice"
+                );
+            }
+        }
     }
 }

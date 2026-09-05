@@ -11,6 +11,7 @@ use global_hotkey::{GlobalHotKeyEvent, HotKeyState};
 use gpui_kit::{
     component::dialog::DialogButtonProps,
     component::input::{Editor, EditorState, Input, InputState},
+    component::menu::AppMenuBar,
     component::scroll::ScrollableElement as _,
     component::Disableable as _,
     component::Sizable,
@@ -19,7 +20,7 @@ use gpui_kit::{
         button::{Button, ButtonVariant, ButtonVariants as _},
         window_border, ActiveTheme, Root, Theme, ThemeMode,
     },
-    deferred, div, point,
+    div, point,
     prelude::*,
     px, rgb, size, AnyElement, App, Bounds, Context, DragMoveEvent, Entity, FocusHandle,
     Focusable as _, Half, IntoElement, KeyDownEvent, Keystroke, Modifiers, MouseButton,
@@ -29,6 +30,7 @@ use gpui_kit::{
 
 use super::capture::CaptureView;
 use super::description_links;
+use super::menu_bar;
 use super::window_chrome;
 use crate::{
     actions::{
@@ -346,9 +348,9 @@ pub struct BoardView {
     context_menu_card: Option<CardId>,
     context_menu_column: Option<ColumnId>,
     card_panel_menu_open: bool,
-    /// ヘッダの `≡` から出すメニューが開いているか。ネイティブのメニューバーが
-    /// 無い環境でしか出さない（`crate::menu::shows_in_app_menu`）。
-    app_menu_open: bool,
+    /// OS がメニューバーを描かない環境で、アプリが自分で描くメニューバー。
+    /// macOS では OS が描くので `None`（`crate::menu::draws_its_own_menu_bar`）。
+    menu_bar: Option<Entity<AppMenuBar>>,
     board_scroll_handle: ScrollHandle,
     column_scroll_handles: HashMap<ColumnId, ScrollHandle>,
     window_bounds: WindowBoundsState,
@@ -469,7 +471,7 @@ impl BoardView {
             context_menu_card: None,
             context_menu_column: None,
             card_panel_menu_open: false,
-            app_menu_open: false,
+            menu_bar: menu_bar::build(cx),
             board_scroll_handle: ScrollHandle::new(),
             column_scroll_handles: HashMap::new(),
             window_bounds,
@@ -491,6 +493,11 @@ impl BoardView {
         if let Some(error) = quick_capture_error {
             view.set_error(error);
         }
+        // 開いた時点でボードにフォーカスを渡す。ショートカットもメニューの項目も
+        // "Board" の文脈にぶら下がっているので、どこにもフォーカスが無いと、飛ばした
+        // アクションが誰にも届かず、メニューを押しても何も起きない。ショートカットの
+        // 表示も同じ文脈から引くので、出るのはフォーカスが載ってからになる。
+        view.focus_handle.focus(window, cx);
         view
     }
 
@@ -1010,7 +1017,6 @@ impl BoardView {
         self.selected_card = None;
         self.context_menu_card = None;
         self.context_menu_column = None;
-        self.app_menu_open = false;
         self.tag_filter = None;
         self.show_archived = false;
         self.search
@@ -1420,24 +1426,24 @@ impl BoardView {
         self.card_panel_menu_open = !self.card_panel_menu_open;
         self.context_menu_card = None;
         self.context_menu_column = None;
-        self.app_menu_open = false;
         cx.notify();
     }
 
-    /// ヘッダの `≡`。ネイティブのメニューバーが無い環境で、メニューバーと同じ
-    /// 項目を出す。
+    /// ボードの上で開いているメニューを畳む。
     ///
-    /// 項目を押すとアクションが飛ぶので、飛び先になるボードへフォーカスを戻して
-    /// おく。入力欄にフォーカスが残ったままだと、そちらがキーとアクションを
-    /// 持っていってしまう。
-    fn toggle_app_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// メニューバーは `AppMenuBar` が別に持っていて、こちらの `…` や右クリックの
+    /// メニューのことは知らない。メニューバーを触ったときにここを呼んで、2 枚を
+    /// 同時に出したままにしない。
+    fn dismiss_board_menus(&mut self, cx: &mut Context<Self>) {
+        if self.context_menu_card.is_none()
+            && self.context_menu_column.is_none()
+            && !self.card_panel_menu_open
+        {
+            return;
+        }
         self.context_menu_card = None;
         self.context_menu_column = None;
         self.card_panel_menu_open = false;
-        self.app_menu_open = !self.app_menu_open;
-        if self.app_menu_open {
-            self.focus_handle.focus(window, cx);
-        }
         cx.notify();
     }
 
@@ -1588,16 +1594,6 @@ impl BoardView {
         if self.capturing_shortcut.is_some() {
             cx.stop_propagation();
             self.capture_shortcut(&event.keystroke, cx);
-            return;
-        }
-
-        // `≡` のメニューは、アーカイブ表示でも編集中でも Escape で閉じられる
-        // ようにする。開いている間はボードにフォーカスがあるので、入力欄から
-        // キーを奪うことにはならない。
-        if self.app_menu_open && event.keystroke.key.as_str() == "escape" {
-            cx.stop_propagation();
-            self.app_menu_open = false;
-            cx.notify();
             return;
         }
 
@@ -2097,7 +2093,6 @@ impl BoardView {
         cx.stop_propagation();
         self.selected_card = Some(card_id);
         self.context_menu_column = None;
-        self.app_menu_open = false;
         self.focus_handle.focus(window, cx);
         self.context_menu_card = Some(card_id);
         cx.notify();
@@ -2105,7 +2100,6 @@ impl BoardView {
 
     fn toggle_column_context_menu(&mut self, column_id: ColumnId, cx: &mut Context<Self>) {
         self.context_menu_card = None;
-        self.app_menu_open = false;
         self.context_menu_column = if self.context_menu_column == Some(column_id) {
             None
         } else {
@@ -3537,87 +3531,8 @@ impl BoardView {
                             .label("＋ カードを追加")
                             .on_click(cx.listener(|this, _, window, cx| this.add_card(window, cx)))
                             .into_any_element()
-                    })
-                    // ネイティブのメニューバーがある macOS では出さない。二重に
-                    // なるだけで、たどれる操作は増えない。
-                    .when(crate::menu::shows_in_app_menu(), |this| {
-                        // メニューはボタンの真下に出す。ヘッダの高さは検索欄や
-                        // 絞り込みの表示で変わるので、ヘッダではなくボタンを
-                        // 基準にする。
-                        this.child(
-                            div()
-                                .relative()
-                                .child(Button::new("app-menu").ghost().label("≡").on_click(
-                                    cx.listener(|this, _, window, cx| {
-                                        this.toggle_app_menu(window, cx)
-                                    }),
-                                ))
-                                .when(self.app_menu_open, |this| {
-                                    this.child(self.render_app_menu(cx))
-                                }),
-                        )
                     }),
             )
-    }
-
-    /// ネイティブのメニューバーが無い環境で、ヘッダの `≡` から出すメニュー。
-    ///
-    /// 項目は `crate::menu::app_menu` が持ち、押すとメニューバーと同じアクションを
-    /// 投げる。操作の実体はここには置かない。ヘッダはボードの中身より先に描かれる
-    /// ので、`deferred` で最後に描いてカラムの上に載せる。位置は `≡` のボタンを
-    /// 基準にする（ヘッダの高さは絞り込みの表示で変わる）。
-    fn render_app_menu(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let mut menu = div()
-            .id("app-menu-popup")
-            .absolute()
-            .top(px(34.))
-            .right(px(0.))
-            .w(px(280.))
-            // 項目が 20 件ほどあるので、狭いウィンドウでははみ出す。畳まずに
-            // 縦スクロールさせる。
-            .max_h(px(420.))
-            .flex()
-            .flex_col()
-            .gap_1()
-            .p_2()
-            .rounded_md()
-            .border_1()
-            .border_color(theme_color(cx, UiColor::Border))
-            .bg(theme_color(cx, UiColor::Popover))
-            .shadow_lg()
-            .overflow_y_scrollbar()
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
-
-        let mut index = 0_u64;
-        for section in crate::menu::app_menu() {
-            menu = menu.child(
-                div()
-                    .px_2()
-                    .pt_1()
-                    .text_xs()
-                    .text_color(theme_color(cx, UiColor::MutedForeground))
-                    .child(section.title),
-            );
-            for entry in section.entries {
-                let action = entry.action;
-                let button = Button::new(("app-menu-entry", index))
-                    .disabled(entry.disabled)
-                    .label(entry.label)
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.app_menu_open = false;
-                        cx.notify();
-                        window.dispatch_action(action.boxed_clone(), cx);
-                    }));
-                menu = menu.child(if entry.danger {
-                    button.danger()
-                } else {
-                    button.ghost()
-                });
-                index += 1;
-            }
-        }
-
-        deferred(menu)
     }
 
     fn render_column(
@@ -4740,6 +4655,15 @@ impl Render for BoardView {
         let own_chrome = window_chrome::draws_own_chrome(window.window_decorations());
         let title_bar = own_chrome
             .then(|| window_chrome::title_bar(self.window_title.clone(), cx).into_any_element());
+        // OS がメニューバーを描かない環境では、タイトルバーの下に自分で 1 行出す。
+        // ボードの `…` や右クリックのメニューはこれとは別の仕組みなので、触られた
+        // ところで畳む。メニュー名のボタンは mouse down を止めてしまう（押しただけで
+        // ウィンドウが動かないようにするため）ので、止まる前の捕捉で受ける。
+        let menu_bar = self.menu_bar.as_ref().map(|bar| {
+            menu_bar::menu_bar(bar, cx)
+                .capture_any_mouse_down(cx.listener(|this, _, _, cx| this.dismiss_board_menus(cx)))
+                .into_any_element()
+        });
         let board = div()
             // 記録中は "Board" の文脈から外し、cx.bind_keys で登録した割り当てが
             // 発火しないようにする。そうしないと Cmd+N がカード追加になって記録できない。
@@ -4904,6 +4828,7 @@ impl Render for BoardView {
                 .flex()
                 .flex_col()
                 .children(title_bar)
+                .children(menu_bar)
                 .child(board),
         )
     }
