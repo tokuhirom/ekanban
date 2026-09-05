@@ -24,8 +24,8 @@ use tempfile::TempDir;
 use super::{BoardView, ThemePreference};
 use crate::{
     actions::{
-        AddCard, AddColumn, CancelEdit, ClearSearch, FocusSearch, RenameBoard, SaveEdit,
-        ToggleArchiveView, ToggleBoardList, Undo, UseDarkTheme,
+        AddCard, AddColumn, CancelEdit, ClearSearch, DeleteBoard, FocusSearch, RenameBoard,
+        SaveEdit, ToggleArchiveView, ToggleBoardList, Undo, UseDarkTheme,
     },
     db::{Database, FilterState, WindowBoundsState},
     hotkey::QuickCapture,
@@ -611,6 +611,97 @@ fn shortcuts_stay_out_of_the_way_while_a_field_has_focus(cx: &mut TestAppContext
     );
 }
 
+#[gpui_kit::test]
+fn the_app_menu_opens_and_escape_closes_it(cx: &mut TestAppContext) {
+    let (harness, cx) = open_board(cx);
+    focus_board(&harness, cx);
+
+    cx.update(|window, cx| {
+        harness
+            .view
+            .update(cx, |view, cx| view.toggle_app_menu(window, cx))
+    });
+    cx.run_until_parked();
+    assert!(
+        harness.view.read_with(cx, |view, _| view.app_menu_open),
+        "the ≡ menu is open"
+    );
+
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+
+    assert!(
+        !harness.view.read_with(cx, |view, _| view.app_menu_open),
+        "escape closes it again"
+    );
+}
+
+#[gpui_kit::test]
+fn opening_the_app_menu_closes_the_column_menu(cx: &mut TestAppContext) {
+    let (harness, cx) = open_board(cx);
+    focus_board(&harness, cx);
+
+    let column_id = harness.stored_board().columns[0].id;
+    cx.update(|_, cx| {
+        harness.view.update(cx, |view, cx| {
+            view.toggle_column_context_menu(column_id, cx)
+        })
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        harness
+            .view
+            .read_with(cx, |view, _| view.context_menu_column),
+        Some(column_id)
+    );
+
+    cx.update(|window, cx| {
+        harness
+            .view
+            .update(cx, |view, cx| view.toggle_app_menu(window, cx))
+    });
+    cx.run_until_parked();
+
+    assert!(
+        harness.view.read_with(cx, |view, _| view.app_menu_open),
+        "the ≡ menu takes over"
+    );
+    assert_eq!(
+        harness
+            .view
+            .read_with(cx, |view, _| view.context_menu_column),
+        None,
+        "and only one menu is open at a time"
+    );
+}
+
+#[gpui_kit::test]
+fn deleting_the_only_board_is_refused_before_the_dialog(cx: &mut TestAppContext) {
+    let (harness, cx) = open_board(cx);
+    focus_board(&harness, cx);
+
+    let board_id = harness.view.read_with(cx, |view, _| view.board.id);
+    assert_eq!(
+        harness.view.read_with(cx, |view, _| view.boards.len()),
+        1,
+        "the seeded database has a single board"
+    );
+
+    cx.dispatch_action(DeleteBoard);
+    cx.run_until_parked();
+
+    assert_eq!(
+        harness.status_text(cx).as_deref(),
+        Some("最後のボードは削除できません"),
+        "the reason is shown instead of a confirmation dialog"
+    );
+    assert_eq!(
+        harness.view.read_with(cx, |view, _| view.board.id),
+        board_id,
+        "and the board is still open"
+    );
+    assert_eq!(harness.stored_board().id, board_id);
+}
 /// カードがカラムに収まらない枚数になっても、カラムはウィンドウの高さの中に
 /// 収まり、あふれた分はカラムの中で縦スクロールできる。
 ///

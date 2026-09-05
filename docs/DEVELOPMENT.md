@@ -16,7 +16,7 @@ src/
   lib.rs          データベースとウィンドウの初期化
   model.rs        Board / Column / Card などのドメインモデルと移動・並べ替え
   actions.rs      GPUI のアクション定義
-  menu.rs         ネイティブメニューバーとショートカットの割り当て
+  menu.rs         ネイティブメニューバー、画面内メニューの項目、ショートカットの割り当て
   hotkey.rs       グローバルホットキーの登録と、環境ごとの利用可否の判定
   paths.rs        OS ごとのデータベースとログの配置の解決
   diagnostics.rs  起動失敗とパニックのログ記録、ダイアログ表示
