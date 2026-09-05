@@ -55,3 +55,36 @@ jobs:
 
       - name: Build
         run: cargo build --all-features
+
+  # macOS と Windows でしか通らないコード（`src/menu.rs` のネイティブメニューバー、
+  # `src/paths.rs` と `src/diagnostics.rs` の cfg 分岐）は、ubuntu のジョブでは
+  # 一度もコンパイルされない。ここで型検査とテストだけ通す。
+  #
+  # `check` を matrix にしないのは意図的。matrix にすると check run の名前が
+  # `Check and test (ubuntu-latest)` になり、ルールセットが必須にしている
+  # `Check and test` がどこにも現れなくなって、すべての PR がマージ不能になる。
+  cross:
+    name: Build and test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # 片方が落ちても、もう片方の結果は知りたい。
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      # fmt と clippy はプラットフォームに依らないので ubuntu だけで回す。
+      - name: Run tests
+        run: cargo test --all-features
+
+      - name: Build
+        run: cargo build --all-features

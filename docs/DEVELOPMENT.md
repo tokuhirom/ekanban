@@ -256,12 +256,17 @@ GUI から起動すると stderr がどこにも出ないため、起動時の�
 
 GitHub Actions（`.github/workflows/ci.yml`）が、`main` への push と pull request に対して次を実行します。
 
-- `cargo fmt --all -- --check`
-- `cargo clippy --all-targets --all-features -- -D warnings`
-- `cargo test --all-features`
-- `cargo build --all-features`
+| ジョブ | ランナー | 実行するもの |
+| --- | --- | --- |
+| `Check and test` | `ubuntu-latest` | `cargo fmt --all -- --check` / `cargo clippy --all-targets --all-features -- -D warnings` / `cargo test --all-features` / `cargo build --all-features` |
+| `Build and test (macos-latest)` | `macos-latest` | `cargo test --all-features` / `cargo build --all-features` |
+| `Build and test (windows-latest)` | `windows-latest` | `cargo test --all-features` / `cargo build --all-features` |
 
-`main` にはこのジョブ（`Check and test`）を必須にしたルールセットが掛かっているので、直接 push はできません。`main` からブランチを切り、`Closes #<issue>` を書いた pull request を出してください。
+macOS と Windows を回すのは、そこでしかコンパイルされないコードがあるためです。`src/menu.rs` のネイティブメニューバー（`cx.set_menus` が実際に効くのは macOS だけ）、`src/paths.rs` と `src/diagnostics.rs` の `#[cfg(windows)]` / `#[cfg(target_os = "macos")]` の分岐が該当します。fmt と clippy はプラットフォームに依らないので ubuntu だけで回します。
+
+**`check` ジョブを matrix にしてはいけません。** matrix にすると check run の名前が `Check and test (ubuntu-latest)` になり、ルールセットが必須にしている `Check and test` がどこにも現れなくなって、すべての pull request がマージ不能になります。プラットフォームを足すときは、別ジョブとして足してください。
+
+`main` には `Check and test` を必須にしたルールセットが掛かっているので、直接 push はできません。`main` からブランチを切り、`Closes #<issue>` を書いた pull request を出してください。
 
 ## リリース
 
