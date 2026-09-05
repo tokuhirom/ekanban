@@ -88,3 +88,4 @@
 | [0006](0006-ci-on-three-platforms.md) | CI を 3 つのプラットフォームで回す | 2026-09-05 | 有効 |
 | [0007](0007-adr-required-for-significant-decisions.md) | 重大な決定は ADR に残すことを、完了条件にする | 2026-09-05 | 有効 |
 | [0008](0008-reaching-a-card-by-its-number.md) | カード番号へは、検索欄に `#12` と打って辿る | 2026-09-05 | 有効 |
+| [0009](0009-per-platform-key-bindings.md) | `cmd-ctrl-*` に頼る操作には、macOS 以外の割り当てを別に持つ | 2026-09-05 | 有効 |

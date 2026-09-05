@@ -348,7 +348,7 @@ EKANBAN_DATABASE=~/Library/Application\ Support/ekanban/backups/ekanban-2026-09-
 
 ## 13. キーボードショートカット
 
-macOS の `Cmd` は、ほかの OS では `Ctrl` になります。例外は `Cmd+Ctrl+S` のように `Ctrl` を含む組み合わせで、こちらは `Super+Ctrl` のままです。
+macOS の `Cmd` は、ほかの OS では `Ctrl` になります。`Cmd+Ctrl+F` のように `Ctrl` を含む組み合わせは、ほかの OS では `Super+Ctrl` になってしまい、デスクトップ環境が先に取るので届きません。その 3 つ（フルスクリーン、ボード一覧、終了）には、macOS 以外ではそれぞれの OS の慣習どおりの割り当てを別に用意しています。
 
 | 操作 | macOS | その他の OS |
 | --- | --- | --- |
@@ -361,9 +361,10 @@ macOS の `Cmd` は、ほかの OS では `Ctrl` になります。例外は `Cm
 | 検索をクリア | `Cmd+Shift+F` | `Ctrl+Shift+F` |
 | アーカイブ表示 | `Cmd+Shift+A` | `Ctrl+Shift+A` |
 | 元に戻す / やり直す | `Cmd+Z` / `Cmd+Shift+Z` | `Ctrl+Z` / `Ctrl+Shift+Z` |
-| ボード一覧の表示を切り替え | `Cmd+Ctrl+S` | `Super+Ctrl+S` |
-| フルスクリーン | `Cmd+Ctrl+F` | `Super+Ctrl+F` |
+| ボード一覧の表示を切り替え | `Cmd+Ctrl+S` | `Ctrl+B` |
+| フルスクリーン | `Cmd+Ctrl+F` | `F11` |
 | ウインドウを閉じる | `Cmd+W` | `Ctrl+W` |
+| 終了 | `Cmd+Q` | `Ctrl+Q` |
 | ウインドウをしまう | `Cmd+M` | ウィンドウマネージャの操作 |
 | カードを選ぶ | 矢印キー | 矢印キー |
 | 選んだカードを編集 | `Enter` | `Enter` |
