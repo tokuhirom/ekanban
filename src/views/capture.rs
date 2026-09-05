@@ -141,7 +141,7 @@ impl Render for CaptureView {
                 div()
                     .text_xs()
                     .text_color(if self.error.is_some() {
-                        theme_color(cx, UiColor::DangerForeground)
+                        theme_color(cx, UiColor::Danger)
                     } else {
                         theme_color(cx, UiColor::MutedForeground)
                     })

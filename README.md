@@ -183,6 +183,8 @@ src/
 
 **進行中の作業は [GitHub issues](https://github.com/tokuhirom/ekanban/issues) で管理しています。** 作業内容と受け入れ条件は各 issue にあります。
 
+使い方は [マニュアル](docs/MANUAL.md) にまとめています。
+
 決めたことと決めなかったこと（引き継ぐ設計の決まりごと、スコープ外、実装しないと判断したもの、変更の完了条件）は [設計の記録](docs/DESIGN.md) にまとめています。
 
 ### キーボードショートカット
