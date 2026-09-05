@@ -2798,10 +2798,7 @@ impl BoardView {
             }))
             .child(themed_input(Input::new(&editor.name).small(), cx))
             .when_some(name_error, |this, message| {
-                this.child(field_error_note(
-                    message,
-                    theme_color(cx, UiColor::DangerForeground),
-                ))
+                this.child(field_error_note(message, theme_color(cx, UiColor::Danger)))
             })
             .child(
                 div()
@@ -3043,17 +3040,11 @@ impl BoardView {
             }))
             .child(themed_input(Input::new(&editor.name).small(), cx))
             .when_some(name_error, |this, message| {
-                this.child(field_error_note(
-                    message,
-                    theme_color(cx, UiColor::DangerForeground),
-                ))
+                this.child(field_error_note(message, theme_color(cx, UiColor::Danger)))
             })
             .child(themed_input(Input::new(&editor.wip_limit).small(), cx))
             .when_some(wip_limit_error, |this, message| {
-                this.child(field_error_note(
-                    message,
-                    theme_color(cx, UiColor::DangerForeground),
-                ))
+                this.child(field_error_note(message, theme_color(cx, UiColor::Danger)))
             })
             .child(
                 Button::new(("save-column", editor_kind.unwrap_or(0) as u64))
@@ -3097,10 +3088,7 @@ impl BoardView {
             }))
             .child(themed_input(Input::new(&editor.name).small(), cx))
             .when_some(name_error, |this, message| {
-                this.child(field_error_note(
-                    message,
-                    theme_color(cx, UiColor::DangerForeground),
-                ))
+                this.child(field_error_note(message, theme_color(cx, UiColor::Danger)))
             })
             .child(themed_input(Input::new(&editor.color).small(), cx))
             .child(
@@ -3122,6 +3110,8 @@ impl BoardView {
         let editing_tag = self.editing_tag.as_ref();
         div()
             .flex()
+            // タグが増えても右の絞り込みを押しのけないよう折り返す。
+            .flex_wrap()
             .items_center()
             .gap_1()
             .child(
@@ -3215,6 +3205,8 @@ impl BoardView {
             .child(
                 div()
                     .flex()
+                    .flex_1()
+                    .min_w_0()
                     .flex_col()
                     .gap_1()
                     .child(
@@ -3242,6 +3234,8 @@ impl BoardView {
             .child(
                 div()
                     .flex()
+                    // 絞り込みのボタンは常に押せる必要がある。左側が広がっても縮めない。
+                    .flex_none()
                     .items_center()
                     .gap_2()
                     .child(
@@ -3328,7 +3322,7 @@ impl BoardView {
         let card_count_label = column
             .wip_limit
             .map(|limit| format!("{} / {limit}", column.cards.len()))
-            .unwrap_or_else(|| format!("{} cards", column.cards.len()));
+            .unwrap_or_else(|| format!("{} 枚", column.cards.len()));
         let header_content = if is_editing {
             self.render_column_editor(
                 self.editing_column.as_ref().expect("editing column exists"),
@@ -3411,7 +3405,7 @@ impl BoardView {
                                 div()
                                     .text_xs()
                                     .text_color(if wip_over {
-                                        theme_color(cx, UiColor::DangerForeground)
+                                        theme_color(cx, UiColor::Danger)
                                     } else {
                                         theme_color(cx, UiColor::MutedForeground)
                                     })
@@ -3649,14 +3643,19 @@ impl BoardView {
                         }),
                         |this, badge| this.child(badge),
                     )
-                    .children(
-                        card.tag_ids
-                            .iter()
-                            .filter_map(|tag_id| {
-                                self.board.tags.iter().find(|tag| tag.id == *tag_id)
-                            })
-                            .map(|tag| render_tag_chip(tag, theme_color(cx, UiColor::Foreground))),
-                    )
+                    // 縦並びの直下に置くとチップが幅いっぱいに伸びるので、
+                    // 横並びの行で包んで内容の幅に収める。
+                    .child(div().flex().flex_wrap().gap_1().children(
+                        card.tag_ids.iter().filter_map(|tag_id| {
+                            self.board
+                                .tags
+                                .iter()
+                                .find(|tag| tag.id == *tag_id)
+                                .map(|tag| {
+                                    render_tag_chip(tag, theme_color(cx, UiColor::Foreground))
+                                })
+                        }),
+                    ))
                     .child(
                         div()
                             .text_xs()
@@ -3842,14 +3841,19 @@ impl BoardView {
                             theme_color(cx, UiColor::MutedForeground),
                         ))
                     })
-                    .children(
-                        card.tag_ids
-                            .iter()
-                            .filter_map(|tag_id| {
-                                self.board.tags.iter().find(|tag| tag.id == *tag_id)
-                            })
-                            .map(|tag| render_tag_chip(tag, theme_color(cx, UiColor::Foreground))),
-                    )
+                    // 縦並びの直下に置くとチップが幅いっぱいに伸びるので、
+                    // 横並びの行で包んで内容の幅に収める。
+                    .child(div().flex().flex_wrap().gap_1().children(
+                        card.tag_ids.iter().filter_map(|tag_id| {
+                            self.board
+                                .tags
+                                .iter()
+                                .find(|tag| tag.id == *tag_id)
+                                .map(|tag| {
+                                    render_tag_chip(tag, theme_color(cx, UiColor::Foreground))
+                                })
+                        }),
+                    ))
                     .child(
                         div()
                             .text_xs()
@@ -3897,7 +3901,7 @@ impl BoardView {
             .when_some(capture.error.as_ref(), |this, message| {
                 this.child(field_error_note(
                     message.clone(),
-                    theme_color(cx, UiColor::DangerForeground),
+                    theme_color(cx, UiColor::Danger),
                 ))
             })
             .child(
@@ -4106,10 +4110,7 @@ impl BoardView {
             )
             .child(themed_input(Input::new(&editor.title).small(), cx))
             .when_some(title_error, |this, message| {
-                this.child(field_error_note(
-                    message,
-                    theme_color(cx, UiColor::DangerForeground),
-                ))
+                this.child(field_error_note(message, theme_color(cx, UiColor::Danger)))
             })
             .child(
                 div()
@@ -4129,10 +4130,7 @@ impl BoardView {
             )
             .child(themed_input(Input::new(&editor.due_date).small(), cx))
             .when_some(due_date_error, |this, message| {
-                this.child(field_error_note(
-                    message,
-                    theme_color(cx, UiColor::DangerForeground),
-                ))
+                this.child(field_error_note(message, theme_color(cx, UiColor::Danger)))
             })
             .child(
                 div()
@@ -4241,7 +4239,7 @@ impl BoardView {
                             .when(item.text.read(cx).value().trim().is_empty(), |this| {
                                 this.child(field_error_note(
                                     "項目名を入力してください".to_string(),
-                                    theme_color(cx, UiColor::DangerForeground),
+                                    theme_color(cx, UiColor::Danger),
                                 ))
                             })
                     }),
@@ -4791,7 +4789,9 @@ fn render_due_badge(due_date: NaiveDate, today: NaiveDate, theme: &Theme) -> imp
     let (label, color) = match status {
         DueStatus::Overdue(days) => (
             format!("期限切れ {days}日 ({})", short_date(due_date)),
-            theme.danger_foreground,
+            // `danger_foreground` は danger 背景の上に載せる文字色なので、カード面に
+            // 置くと背景と同化して読めない。背景色のほうを文字色に使う。
+            theme.danger,
         ),
         DueStatus::Today => (
             format!("期限 今日 ({})", short_date(due_date)),
@@ -4799,7 +4799,8 @@ fn render_due_badge(due_date: NaiveDate, today: NaiveDate, theme: &Theme) -> imp
         ),
         DueStatus::Soon(days) => (
             format!("期限 あと {days}日 ({})", short_date(due_date)),
-            theme.accent,
+            // `accent` はホバー時の背景に使う淡い色で、文字色にすると読めない。
+            theme.info,
         ),
         DueStatus::Upcoming(_) => (
             format!("期限 {}", display_date(due_date, today)),
