@@ -54,7 +54,8 @@
 `SHA256SUMS.txt` も一緒に置いてあります。
 
 - **macOS の `.app` は ad-hoc 署名しかしていません。** 初回は右クリックから「開く」を選んでください。ダブルクリックだと Gatekeeper に止められます。Intel Mac 向けは出していません
-- **Linux のバイナリは Ubuntu 24.04 でビルドしています。** glibc 2.39 以降と、Vulkan のドライバが要ります
+- **Linux のバイナリは Ubuntu 24.04 でビルドしています。** glibc 2.39 以降と、Vulkan のドライバ、fontconfig が要ります
+- **Linux では xdg-desktop-portal も要ります。** 書き出し、データベースのコピー、データベースの場所を開く、テーマの「システムに合わせる」がこれを通ります。ポータル本体と、デスクトップ環境に合ったバックエンド（GNOME なら `xdg-desktop-portal-gnome`、KDE なら `xdg-desktop-portal-kde`、そのほかは `xdg-desktop-portal-gtk`）の両方を入れてください。無くてもボードの操作はできますが、上の 4 つが動きません
 
 ### ソースからビルドする
 

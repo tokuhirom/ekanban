@@ -295,6 +295,14 @@ git push origin v0.1.0
 
 - **Intel Mac 向けは出していません。** 要るようになったら `macos-15-intel` のジョブを足すか、`lipo` で universal binary にします
 - **Linux は `ubuntu-24.04` でビルドします。** glibc 2.39 に依存するので、それより古いディストリビューションでは動きません。実行にはこのほか Vulkan のドライバと fontconfig が要ります。`ubuntu-22.04` は 2026-09-17 から段階的に廃止されるので使いません
+- **Linux では xdg-desktop-portal に依存する操作が 4 つあります。** ポータルと、デスクトップ環境に合ったバックエンド（`xdg-desktop-portal-gnome` / `-kde` / `-gtk`）が入っていない環境では動きません
+
+  | 操作 | 使っている API | ポータルが無いと |
+  | --- | --- | --- |
+  | ボードを書き出す（JSON / Markdown） | `cx.prompt_for_new_path` | ダイアログが開かず、何を入れれば直るかを添えたエラーを出す（`save_dialog_error_detail`） |
+  | データベースをコピー… | `cx.prompt_for_new_path` | 同上 |
+  | データベース / バックアップの場所を開く | `cx.reveal_path` | 何も起きない。gpui は `open` へのフォールバックを持つが、成否は返らないので画面には出せない |
+  | テーマ「システムに合わせる」 | `org.freedesktop.appearance` の `color-scheme` | 常にライト扱いになる。メニューからライト / ダークを選べば効く |
 - **Windows のバイナリは、ビルドが通ることしか確かめていません。** クイックキャプチャは対象外のままです
 
 ### macOS の署名

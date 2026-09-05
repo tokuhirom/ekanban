@@ -2773,7 +2773,7 @@ impl BoardView {
                 Ok(Ok(None)) => return,
                 Ok(Err(error)) => {
                     let _ = this.update(cx, |view, cx| {
-                        view.set_error(format!("保存先を選択できませんでした: {error}"));
+                        view.set_error(save_dialog_error_detail(&error.to_string()));
                         cx.notify();
                     });
                     return;
@@ -2834,7 +2834,7 @@ impl BoardView {
                 Ok(Ok(None)) => return,
                 Ok(Err(error)) => {
                     let _ = this.update(cx, |view, cx| {
-                        view.set_error(format!("保存先を選択できませんでした: {error}"));
+                        view.set_error(save_dialog_error_detail(&error.to_string()));
                         cx.notify();
                     });
                     return;
@@ -5423,6 +5423,20 @@ fn display_date(date: NaiveDate, today: NaiveDate) -> String {
     }
 }
 
+/// 保存先を選ぶダイアログを開けなかったときの文言。
+///
+/// Linux ではこのダイアログを xdg-desktop-portal に頼んでいる。ポータルか、それを
+/// 実装するバックエンドが入っていないと、gpui は
+/// `Couldn't open file picker due to missing xdg-desktop-portal implementation.`
+/// という 1 行を返す。そのまま埋めても、何を入れれば直るのかが読み取れない（#51）。
+fn save_dialog_error_detail(error: &str) -> String {
+    if error.contains("xdg-desktop-portal") {
+        return "保存先を選ぶダイアログを開けませんでした。Linux ではこのダイアログに                 xdg-desktop-portal が要ります。ポータル本体と、デスクトップ環境に合った                 バックエンド（GNOME なら xdg-desktop-portal-gnome、KDE なら                 xdg-desktop-portal-kde、そのほかは xdg-desktop-portal-gtk）を入れてください"
+            .to_string();
+    }
+    format!("保存先を選択できませんでした: {error}")
+}
+
 fn board_error_detail(error: &BoardError) -> String {
     match error {
         BoardError::EmptyBoardName => "ボード名を入力してください".to_string(),
@@ -5588,8 +5602,8 @@ mod tests {
         archived_day_label, archived_groups, board_error_detail, capture_destination,
         capture_target_is_in_board, capture_title, card_is_dimmed, column_name_for_card,
         db_error_detail, default_capture_target, field_error_for, moves_selected_card,
-        next_card_id, next_tag_filter, render_board_markdown, window_title, CaptureTarget,
-        CardDirection, EditorField,
+        next_card_id, next_tag_filter, render_board_markdown, save_dialog_error_detail,
+        window_title, CaptureTarget, CardDirection, EditorField,
     };
     use crate::{
         db::DbError,
@@ -5797,6 +5811,25 @@ mod tests {
 
         assert_eq!(error.field, EditorField::DueDate);
         assert!(error.message.contains("YYYY-MM-DD"));
+    }
+
+    /// 受け入れ条件「ポータルの無い環境で書き出しを試したとき、足りないものが
+    /// 読んで分かる」（#51）。
+    #[test]
+    fn names_the_missing_package_when_the_file_picker_cannot_open() {
+        // gpui が返す 1 行そのまま。
+        let detail = save_dialog_error_detail(
+            "Couldn't open file picker due to missing xdg-desktop-portal implementation.",
+        );
+        assert!(detail.contains("xdg-desktop-portal-gnome"));
+        assert!(detail.contains("xdg-desktop-portal-kde"));
+        assert!(detail.contains("xdg-desktop-portal-gtk"));
+
+        // ポータルと関係のない失敗は、これまでどおり理由をそのまま出す。
+        assert_eq!(
+            save_dialog_error_detail("permission denied"),
+            "保存先を選択できませんでした: permission denied"
+        );
     }
 
     #[test]
