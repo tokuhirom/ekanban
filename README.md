@@ -35,9 +35,26 @@
 
 - **macOS** — `.app` バンドルまで用意しています
 - **Linux / BSD** — 動きます。クイックキャプチャのグローバルホットキーは X11 のセッションでだけ使えます（Wayland にはアプリから使える共通の仕組みがありません）
-- **Windows** — データとログの置き場所は解決しますが、クイックキャプチャは対象外で、配布用のパッケージも用意していません
+- **Windows** — データとログの置き場所は解決します。クイックキャプチャは対象外です。実行ファイルは配っていますが、ビルドが通ることしか確かめていません
 
 ## インストールと起動
+
+### 配布物を落とす
+
+[Releases](https://github.com/tokuhirom/ekanban/releases) に、タグごとの実行ファイルを置いています。
+
+| OS | ファイル |
+| --- | --- |
+| macOS (Apple Silicon) | `ekanban-<版>-aarch64-apple-darwin.zip`（`Ekanban.app`） |
+| Linux (x86_64) | `ekanban-<版>-x86_64-unknown-linux-gnu.tar.gz` |
+| Windows (x86_64) | `ekanban-<版>-x86_64-pc-windows-msvc.zip` |
+
+`SHA256SUMS.txt` も一緒に置いてあります。
+
+- **macOS の `.app` は ad-hoc 署名しかしていません。** 初回は右クリックから「開く」を選んでください。ダブルクリックだと Gatekeeper に止められます。Intel Mac 向けは出していません
+- **Linux のバイナリは Ubuntu 24.04 でビルドしています。** glibc 2.39 以降と、Vulkan のドライバが要ります
+
+### ソースからビルドする
 
 [Rust toolchain](https://www.rust-lang.org/tools/install) が必要です。SQLite は同梱されるので、別途の用意は要りません。
 

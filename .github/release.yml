@@ -1,0 +1,11 @@
+# GitHub が自動生成するリリースノートの組み立て方。
+# `gh release create --generate-notes` と tagpr の両方がこれを読みます。
+changelog:
+  exclude:
+    labels:
+      # tagpr 自身が出すリリース用 pull request は、ノートに載せても意味がない。
+      - tagpr
+  categories:
+    - title: 変更
+      labels:
+        - "*"

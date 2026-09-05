@@ -1,0 +1,12 @@
+# tagpr (https://github.com/Songmu/tagpr) の設定。
+#
+# tagpr 自体はまだ入れていません。これは入れるときの設定を先に置いてあるもので、
+# .github/workflows/tagpr.yml を足せばそのまま動きます。詳しくは
+# docs/DEVELOPMENT.md の「リリース」を見てください。
+[tagpr]
+	releaseBranch = main
+	versionFile = Cargo.toml
+	vPrefix = true
+	# tagpr は *.lock を対象外にするので Cargo.lock は書き換わりません。
+	# Cargo.toml を上げたあとに、lock 側の ekanban の行を揃えます。
+	postVersionCommand = cargo update --workspace
