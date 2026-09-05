@@ -4074,8 +4074,9 @@ impl BoardView {
             .h_full()
             .flex()
             .flex_col()
-            // カラム名やタグ名の編集と同じく Escape で閉じる。Enter は取らない。
-            // 説明が複数行のテキストなので、改行のほうを優先する。
+            // カラム名やタグ名の編集と同じく Escape で閉じる。パネル全体では
+            // Enter を取らない。説明が複数行のテキストなので、改行のほうを
+            // 優先する。保存する Enter はタイトル欄の中だけで受ける。
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
                 if event.keystroke.key.as_str() == "escape" {
                     cx.stop_propagation();
@@ -4257,7 +4258,22 @@ impl BoardView {
                     .text_color(theme_color(cx, UiColor::MutedForeground))
                     .child("タイトル"),
             )
-            .child(themed_input(Input::new(&editor.title).small(), cx))
+            .child(
+                // タイトルは 1 行なので、ここでの Enter は改行ではなく保存にする。
+                // カードを足したときはタイトルを打つのが最後の操作なので、
+                // そのまま Enter で終われないと保存ボタンまで手が要る。
+                // 説明は複数行なので、Textarea 側では取らない。
+                div()
+                    .flex()
+                    .flex_col()
+                    .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                        if event.keystroke.key.as_str() == "enter" {
+                            cx.stop_propagation();
+                            this.save_card_edit(cx);
+                        }
+                    }))
+                    .child(themed_input(Input::new(&editor.title).small(), cx)),
+            )
             .when_some(title_error, |this, message| {
                 this.child(field_error_note(message, theme_color(cx, UiColor::Danger)))
             })

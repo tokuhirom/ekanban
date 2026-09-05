@@ -295,6 +295,33 @@ fn adding_a_card_and_saving_it_writes_the_title_to_the_database(cx: &mut TestApp
 }
 
 #[gpui_kit::test]
+fn pressing_enter_in_the_title_saves_the_new_card(cx: &mut TestAppContext) {
+    let (harness, cx) = open_board(cx);
+    focus_board(&harness, cx);
+
+    cx.dispatch_action(AddCard);
+    cx.run_until_parked();
+
+    cx.simulate_input("牛乳を買う");
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+
+    assert!(
+        harness.editing_title(cx).is_none(),
+        "the panel closes once the card is saved"
+    );
+    let stored = harness.stored_board();
+    assert!(
+        stored.columns[0]
+            .cards
+            .iter()
+            .any(|card| card.title == "牛乳を買う"),
+        "Enter in the title field saves without reaching for the save button: {:?}",
+        stored.columns[0].cards
+    );
+}
+
+#[gpui_kit::test]
 fn cancelling_a_new_card_leaves_no_trace(cx: &mut TestAppContext) {
     let (harness, cx) = open_board(cx);
     focus_board(&harness, cx);
