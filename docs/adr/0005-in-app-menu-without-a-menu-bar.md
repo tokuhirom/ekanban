@@ -1,7 +1,7 @@
 # 0005. ネイティブのメニューバーが無い環境では、画面の中にメニューを出す
 
 - 日付: 2026-09-05
-- 状態: 有効
+- 状態: 置き換えられた（→ [0015](0015-a-menu-bar-on-every-platform.md)）
 - 関連: [#42](https://github.com/tokuhirom/ekanban/issues/42) [#47](https://github.com/tokuhirom/ekanban/pull/47)、[#54](https://github.com/tokuhirom/ekanban/issues/54) [#65](https://github.com/tokuhirom/ekanban/pull/65)、[#49](https://github.com/tokuhirom/ekanban/issues/49) [#69](https://github.com/tokuhirom/ekanban/pull/69)
 
 ## 状況

@@ -21,8 +21,10 @@ screen_height=1200
 window_x=$(((screen_width - window_width) / 2))
 window_y=$(((screen_height - window_height) / 2))
 
-# ウィンドウの中の位置を画面の位置に直す。
-screen_point() { echo "$((window_x + $1)) $((window_y + $2))"; }
+# ウィンドウの中の位置を画面の位置に直す。Linux ではいちばん上にメニューバーの
+# 1 行が入るので、そのぶん中身が下にずれる。
+readonly MENU_BAR_HEIGHT=30
+screen_point() { echo "$((window_x + $1)) $((window_y + MENU_BAR_HEIGHT + $2))"; }
 
 # カードやボタンに重ならないところ。撮る前にポインタをここへ逃がして、
 # たまたま下にあったカードが hover の色で写らないようにする。

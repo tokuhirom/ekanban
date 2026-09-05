@@ -84,7 +84,7 @@
 | [0002](0002-links-inside-the-description-field.md) | 説明の URL を、入力欄の中でリンクとして描く | 2026-09-05 | 有効 |
 | [0003](0003-daily-backup-generations.md) | 自動バックアップの世代を、起動ごとではなく日ごとに刻む | 2026-09-05 | 有効 |
 | [0004](0004-one-process-per-database.md) | 1 つのデータベースを開けるのは 1 プロセスだけにする | 2026-09-05 | 有効 |
-| [0005](0005-in-app-menu-without-a-menu-bar.md) | ネイティブのメニューバーが無い環境では、画面の中にメニューを出す | 2026-09-05 | 有効 |
+| [0005](0005-in-app-menu-without-a-menu-bar.md) | ネイティブのメニューバーが無い環境では、画面の中にメニューを出す | 2026-09-05 | 置き換えられた（→ 0015） |
 | [0006](0006-ci-on-three-platforms.md) | CI を 3 つのプラットフォームで回す | 2026-09-05 | 有効 |
 | [0007](0007-adr-required-for-significant-decisions.md) | 重大な決定は ADR に残すことを、完了条件にする | 2026-09-05 | 有効 |
 | [0008](0008-reaching-a-card-by-its-number.md) | カード番号へは、検索欄に `#12` と打って辿る | 2026-09-05 | 有効 |
@@ -94,3 +94,4 @@
 | [0012](0012-focus-after-quick-capture-on-linux.md) | クイックキャプチャを閉じたあとの行き先は、Linux では 1 つだけ保証する | 2026-09-05 | 有効 |
 | [0013](0013-linux-desktop-integration.md) | Linux のデスクトップ統合は、`~/.local` 以下に入れるスクリプトで行う | 2026-09-05 | 有効 |
 | [0014](0014-unsigned-apple-silicon-only-macos-builds.md) | macOS は Apple Silicon 向けの未公証ビルドだけを配る | 2026-09-05 | 有効 |
+| [0015](0015-a-menu-bar-on-every-platform.md) | どのプラットフォームでもメニューバーを出す | 2026-09-06 | 有効 |

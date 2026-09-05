@@ -116,16 +116,21 @@ fn build_personal_board(board: &mut Board) -> Tags {
 
     let todo = board.columns[0].id;
     let doing = board.columns[1].id;
+    let done = board.columns[2].id;
     let later = board.add_column("寝かせる").expect("新しいカラム");
     // WIP 上限に達したカラムを 1 つ見せる。
     board
         .set_column_wip_limit(doing, Some(2))
         .expect("カラムがある");
 
-    // デモの 4 枚は id が分かっているところに置き換え、足りない分を足す。
-    let demo_todo: Vec<_> = board.columns[0].cards.iter().map(|card| card.id).collect();
-    let demo_doing = board.columns[1].cards[0].id;
-    let demo_done = board.columns[2].cards[0].id;
+    // 初回のシード（`Board::first_run`）が作るのは空の 3 カラムだけなので、撮る
+    // 盤面のカードはここで全部足す。中身は下の `edit` で埋める。
+    let demo_todo = [
+        add(board, todo, "GPUI の画面を作る", ""),
+        add(board, todo, "ドラッグ＆ドロップを試す", ""),
+    ];
+    let demo_doing = add(board, doing, "SQLite のスキーマを決める", "");
+    let demo_done = add(board, done, "README を書く", "");
 
     edit(
         board,
