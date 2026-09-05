@@ -14,7 +14,7 @@ Keep SQL inside `src/db/` and keep UI code independent of direct database querie
 
 ## Build, Test, and Development Commands
 
-Run the application with `cargo run`. It creates `.ekanban.sqlite3` in the repository directory; set `EKANBAN_DATABASE=/path/to/board.sqlite3` to use another file.
+Run the application with `cargo run`. It stores its database under the OS data directory resolved by `src/paths.rs`; set `EKANBAN_DATABASE=/absolute/path/board.sqlite3` to use another file.
 
 - `cargo fmt --all -- --check` checks formatting.
 - `cargo clippy --all-targets --all-features -- -D warnings` runs lint checks as errors.
@@ -40,5 +40,7 @@ Write commit subjects in English, in the imperative mood, and explain in the bod
 ## Planning and Documentation
 
 Work in progress is tracked in GitHub issues, not in a roadmap document. When you pick up a task, read its issue for the scope and acceptance criteria, and close the issue when they are met.
+
+`README.md` is user-facing: what the app does, how to install and run it, where its data lives. Developer-facing material (module layout, schema, bundling, signing, CI) belongs in `docs/DEVELOPMENT.md`, and usage in `docs/MANUAL.md`.
 
 `docs/DESIGN.md` holds only what outlives a single issue: the design rules new code must follow, what is out of scope, what was considered and deliberately rejected, and the completion checklist every change must satisfy. Do not add task lists or schedules to it. When you make a decision that constrains future work, or reverse an earlier one, record it there with the reasoning.
