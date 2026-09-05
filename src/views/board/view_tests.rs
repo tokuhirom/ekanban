@@ -751,7 +751,7 @@ fn a_column_with_more_cards_than_fit_scrolls_inside_the_window(cx: &mut TestAppC
 }
 
 #[gpui_kit::test]
-fn shows_the_links_found_in_a_description(cx: &mut TestAppContext) {
+fn keeps_the_description_editable_with_links_in_it(cx: &mut TestAppContext) {
     let (harness, cx) = open_seeded_board(cx, |database, board| {
         let column_id = board.columns[0].id;
         let card_id = board
@@ -788,34 +788,49 @@ fn shows_the_links_found_in_a_description(cx: &mut TestAppContext) {
     });
     cx.run_until_parked();
 
-    let (description, has_links, plain_has_links) = cx.update(|_, cx| {
+    // 入力欄は本文をそのまま持っている。リンクにするのは描き方の話で、
+    // 中身を書き換えてはいない。
+    let description = harness.view.read_with(cx, |view, cx| {
+        view.editing_card
+            .as_ref()
+            .expect("the panel is open")
+            .description
+            .read(cx)
+            .value()
+            .to_string()
+    });
+    assert_eq!(
+        description, "設計は https://example.com/design 。PR は https://example.com/pull/1",
+        "the description is held verbatim, links and all"
+    );
+
+    // 打ち直しても保存まで通る。エディタのモードに変えたことで編集経路が
+    // 壊れていないことを、画面から見る。パネルを開いた直後はタイトルに
+    // フォーカスがあるので、説明へ移してから打つ。
+    cx.update(|window, cx| {
         harness.view.update(cx, |view, cx| {
-            let description = view
-                .editing_card
+            view.editing_card
                 .as_ref()
                 .expect("the panel is open")
                 .description
-                .read(cx)
-                .value()
-                .to_string();
-            let has_links = view.render_description_links(&description, cx).is_some();
-            // 同じ画面でも、URL の無い説明には行を出さない。
-            let plain_has_links = view.render_description_links("ただの説明", cx).is_some();
-            (description, has_links, plain_has_links)
+                .update(cx, |state, cx| state.focus(window, cx))
         })
     });
+    cx.run_until_parked();
+    cx.simulate_keystrokes("secondary-a");
+    cx.simulate_input("書き直した説明");
+    cx.dispatch_action(SaveEdit);
+    cx.run_until_parked();
 
     assert_eq!(
-        crate::model::find_urls(&description),
-        ["https://example.com/design", "https://example.com/pull/1"],
-        "both addresses are in the description, and the full stop after the first is not part of one"
-    );
-    assert!(
-        has_links,
-        "so the panel puts a link row under the description"
-    );
-    assert!(
-        !plain_has_links,
-        "a description without an address gets no row at all"
+        harness
+            .stored_board()
+            .columns
+            .iter()
+            .flat_map(|column| column.cards.iter())
+            .find(|card| card.id == card_id)
+            .map(|card| card.description.clone()),
+        Some("書き直した説明".to_string()),
+        "and typing into it still reaches the database"
     );
 }

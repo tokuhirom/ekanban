@@ -1,5 +1,6 @@
 mod board;
 mod capture;
+mod description_links;
 mod window_chrome;
 
 pub use board::BoardView;
