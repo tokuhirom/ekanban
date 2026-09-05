@@ -389,7 +389,9 @@ mod tests {
             .keystrokes()
             .iter()
             .map(|keystroke| {
-                let modifiers = keystroke.modifiers();
+                // 表示用ではなく gpui の表現のほうを見る。Windows では
+                // `modifiers()` が表示用に書き換わることがある。
+                let modifiers = &keystroke.inner().modifiers;
                 let mut text = String::new();
                 for (held, name) in [
                     (modifiers.control, "ctrl-"),
@@ -450,7 +452,7 @@ mod tests {
         for binding in all_key_bindings() {
             for keystroke in binding.keystrokes() {
                 assert!(
-                    !keystroke.modifiers().platform,
+                    !keystroke.inner().modifiers.platform,
                     "{} falls onto Super outside macOS",
                     binding.action().name()
                 );
