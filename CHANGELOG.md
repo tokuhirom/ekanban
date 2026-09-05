@@ -1,5 +1,12 @@
 # Changelog
 
+## [v0.1.2](https://github.com/tokuhirom/ekanban/compare/v0.1.1...v0.1.2) - 2026-09-05
+
+### 変更
+- Linux と Windows のメニューを VS Code / Zed と同じメニューバーにする by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/80
+- アプリを動かして確かめるときの手順を書く by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/83
+- 期限の書き分けの表を、画像の日付に合わせる by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/85
+
 ## [v0.1.1](https://github.com/tokuhirom/ekanban/compare/v0.1.0...v0.1.1) - 2026-09-05
 
 ### 変更
