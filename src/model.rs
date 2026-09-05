@@ -1030,6 +1030,46 @@ impl Board {
         Ok(new_card_id)
     }
 
+    /// 追加した直後の、まだ一度も保存していないカードを無かったことにする。
+    ///
+    /// `delete_card` とは別に用意している。あちらは「あったカードを消す」操作で、
+    /// `card_events` に `deleted` を残し、Undo にも積む。こちらは「追加そのものを
+    /// 取りやめる」ので、`created` の記録ごと取り下げ、Undo にも何も残さない。
+    /// 使う人から見ればそのカードは一度も存在していない。
+    pub fn discard_added_card(&mut self, card_id: CardId) -> Result<(), BoardError> {
+        let (column_index, card_index) = self
+            .columns
+            .iter()
+            .enumerate()
+            .find_map(|(column_index, column)| {
+                column
+                    .cards
+                    .iter()
+                    .position(|card| card.id == card_id)
+                    .map(|card_index| (column_index, card_index))
+            })
+            .ok_or(BoardError::CardNotFound(card_id))?;
+
+        self.columns[column_index].cards.remove(card_index);
+        self.reindex();
+
+        // 追加を積んだ操作を取り下げる。残すと、取りやめたあとの Undo が
+        // 「消えているカードをもう一度消す」ことになって失敗する。
+        if let Some(position) = self.undo_stack.iter().rposition(
+            |operation| matches!(operation, BoardOperation::AddCard { card } if card.id == card_id),
+        ) {
+            self.undo_stack.remove(position);
+        }
+        // 保存していないので `created` もまだ書かれていない。残すと、次の保存で
+        // 存在しないカードの履歴が 1 件だけ書かれる。
+        self.pending_events
+            .retain(|event| !(event.card_id == card_id && event.kind == CardEventKind::Created));
+
+        // ID は詰めない。採番は単調増加のままにする。
+        self.updated_at = timestamp();
+        Ok(())
+    }
+
     pub fn remove_card(&mut self, card_id: CardId) -> Result<(), BoardError> {
         self.delete_card(card_id)
     }
@@ -2468,6 +2508,58 @@ mod tests {
         assert_eq!(
             board.move_card(card_id, 999, 0),
             Err(BoardError::ColumnNotFound(999))
+        );
+    }
+
+    #[test]
+    fn discarding_an_added_card_leaves_no_trace() {
+        let mut board = Board::demo();
+        board.discard_pending_events();
+        let before = board.clone();
+
+        let card_id = board.add_card(1, "", "").unwrap();
+        assert_eq!(board.columns[0].cards.len(), 3);
+
+        board.discard_added_card(card_id).unwrap();
+
+        assert_eq!(board.columns[0].cards.len(), 2);
+        // 追加も削除も履歴に残らない。使う人から見れば一度も存在していない。
+        assert!(board.pending_events.is_empty());
+        assert!(!board.can_undo());
+        assert_eq!(board.columns, before.columns);
+    }
+
+    #[test]
+    fn discarding_an_added_card_keeps_the_operations_before_it() {
+        let mut board = Board::demo();
+        let moved = board.columns[0].cards[0].id;
+        board.move_card(moved, 2, 0).unwrap();
+
+        let card_id = board.add_card(1, "", "").unwrap();
+        board.discard_added_card(card_id).unwrap();
+
+        // 取り下げるのは追加した 1 手だけ。その前の移動は Undo で戻せる。
+        assert!(board.undo().unwrap());
+        assert_eq!(board.columns[0].cards[0].id, moved);
+    }
+
+    #[test]
+    fn discarding_an_added_card_does_not_reuse_its_id() {
+        let mut board = Board::demo();
+
+        let discarded = board.add_card(1, "", "").unwrap();
+        board.discard_added_card(discarded).unwrap();
+        let next = board.add_card(1, "次のカード", "").unwrap();
+
+        assert_ne!(next, discarded);
+    }
+
+    #[test]
+    fn rejects_discarding_a_card_that_is_not_there() {
+        let mut board = Board::demo();
+        assert_eq!(
+            board.discard_added_card(999),
+            Err(BoardError::CardNotFound(999))
         );
     }
 
