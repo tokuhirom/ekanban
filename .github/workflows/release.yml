@@ -1,0 +1,226 @@
+name: Release
+
+# タグを打つとビルドして GitHub Release に上げます。
+#
+# 入口は 2 つあります。
+#   push (tags)       手で `git push origin v0.1.0` したとき
+#   workflow_dispatch tag を渡すとそのタグで公開し、空ならビルドの確認だけします
+#
+# 後から tagpr を入れるときは workflow_dispatch のほうを使います。GITHUB_TOKEN で
+# 打たれたタグは push イベントを発火しない (GitHub の再帰防止) ので、tagpr の
+# ワークフローから `gh workflow run release.yml -f tag=<タグ>` で呼びます。
+# workflow_dispatch は再帰防止の例外なので、GITHUB_TOKEN のままで動きます。
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "公開するタグ (例: v0.1.0)。空にすると 3 つのプラットフォームでビルドが通るかだけ見て、リリースには何も上げません。"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  setup:
+    name: Resolve the release target
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      version: ${{ steps.resolve.outputs.version }}
+      ref: ${{ steps.resolve.outputs.ref }}
+      publish: ${{ steps.resolve.outputs.publish }}
+
+    steps:
+      - name: Resolve the tag to build
+        id: resolve
+        env:
+          # 式を直接 run に埋めると、入力がシェルに解釈されてしまう。
+          INPUT_TAG: ${{ inputs.tag }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          tag="$INPUT_TAG"
+          if [ -z "$tag" ] && [ "$REF_TYPE" = tag ]; then
+            tag="$REF_NAME"
+          fi
+
+          if [ -z "$tag" ]; then
+            # 公開しない確認ビルド。成果物の名前には短い SHA を使う。
+            {
+              echo "tag="
+              echo "version=$(printf '%s' "$SHA" | cut -c1-7)"
+              echo "ref=$SHA"
+              echo "publish=false"
+            } >> "$GITHUB_OUTPUT"
+            echo "確認ビルドとして走ります (リリースには上げません)"
+            exit 0
+          fi
+
+          case "$tag" in
+            v[0-9]*) ;;
+            *) echo "::error::タグは v から始まるバージョンにしてください: $tag"; exit 1 ;;
+          esac
+
+          {
+            echo "tag=$tag"
+            echo "version=${tag#v}"
+            echo "ref=$tag"
+            echo "publish=true"
+          } >> "$GITHUB_OUTPUT"
+          echo "$tag を公開します"
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: setup
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      # 1 つ落ちても、他のプラットフォームの結果は見たい。
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-24.04
+          - target: x86_64-pc-windows-msvc
+            runner: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.setup.outputs.ref }}
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes \
+            libfontconfig1-dev \
+            libx11-xcb-dev \
+            libxkbcommon-x11-dev \
+            libxcb1-dev \
+            libxcb-render0-dev \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev \
+            libxcb-xkb-dev \
+            libx11-dev \
+            libwayland-dev \
+            libvulkan-dev
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+
+      # macOS だけは実行ファイルではなく .app バンドルを配ります。
+      # CODESIGN_IDENTITY が空のときは script/bundle-mac が ad-hoc 署名に落とします。
+      - name: Build the .app bundle
+        if: runner.os == 'macOS'
+        env:
+          CODESIGN_IDENTITY: ${{ secrets.CODESIGN_IDENTITY }}
+        run: make bundle
+
+      - name: Build
+        if: runner.os != 'macOS'
+        run: cargo build --release
+
+      - name: Package the .app
+        if: runner.os == 'macOS'
+        env:
+          ASSET: ekanban-${{ needs.setup.outputs.version }}-${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          # zip コマンドではなく ditto を使う。.app のシンボリックリンクと
+          # 署名を壊さずに固められるのはこちら。
+          ditto -c -k --keepParent \
+            "target/release/bundle/Ekanban.app" \
+            "dist/$ASSET.zip"
+
+      - name: Package the binary
+        if: runner.os == 'Linux'
+        env:
+          ASSET: ekanban-${{ needs.setup.outputs.version }}-${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          mkdir -p "dist/$ASSET"
+          cp target/release/ekanban "dist/$ASSET/"
+          cp README.md LICENSE "dist/$ASSET/"
+          tar -C dist -czf "dist/$ASSET.tar.gz" "$ASSET"
+          rm -rf "dist/$ASSET"
+
+      - name: Package the binary
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          ASSET: ekanban-${{ needs.setup.outputs.version }}-${{ matrix.target }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force -Path "dist/$env:ASSET" | Out-Null
+          Copy-Item target/release/ekanban.exe "dist/$env:ASSET/"
+          Copy-Item README.md, LICENSE "dist/$env:ASSET/"
+          Compress-Archive -Path "dist/$env:ASSET/*" -DestinationPath "dist/$env:ASSET.zip"
+          Remove-Item -Recurse -Force "dist/$env:ASSET"
+
+      - name: Upload the built asset
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish the release
+    needs: [setup, build]
+    if: needs.setup.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download the built assets
+        uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+
+      - name: Collect the assets
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          # アーティファクトがジョブ名のディレクトリに入っても入らなくても拾えるように、
+          # 階層を当てにせず平らにする。
+          find artifacts -type f -exec mv -t dist {} +
+          cd dist
+          sha256sum ekanban-* > SHA256SUMS.txt
+          ls -l
+
+      - name: Upload to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.setup.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # tagpr は自分で Release を作るので、既にあるなら消さずに足すだけにする。
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "$TAG の Release は既にあるので、成果物だけ足します"
+          else
+            echo "$TAG の Release を作ります"
+            gh release create "$TAG" --title "$TAG" --generate-notes
+          fi
+          gh release upload "$TAG" dist/* --clobber

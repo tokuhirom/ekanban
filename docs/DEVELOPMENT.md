@@ -261,3 +261,83 @@ GitHub Actions（`.github/workflows/ci.yml`）が、`main` への push と pull 
 - `cargo build --all-features`
 
 `main` にはこのジョブ（`Check and test`）を必須にしたルールセットが掛かっているので、直接 push はできません。`main` からブランチを切り、`Closes #<issue>` を書いた pull request を出してください。
+
+## リリース
+
+タグを打つと `.github/workflows/release.yml` がビルドして、GitHub Release に成果物を上げます。
+
+```sh
+git switch main && git pull
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+タグは `v` から始めます。そうでないものはワークフローが弾きます。
+
+### 出るもの
+
+| プラットフォーム | ランナー | 成果物 |
+| --- | --- | --- |
+| macOS (Apple Silicon) | `macos-latest` | `ekanban-<版>-aarch64-apple-darwin.zip`（`Ekanban.app`） |
+| Linux (x86_64) | `ubuntu-24.04` | `ekanban-<版>-x86_64-unknown-linux-gnu.tar.gz`（実行ファイル + README + LICENSE） |
+| Windows (x86_64) | `windows-latest` | `ekanban-<版>-x86_64-pc-windows-msvc.zip`（`ekanban.exe` + README + LICENSE） |
+
+あわせて `SHA256SUMS.txt` を置きます。
+
+- **Intel Mac 向けは出していません。** 要るようになったら `macos-15-intel` のジョブを足すか、`lipo` で universal binary にします
+- **Linux は `ubuntu-24.04` でビルドします。** glibc 2.39 に依存するので、それより古いディストリビューションでは動きません。実行にはこのほか Vulkan のドライバと fontconfig が要ります。`ubuntu-22.04` は 2026-09-17 から段階的に廃止されるので使いません
+- **Windows のバイナリは、ビルドが通ることしか確かめていません。** クイックキャプチャは対象外のままです
+
+### macOS の署名
+
+いまは ad-hoc 署名のままです。ダウンロードした `.app` は Gatekeeper に止められるので、初回は右クリックから開く必要があります。
+
+ワークフローは `CODESIGN_IDENTITY` シークレットがあれば `script/bundle-mac` にそのまま渡します。実際に Developer ID で署名するには、これに加えて次が要ります。
+
+- 証明書（`.p12`）をシークレットに入れて、ビルド前に一時キーチェーンへ取り込むステップ
+- `xcrun notarytool submit --wait` と `xcrun stapler staple` による公証
+
+### ビルドだけ確かめる
+
+Actions の Release ワークフローを `workflow_dispatch` で、`tag` を空のまま実行すると、3 つのプラットフォームでビルドが通るかだけ見ます。リリースには何も上がりません。
+
+### tagpr を入れるとき
+
+バージョン上げとタグ打ちは、いずれ [tagpr](https://github.com/Songmu/tagpr) に任せます。設定 (`.tagpr`) は先に置いてあるので、残っているのはワークフローを足すことだけです。
+
+```yaml
+# .github/workflows/tagpr.yml
+name: tagpr
+on:
+  push:
+    branches: ["main"]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  tagpr:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable  # postVersionCommand の cargo update に要る
+      - id: tagpr
+        uses: Songmu/tagpr@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # GITHUB_TOKEN で打たれたタグは push イベントを発火しない。
+      # workflow_dispatch は再帰防止の例外なので、こちらから呼ぶ。
+      - if: steps.tagpr.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run release.yml -f tag='${{ steps.tagpr.outputs.tag }}'
+```
+
+入れる前に気をつけることが 3 つあります。
+
+- **Settings → Actions → General の「Allow GitHub Actions to create and approve pull requests」を有効にします。** tagpr がリリース用の pull request を作れません
+- **`main` のルールセットが `Check and test` を必須にしています。** tagpr の pull request も CI を通ってから merge されます
+- **`.tagpr` の `postVersionCommand` は `cargo update --workspace` です。** tagpr は `*.lock` を触らないので、これが無いと `Cargo.lock` の `ekanban` のバージョンだけ取り残されます。ワークフローに Rust を入れておいてください
+
+tagpr は自分で GitHub Release を作ります。Release ワークフローは、既にある Release には成果物を足すだけにしてあるので、上書きも二重作成も起きません。ただし Release が先にでき、ビルドが終わるまで数分は成果物が空になります。
