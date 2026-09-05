@@ -17,6 +17,7 @@ src/
   model.rs        Board / Column / Card などのドメインモデルと移動・並べ替え
   actions.rs      GPUI のアクション定義
   backup.rs       起動時の日ごと世代バックアップ（置き場所・命名・世代数）
+  instance.rs     同じデータベースを 2 プロセスに開かせないロック
   menu.rs         ネイティブメニューバー、画面内メニューの項目、ショートカットの割り当て
   hotkey.rs       グローバルホットキーの登録と、環境ごとの利用可否の判定
   paths.rs        OS ごとのデータベースとログの配置の解決
