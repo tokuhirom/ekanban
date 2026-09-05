@@ -122,6 +122,12 @@ fn open_seeded_board(
 
     let (board, boards) = {
         let mut database = Database::open(&database_path).expect("a new database is created");
+        // 初回のシードはカードの無い 3 カラムだけ（`Board::first_run`）。画面の
+        // テストは盤面に中身がある前提なので、窓を開ける前に土台を載せる。
+        let mut fixture = Board::fixture();
+        database
+            .save_board(&mut fixture)
+            .expect("the fixture board is stored");
         let mut board = {
             let boards = database.load_boards().expect("the seeded board is listed");
             database

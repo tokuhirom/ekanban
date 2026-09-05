@@ -5356,7 +5356,7 @@ mod tests {
 
     #[test]
     fn tag_filter_dims_only_the_cards_without_that_tag() {
-        let mut board = Board::demo();
+        let mut board = Board::fixture();
         let tag_id = board.add_tag("重要", "#60a5fa").expect("tag name is new");
         let tagged_id = board.columns[0].cards[0].id;
         board
@@ -5372,7 +5372,7 @@ mod tests {
 
     #[test]
     fn a_due_date_alone_never_dims_a_card() {
-        let mut board = Board::demo();
+        let mut board = Board::fixture();
         let card_id = board.columns[0].cards[0].id;
         board
             .set_card_due_date(
@@ -5386,7 +5386,7 @@ mod tests {
 
     #[test]
     fn arrow_navigation_moves_within_and_between_columns() {
-        let board = Board::demo();
+        let board = Board::fixture();
         let first_column_card = board.columns[0].cards[0].id;
         let second_column_card = board.columns[0].cards[1].id;
         let third_column_card = board.columns[1].cards[0].id;
@@ -5415,7 +5415,7 @@ mod tests {
 
     #[test]
     fn arrow_navigation_skips_empty_columns() {
-        let mut board = Board::demo();
+        let mut board = Board::fixture();
         let empty_column_id = board.add_column("空").expect("column can be added");
         board
             .move_column(empty_column_id, 1)
@@ -5431,7 +5431,7 @@ mod tests {
 
     #[test]
     fn arrow_navigation_starts_at_first_card_without_selection() {
-        let board = Board::demo();
+        let board = Board::fixture();
         let first_card = board.columns[0].cards[0].id;
 
         assert_eq!(
@@ -5442,7 +5442,7 @@ mod tests {
 
     #[test]
     fn shows_which_column_a_card_belongs_to() {
-        let board = Board::demo();
+        let board = Board::fixture();
         let first_card = board.columns[0].cards[0].id;
         let second_column_card = board.columns[1].cards[0].id;
 
@@ -5493,7 +5493,7 @@ mod tests {
 
     #[test]
     fn renders_board_markdown_with_descriptions_and_checklists() {
-        let mut board = Board::demo();
+        let mut board = Board::fixture();
         let card_id = board.columns[0].cards[0].id;
         board
             .update_card_details_with_checklist(
@@ -5568,7 +5568,7 @@ mod tests {
 
     #[test]
     fn capture_destination_names_the_board_and_the_column() {
-        let board = Board::demo();
+        let board = Board::fixture();
         let target = default_capture_target(&board).expect("the demo board has columns");
         let destination = capture_destination(&target);
         assert!(destination.contains(&board.name));
@@ -5577,7 +5577,7 @@ mod tests {
 
     #[test]
     fn default_capture_target_is_the_first_column() {
-        let board = Board::demo();
+        let board = Board::fixture();
         let target = default_capture_target(&board).expect("the demo board has columns");
         assert_eq!(target.board_id, board.id);
         assert_eq!(target.column_id, board.columns[0].id);
@@ -5585,14 +5585,14 @@ mod tests {
 
     #[test]
     fn default_capture_target_is_undecided_without_a_column() {
-        let mut board = Board::demo();
+        let mut board = Board::fixture();
         board.columns.clear();
         assert_eq!(default_capture_target(&board), None);
     }
 
     #[test]
     fn capture_target_survives_while_its_column_exists() {
-        let board = Board::demo();
+        let board = Board::fixture();
         let target = CaptureTarget {
             board_id: board.id,
             column_id: board.columns[2].id,
@@ -5604,7 +5604,7 @@ mod tests {
 
     #[test]
     fn capture_target_is_dropped_when_its_column_is_gone() {
-        let board = Board::demo();
+        let board = Board::fixture();
         let removed = CaptureTarget {
             board_id: board.id,
             column_id: 9999,

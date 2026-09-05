@@ -430,7 +430,43 @@ impl Board {
         Ok(true)
     }
 
-    pub fn demo() -> Self {
+    /// 空のデータベースを開いたときに作る最初のボード。
+    ///
+    /// カードは入れない。読み終わったら消す前提のものを最初に置くと、消す手間を
+    /// 全員に配ることになり、消したあともアーカイブか `card_events` に残る。
+    /// カラムだけは置く。0 カラムだと、最初にやることが「カラムを作る」になって
+    /// Kanban の形が伝わらない。
+    pub fn first_run() -> Self {
+        let now = timestamp();
+        Self {
+            id: 1,
+            name: "個人 Kanban".to_string(),
+            created_at: now,
+            updated_at: now,
+            next_card_id: 1,
+            next_column_id: 4,
+            next_tag_id: 1,
+            next_checklist_item_id: 1,
+            tags: Vec::new(),
+            archived_cards: Vec::new(),
+            columns: vec![
+                Column::new(1, 1, "やること", 0, now),
+                Column::new(2, 1, "進行中", 1, now),
+                Column::new(3, 1, "完了", 2, now),
+            ],
+            pending_events: Vec::new(),
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
+        }
+    }
+
+    /// テストの土台。カードが 2 / 1 / 1 枚入った 3 カラムのボード。
+    ///
+    /// 初回のシード（[`Board::first_run`]）とは別物にしてある。1 つの関数が
+    /// 両方を兼ねていたころは、初回の見た目を直すつもりで中身を変えると
+    /// テストが壊れた。
+    #[cfg(test)]
+    pub fn fixture() -> Self {
         let now = timestamp();
         let mut board = Self {
             id: 1,
@@ -2445,7 +2481,7 @@ mod tests {
 
     #[test]
     fn moves_card_to_another_column() {
-        let mut board = Board::demo();
+        let mut board = Board::fixture();
         let card_id = board.columns[0].cards[0].id;
 
         assert!(board.move_card(card_id, 2, 0).unwrap());
@@ -2456,7 +2492,7 @@ mod tests {
 
     #[test]
     fn reorders_card_inside_a_column() {
-        let mut board = Board::demo();
+        let mut board = Board::fixture();
         let card_id = board.columns[0].cards[0].id;
 
         assert!(board.move_card(card_id, 1, 2).unwrap());
@@ -2466,7 +2502,7 @@ mod tests {
 
     #[test]
     fn moving_a_card_to_its_current_position_is_a_noop() {
-        let mut board = Board::demo();
+        let mut board = Board::fixture();
         let card_id = board.columns[0].cards[0].id;
 
         assert!(!board.move_card(card_id, 1, 0).unwrap());
@@ -2475,7 +2511,7 @@ mod tests {
 
     #[test]
     fn reorders_columns() {
-        let mut board = Board::demo();
+        let mut board = Board::fixture();
 
         assert!(board.move_column(1, board.columns.len()).unwrap());
         assert_eq!(
@@ -2491,7 +2527,7 @@ mod tests {
 
     #[test]
     fn moving_a_column_to_its_current_position_is_a_noop() {
-        let mut board = Board::demo();
+        let mut board = Board::fixture();
 
         assert!(!board.move_column(2, 1).unwrap());
         assert_eq!(board.columns[1].id, 2);
@@ -2499,7 +2535,7 @@ mod tests {
 
     #[test]
     fn rejects_unknown_card_and_column() {
-        let mut board = Board::demo();
+        let mut board = Board::fixture();
         assert_eq!(
             board.move_card(999, 1, 0),
             Err(BoardError::CardNotFound(999))
@@ -2513,7 +2549,7 @@ mod tests {
 
     #[test]
     fn discarding_an_added_card_leaves_no_trace() {
-        let mut board = Board::demo();
+        let mut board = Board::fixture();
         board.discard_pending_events();
         let before = board.clone();
 
@@ -2531,7 +2567,7 @@ mod tests {
 
     #[test]
     fn discarding_an_added_card_keeps_the_operations_before_it() {
-        let mut board = Board::demo();
+        let mut board = Board::fixture();
         let moved = board.columns[0].cards[0].id;
         board.move_card(moved, 2, 0).unwrap();
 
@@ -2545,7 +2581,7 @@ mod tests {
 
     #[test]
     fn discarding_an_added_card_does_not_reuse_its_id() {
-        let mut board = Board::demo();
+        let mut board = Board::fixture();
 
         let discarded = board.add_card(1, "", "").unwrap();
         board.discard_added_card(discarded).unwrap();
@@ -2556,7 +2592,7 @@ mod tests {
 
     #[test]
     fn rejects_discarding_a_card_that_is_not_there() {
-        let mut board = Board::demo();
+        let mut board = Board::fixture();
         assert_eq!(
             board.discard_added_card(999),
             Err(BoardError::CardNotFound(999))
@@ -2565,7 +2601,7 @@ mod tests {
 
     #[test]
     fn updates_card_content() {
-        let mut board = Board::demo();
+        let mut board = Board::fixture();
         let card_id = board.columns[0].cards[0].id;
 
         assert!(board
@@ -2577,7 +2613,7 @@ mod tests {
 
     #[test]
     fn undoes_a_card_editor_save_as_one_operation() {
-        let mut board = Board::demo();
+        let mut board = Board::fixture();
         let card_id = board.columns[0].cards[0].id;
         let tag_id = board.add_tag("重要", "#ef4444").unwrap();
         let due_date = NaiveDate::from_ymd_opt(2026, 9, 30).unwrap();
@@ -2600,7 +2636,7 @@ mod tests {
 
     #[test]
     fn rejects_empty_card_title() {
-        let mut board = Board::demo();
+        let mut board = Board::fixture();
         let card_id = board.columns[0].cards[0].id;
 
         assert_eq!(
@@ -2611,7 +2647,7 @@ mod tests {
 
     #[test]
     fn removes_card_and_reindexes_remaining_cards() {
-        let mut board = Board::demo();
+        let mut board = Board::fixture();
         let removed_id = board.columns[0].cards[0].id;
 
         board.remove_card(removed_id).unwrap();
@@ -2623,7 +2659,7 @@ mod tests {
 
     #[test]
     fn does_not_reuse_deleted_card_ids() {
-        let mut board = Board::demo();
+        let mut board = Board::fixture();
         let first = board.add_card(1, "1", "").unwrap();
         let second = board.add_card(1, "2", "").unwrap();
         let third = board.add_card(1, "3", "").unwrap();
@@ -2636,7 +2672,7 @@ mod tests {
 
     #[test]
     fn does_not_reuse_deleted_column_ids() {
-        let mut board = Board::demo();
+        let mut board = Board::fixture();
         let first = board.add_column("追加 1").unwrap();
         let second = board.add_column("追加 2").unwrap();
 
@@ -2648,7 +2684,7 @@ mod tests {
 
     #[test]
     fn renames_column_and_skips_unchanged_values() {
-        let mut board = Board::demo();
+        let mut board = Board::fixture();
 
         assert!(!board.rename_column(1, "やること").unwrap());
         assert!(board.rename_column(1, "近日中").unwrap());
@@ -2657,7 +2693,7 @@ mod tests {
 
     #[test]
     fn rejects_empty_column_names() {
-        let mut board = Board::demo();
+        let mut board = Board::fixture();
 
         assert_eq!(board.add_column("  "), Err(BoardError::EmptyColumnName));
         assert_eq!(
@@ -2668,7 +2704,7 @@ mod tests {
 
     #[test]
     fn renames_a_board_and_rejects_empty_names() {
-        let mut board = Board::demo();
+        let mut board = Board::fixture();
 
         assert!(!board.rename("個人 Kanban").unwrap());
         assert!(board.rename("仕事").unwrap());
@@ -2725,7 +2761,7 @@ mod tests {
 
     #[test]
     fn sets_due_date_and_skips_unchanged_values() {
-        let mut board = Board::demo();
+        let mut board = Board::fixture();
         let card_id = board.columns[0].cards[0].id;
         let due_date = NaiveDate::from_ymd_opt(2026, 9, 30).unwrap();
 
@@ -2750,7 +2786,7 @@ mod tests {
 
     #[test]
     fn sorts_cards_by_due_date_with_empty_dates_last() {
-        let mut board = Board::demo();
+        let mut board = Board::fixture();
         let first = board.columns[0].cards[0].id;
         let second = board.columns[0].cards[1].id;
         let first_due = NaiveDate::from_ymd_opt(2026, 10, 10).unwrap();
@@ -2767,7 +2803,7 @@ mod tests {
 
     #[test]
     fn searches_case_insensitively_and_normalizes_full_width_ascii() {
-        let mut board = Board::demo();
+        let mut board = Board::fixture();
         board
             .update_card(1, "Rust Ｋａｎｂａｎ", "ローカル DB")
             .unwrap();
@@ -2781,7 +2817,7 @@ mod tests {
 
     #[test]
     fn sets_wip_limit_and_rejects_non_positive_values() {
-        let mut board = Board::demo();
+        let mut board = Board::fixture();
 
         assert!(board.set_column_wip_limit(1, Some(3)).unwrap());
         assert!(!board.set_column_wip_limit(1, Some(3)).unwrap());
@@ -2797,7 +2833,7 @@ mod tests {
 
     #[test]
     fn manages_tags_and_card_assignments() {
-        let mut board = Board::demo();
+        let mut board = Board::fixture();
         let tag_id = board.add_tag("重要", "#ef4444").unwrap();
         let other_tag_id = board.add_tag("個人", "#60a5fa").unwrap();
         let card_id = board.columns[0].cards[0].id;
@@ -2819,7 +2855,7 @@ mod tests {
 
     #[test]
     fn archives_and_restores_cards_without_reusing_ids() {
-        let mut board = Board::demo();
+        let mut board = Board::fixture();
         let card_id = board.columns[0].cards[0].id;
 
         assert!(board.archive_card(card_id).unwrap());
@@ -2837,7 +2873,7 @@ mod tests {
 
     #[test]
     fn records_card_lifecycle_events_but_not_intra_column_reorders() {
-        let mut board = Board::demo();
+        let mut board = Board::fixture();
         board.pending_events.clear();
         let card_id = board.columns[0].cards[0].id;
 
@@ -2861,7 +2897,7 @@ mod tests {
 
     #[test]
     fn records_one_archived_event_for_each_card_in_a_column() {
-        let mut board = Board::demo();
+        let mut board = Board::fixture();
         board.pending_events.clear();
 
         assert_eq!(board.archive_column(1).unwrap(), 2);
@@ -2874,7 +2910,7 @@ mod tests {
 
     #[test]
     fn records_deleted_events_for_cards_removed_directly_or_with_a_column() {
-        let mut board = Board::demo();
+        let mut board = Board::fixture();
         board.pending_events.clear();
         let card_id = board.columns[0].cards[0].id;
 
@@ -2892,7 +2928,7 @@ mod tests {
 
     #[test]
     fn undoes_and_redoes_card_operations_without_reusing_snapshots() {
-        let mut board = Board::demo();
+        let mut board = Board::fixture();
         let card_id = board.columns[0].cards[0].id;
         let original_title = board.columns[0].cards[0].title.clone();
 
@@ -2918,7 +2954,7 @@ mod tests {
 
     #[test]
     fn a_new_operation_clears_redo_history() {
-        let mut board = Board::demo();
+        let mut board = Board::fixture();
         let card_id = board.columns[0].cards[0].id;
 
         board
@@ -2935,7 +2971,7 @@ mod tests {
 
     #[test]
     fn archives_a_column_and_keeps_archived_cards_when_column_is_deleted() {
-        let mut board = Board::demo();
+        let mut board = Board::fixture();
         let archived_id = board.columns[0].cards[0].id;
         assert_eq!(board.archive_column(1).unwrap(), 2);
         assert_eq!(board.archived_cards[0].id, archived_id);
@@ -2947,7 +2983,7 @@ mod tests {
 
     #[test]
     fn rejects_empty_and_duplicate_tag_names() {
-        let mut board = Board::demo();
+        let mut board = Board::fixture();
 
         assert_eq!(board.add_tag(" ", "#000000"), Err(BoardError::EmptyTagName));
         board.add_tag("仕事", "#000000").unwrap();
@@ -2959,7 +2995,7 @@ mod tests {
 
     #[test]
     fn manages_checklist_items_and_reindexes_them() {
-        let mut board = Board::demo();
+        let mut board = Board::fixture();
         let card_id = board.columns[0].cards[0].id;
         let first_id = board.add_checklist_item(card_id, "テストを書く").unwrap();
         let second_id = board.add_checklist_item(card_id, "fmt を通す").unwrap();
@@ -2992,7 +3028,7 @@ mod tests {
 
     #[test]
     fn edits_checklist_items_with_card_details_as_one_undo_operation() {
-        let mut board = Board::demo();
+        let mut board = Board::fixture();
         let card_id = board.columns[0].cards[0].id;
 
         board
@@ -3028,7 +3064,7 @@ mod tests {
 
     #[test]
     fn copies_card_content_and_resets_due_date_and_checks() {
-        let mut board = Board::demo();
+        let mut board = Board::fixture();
         let source_id = board.columns[0].cards[0].id;
         let tag_id = board.add_tag("手順", "#60a5fa").unwrap();
         board
@@ -3083,7 +3119,7 @@ mod tests {
 
     #[test]
     fn rejects_empty_checklist_items() {
-        let mut board = Board::demo();
+        let mut board = Board::fixture();
         let card_id = board.columns[0].cards[0].id;
         assert_eq!(
             board.add_checklist_item(card_id, "  "),
