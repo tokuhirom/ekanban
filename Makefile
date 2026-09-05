@@ -2,7 +2,7 @@ APP_NAME := Ekanban
 RELEASE_APP := target/release/bundle/$(APP_NAME).app
 DEBUG_APP := target/debug/bundle/$(APP_NAME).app
 
-.PHONY: help build release run test fmt fmt-check lint check screenshots icon bundle bundle-debug open install clean
+.PHONY: help build release run test fmt fmt-check lint check screenshots icon bundle bundle-debug open install install-linux uninstall-linux clean
 
 help: ## このヘルプを表示する
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -65,6 +65,12 @@ install: bundle ## .app を /Applications にインストールする
 	rm -rf /Applications/$(APP_NAME).app
 	cp -R $(RELEASE_APP) /Applications/
 	@echo "installed /Applications/$(APP_NAME).app"
+
+install-linux: release ## Linux のアプリ一覧に登録する (~/.local 以下)
+	script/install-linux
+
+uninstall-linux: ## install-linux で入れたものを消す
+	script/install-linux --uninstall
 
 clean: ## ビルド成果物を消す
 	cargo clean

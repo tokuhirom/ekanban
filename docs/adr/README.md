@@ -87,3 +87,10 @@
 | [0005](0005-in-app-menu-without-a-menu-bar.md) | ネイティブのメニューバーが無い環境では、画面の中にメニューを出す | 2026-09-05 | 有効 |
 | [0006](0006-ci-on-three-platforms.md) | CI を 3 つのプラットフォームで回す | 2026-09-05 | 有効 |
 | [0007](0007-adr-required-for-significant-decisions.md) | 重大な決定は ADR に残すことを、完了条件にする | 2026-09-05 | 有効 |
+| [0008](0008-reaching-a-card-by-its-number.md) | カード番号へは、検索欄に `#12` と打って辿る | 2026-09-05 | 有効 |
+| [0009](0009-per-platform-key-bindings.md) | `cmd-ctrl-*` に頼る操作には、macOS 以外の割り当てを別に持つ | 2026-09-05 | 有効 |
+| [0010](0010-hiding-instead-of-dimming-in-the-archive.md) | アーカイブ表示では、絞り込みから外れたカードを隠す | 2026-09-05 | 有効 |
+| [0011](0011-due-counts-in-the-board-list.md) | 期限の件数を、ボード一覧の各行に出す | 2026-09-05 | 有効 |
+| [0012](0012-focus-after-quick-capture-on-linux.md) | クイックキャプチャを閉じたあとの行き先は、Linux では 1 つだけ保証する | 2026-09-05 | 有効 |
+| [0013](0013-linux-desktop-integration.md) | Linux のデスクトップ統合は、`~/.local` 以下に入れるスクリプトで行う | 2026-09-05 | 有効 |
+| [0014](0014-unsigned-apple-silicon-only-macos-builds.md) | macOS は Apple Silicon 向けの未公証ビルドだけを配る | 2026-09-05 | 有効 |

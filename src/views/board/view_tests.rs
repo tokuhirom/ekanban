@@ -15,6 +15,7 @@
 
 use std::{cell::RefCell, path::PathBuf, rc::Rc};
 
+use chrono::{Duration, Local};
 use gpui_kit::{
     component::{Root, Theme},
     AppContext as _, Entity, TestAppContext, VisualTestContext,
@@ -80,6 +81,23 @@ impl Harness {
                 .filter(|card| super::card_is_dimmed(card, &view.search_query, view.tag_filter))
                 .map(|card| card.title.clone())
                 .collect()
+        })
+    }
+
+    /// アーカイブ表示に並ぶカードの題名。日ごとの見出しごとに分かれる。
+    ///
+    /// アーカイブ表示は絞り込みから外れたカードを減光ではなく非表示にするので、
+    /// ここは「暗いか」ではなく「並んでいるか」を見る。
+    fn archived_titles(&self, cx: &mut VisualTestContext) -> Vec<String> {
+        self.view.read_with(cx, |view, _| {
+            super::archived_groups(
+                &view.board.archived_cards,
+                &view.search_query,
+                view.tag_filter,
+            )
+            .into_iter()
+            .flat_map(|(_, cards)| cards.into_iter().map(|card| card.title.clone()))
+            .collect()
         })
     }
 
@@ -419,6 +437,132 @@ fn undo_takes_back_a_saved_card(cx: &mut TestAppContext) {
             .iter()
             .any(|column| column.cards.iter().any(|card| card.title == "あとで消す")),
         "undo reaches the database, not only the screen"
+    );
+}
+
+/// 受け入れ条件「ボードを開かなくても、どのボードに期限切れ / 本日期限の
+/// カードがあるか分かる」（#62）。
+#[gpui_kit::test]
+fn the_board_list_shows_the_due_counts_of_a_board_that_is_not_open(cx: &mut TestAppContext) {
+    let today = Local::now().date_naive();
+    let (harness, cx) = open_seeded_board(cx, |database, _| {
+        let mut other = database
+            .create_board("仕事")
+            .expect("a second board is made");
+        let column_id = other.columns[0].id;
+        let overdue = other
+            .add_card(column_id, "過ぎている", "")
+            .expect("the column exists");
+        let due_today = other
+            .add_card(column_id, "今日まで", "")
+            .expect("the column exists");
+        other
+            .set_card_due_date(overdue, Some(today - Duration::days(1)))
+            .expect("the card exists");
+        other
+            .set_card_due_date(due_today, Some(today))
+            .expect("the card exists");
+        database
+            .save_board(&mut other)
+            .expect("the board is stored");
+    });
+
+    let counts = harness.view.read_with(cx, |view, _| {
+        let other = view
+            .boards
+            .iter()
+            .find(|summary| summary.id != view.board.id)
+            .expect("the second board is listed")
+            .clone();
+        view.due_counts_for(&other, today)
+    });
+
+    assert_eq!(counts.overdue, 1);
+    assert_eq!(counts.today, 1);
+
+    // 開いているほうは期限を持たないので、行は名前だけになる。
+    let open_board = harness.view.read_with(cx, |view, _| {
+        let summary = view
+            .boards
+            .iter()
+            .find(|summary| summary.id == view.board.id)
+            .expect("the open board is listed")
+            .clone();
+        view.due_counts_for(&summary, today)
+    });
+    assert!(open_board.is_empty());
+}
+
+#[gpui_kit::test]
+fn searching_while_the_archive_is_shown_narrows_the_archive(cx: &mut TestAppContext) {
+    let (harness, cx) = open_seeded_board(cx, |database, board| {
+        let column_id = board.columns[0].id;
+        let kept = board
+            .add_card(column_id, "請求書を出す", "")
+            .expect("the column exists");
+        let dropped = board
+            .add_card(column_id, "議事録を書く", "")
+            .expect("the column exists");
+        board.archive_card(kept).expect("the card can be archived");
+        board
+            .archive_card(dropped)
+            .expect("the card can be archived");
+        database.save_board(board).expect("the board is stored");
+    });
+    focus_board(&harness, cx);
+
+    cx.dispatch_action(ToggleArchiveView);
+    cx.run_until_parked();
+    assert_eq!(
+        harness.archived_titles(cx),
+        vec!["請求書を出す".to_string(), "議事録を書く".to_string()],
+        "both archived cards are listed before filtering"
+    );
+
+    cx.dispatch_action(FocusSearch);
+    cx.run_until_parked();
+    cx.simulate_input("請求書");
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+
+    assert!(
+        harness.view.read_with(cx, |view, _| view.show_archived),
+        "searching does not leave the archive view"
+    );
+    assert_eq!(
+        harness.archived_titles(cx),
+        vec!["請求書を出す".to_string()],
+        "the archive lists only what the search matched"
+    );
+}
+
+#[gpui_kit::test]
+fn searching_for_a_card_number_leaves_only_that_card(cx: &mut TestAppContext) {
+    let (harness, cx) = open_board(cx);
+    focus_board(&harness, cx);
+
+    let board = harness.stored_board();
+    let wanted = &board.columns[0].cards[0];
+    let other = &board.columns[0].cards[1];
+    assert_ne!(
+        wanted.id, other.id,
+        "the seeded board has two distinct cards"
+    );
+
+    cx.dispatch_action(FocusSearch);
+    cx.run_until_parked();
+    cx.simulate_input(&format!("#{}", wanted.id));
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+
+    let dimmed = harness.dimmed_titles(cx);
+    assert!(
+        !dimmed.contains(&wanted.title),
+        "the card with that number stays lit: {dimmed:?}"
+    );
+    assert!(
+        dimmed.contains(&other.title),
+        "every other card is dimmed: {dimmed:?}"
     );
 }
 

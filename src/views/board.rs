@@ -6,7 +6,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use chrono::{Datelike, Duration, Local, NaiveDate, Weekday};
+use chrono::{Datelike, Duration, Local, NaiveDate, TimeZone as _, Weekday};
 use global_hotkey::{GlobalHotKeyEvent, HotKeyState};
 use gpui_kit::{
     component::dialog::DialogButtonProps,
@@ -43,7 +43,7 @@ use crate::{
     model::{
         card_matches_search, due_status, parse_due_date, parse_wip_limit, Board, BoardError,
         BoardId, BoardSummary, Card, CardId, ChecklistItem, ChecklistItemDraft, ChecklistItemId,
-        Column, ColumnId, DueStatus, Tag, TagId,
+        Column, ColumnId, DueCounts, DueStatus, Tag, TagId,
     },
 };
 
@@ -377,6 +377,12 @@ struct CaptureWindow {
     /// 開いたときにボードのウィンドウが前面でなかったか。閉じるときに直前の
     /// アプリへフォーカスを返すかの判断に使う。
     restore_previous_app: bool,
+    /// このキャプチャを開いたボードのウィンドウ。
+    ///
+    /// 閉じたあとにボードを前へ出すのに使う。`App::activate` は macOS の実装で、
+    /// Linux では何もしない（`gpui-pre-linux` の `platform.rs`）ので、ウィンドウ
+    /// 単位の `activate_window` を呼ぶ経路が要る（#52）。
+    board_window: gpui_kit::AnyWindowHandle,
 }
 
 impl BoardView {
@@ -599,6 +605,7 @@ impl BoardView {
         // ホットキーを押した時点でボードが前面だったかを覚えておく。閉じるときに
         // アプリごと隠すかどうかがこれで決まる。
         let restore_previous_app = !window.is_window_active();
+        let board_window = window.window_handle();
         let board_view = cx.entity().downgrade();
         let bounds = Bounds::centered(None, size(px(520.), px(132.)), cx);
         let created: Rc<RefCell<Option<Entity<CaptureView>>>> = Rc::default();
@@ -635,6 +642,7 @@ impl BoardView {
                     handle,
                     view,
                     restore_previous_app,
+                    board_window,
                 });
             }
             Err(error) => {
@@ -829,7 +837,7 @@ impl BoardView {
         let _ = capture.handle.update(cx, |_, window, _| {
             window.remove_window();
         });
-        self.restore_focus_after_capture(capture.restore_previous_app, cx);
+        self.restore_focus_after_capture(&capture, cx);
     }
 
     /// キャプチャウィンドウが自分で閉じたとき（`Escape`）。
@@ -838,15 +846,28 @@ impl BoardView {
             return;
         };
         self.capture_save = None;
-        self.restore_focus_after_capture(capture.restore_previous_app, cx);
+        self.restore_focus_after_capture(&capture, cx);
     }
 
-    fn restore_focus_after_capture(&mut self, restore_previous_app: bool, cx: &mut Context<Self>) {
-        if restore_previous_app {
+    /// キャプチャウィンドウを閉じたあとのフォーカスの行き先。
+    ///
+    /// `App::hide` と `App::activate` は macOS の実装で、Linux では呼んでも
+    /// 何もしない（`gpui-pre-linux` の `platform.rs` がログを出して戻る）。
+    /// そこで、ボードを前へ出す側だけはウィンドウ単位の `activate_window` で
+    /// やる。X11 では `_NET_ACTIVE_WINDOW` を投げるので効く。
+    ///
+    /// 直前のアプリへ返すほうは、Linux では合わせられない。アプリを隠す仕組みが
+    /// 無く、他アプリを名指しで前に出す手段も無い。キャプチャウィンドウが消えた
+    /// あとの行き先はウィンドウマネージャが決める。マニュアルに OS 別でそう書く。
+    fn restore_focus_after_capture(&mut self, capture: &CaptureWindow, cx: &mut Context<Self>) {
+        if capture.restore_previous_app {
             // ほかのアプリを使っている途中で呼ばれたので、そのアプリに戻す。
             cx.hide();
         } else {
             cx.activate(true);
+            let _ = capture
+                .board_window
+                .update(cx, |_, window, _| window.activate_window());
         }
         cx.notify();
     }
@@ -961,6 +982,7 @@ impl BoardView {
             summary.name = self.board.name.clone();
             summary.created_at = self.board.created_at;
             summary.updated_at = self.board.updated_at;
+            summary.due = self.board.due_counts(Local::now().date_naive());
         }
     }
 
@@ -1013,6 +1035,10 @@ impl BoardView {
             cx.notify();
             return;
         }
+
+        // 離れるボードの期限の件数を、いまの盤面から確定させる。切り替えたあとは
+        // メモリ上の盤面が入れ替わるので、ここで書き戻さないと一覧が古いままになる。
+        self.sync_current_board_summary();
 
         let result = Database::open(&self.database_path)
             .and_then(|database| database.load_board_by_id(board_id));
@@ -1094,6 +1120,8 @@ impl BoardView {
                             name: board.name.clone(),
                             created_at: board.created_at,
                             updated_at: board.updated_at,
+                            // 作ったばかりのボードにカードは無い。
+                            due: DueCounts::default(),
                         };
                         self.boards.push(summary);
                         self.board = board;
@@ -2766,7 +2794,7 @@ impl BoardView {
                 Ok(Ok(None)) => return,
                 Ok(Err(error)) => {
                     let _ = this.update(cx, |view, cx| {
-                        view.set_error(format!("保存先を選択できませんでした: {error}"));
+                        view.set_error(save_dialog_error_detail(&error.to_string()));
                         cx.notify();
                     });
                     return;
@@ -2827,7 +2855,7 @@ impl BoardView {
                 Ok(Ok(None)) => return,
                 Ok(Err(error)) => {
                     let _ = this.update(cx, |view, cx| {
-                        view.set_error(format!("保存先を選択できませんでした: {error}"));
+                        view.set_error(save_dialog_error_detail(&error.to_string()));
                         cx.notify();
                     });
                     return;
@@ -2961,7 +2989,33 @@ impl BoardView {
 
     /// 畳んだときのレール。開くボタンだけを置く。ボードの切り替え・追加・名前変更・
     /// 削除はボードメニューとファイルメニューから届くので、ここには並べない。
+    /// 一覧の 1 行に出す期限の件数。
+    ///
+    /// 開いているボードだけはメモリ上の盤面から数える。まだ保存が終わっていない
+    /// 編集も画面には出ているので、そちらと食い違わせない。ほかのボードは読み込み
+    /// のときに SQL が数えた値をそのまま使う。
+    fn due_counts_for(&self, summary: &BoardSummary, today: NaiveDate) -> DueCounts {
+        if summary.id == self.board.id {
+            self.board.due_counts(today)
+        } else {
+            summary.due
+        }
+    }
+
+    /// すべてのボードを合わせた期限の件数。畳んだ帯に出す印に使う。
+    fn total_due_counts(&self, today: NaiveDate) -> DueCounts {
+        self.boards
+            .iter()
+            .fold(DueCounts::default(), |mut total, summary| {
+                let counts = self.due_counts_for(summary, today);
+                total.overdue += counts.overdue;
+                total.today += counts.today;
+                total
+            })
+    }
+
     fn render_sidebar_rail(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let totals = self.total_due_counts(Local::now().date_naive());
         div()
             .w(px(44.))
             .h_full()
@@ -2980,6 +3034,9 @@ impl BoardView {
                     .label("›")
                     .on_click(cx.listener(|this, _, window, cx| this.toggle_sidebar(window, cx))),
             )
+            // 畳んでいる間はボード名が出ないので、どのボードかまでは言えない。
+            // 「開いて確かめる価値があるか」だけを伝える。
+            .children(render_rail_due_mark(totals, cx.theme()))
     }
 
     fn render_sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -2987,6 +3044,7 @@ impl BoardView {
             return self.render_sidebar_rail(cx).into_any_element();
         }
         let editing_board = self.editing_board.as_ref();
+        let today = Local::now().date_naive();
         div()
             .w(px(220.))
             .h_full()
@@ -3061,9 +3119,21 @@ impl BoardView {
                             }))
                             .child(
                                 div()
-                                    .text_sm()
-                                    .text_color(theme_color(cx, UiColor::Foreground))
-                                    .child(summary.name.clone()),
+                                    .flex()
+                                    .flex_col()
+                                    .gap_1()
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .text_color(theme_color(cx, UiColor::Foreground))
+                                            .child(summary.name.clone()),
+                                    )
+                                    // 縦並びの直下に置くとチップが幅いっぱいに
+                                    // 伸びるので、横並びの行で包む。
+                                    .children(render_due_counts(
+                                        self.due_counts_for(summary, today),
+                                        cx.theme(),
+                                    )),
                             )
                     }))
                     .when(self.boards.is_empty(), |this| {
@@ -3818,6 +3888,56 @@ impl BoardView {
 
     fn render_archived(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let today = Local::now().date_naive();
+        let total = self.board.archived_cards.len();
+        let filtering = !self.search_query.is_empty() || self.tag_filter.is_some();
+        let groups = archived_groups(
+            &self.board.archived_cards,
+            &self.search_query,
+            self.tag_filter,
+        );
+        let shown = groups.iter().map(|(_, cards)| cards.len()).sum::<usize>();
+
+        // アーカイブは日ごとの見出しとカードを交互に並べる。1 つの `map` の中で
+        // 入れ子にすると `cx` を二重に借りることになるので、先に組んでから渡す。
+        let mut rows: Vec<AnyElement> = Vec::new();
+        for (day, cards) in groups {
+            rows.push(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .pt_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(gpui_kit::FontWeight::BOLD)
+                            .text_color(theme_color(cx, UiColor::Foreground))
+                            .child(archived_day_label(day)),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme_color(cx, UiColor::MutedForeground))
+                            .child(format!("{} 件", cards.len())),
+                    )
+                    .into_any_element(),
+            );
+            for card in cards {
+                rows.push(
+                    self.render_archived_card(card, today, cx)
+                        .into_any_element(),
+                );
+            }
+        }
+
+        let empty_note = if total == 0 {
+            Some("アーカイブ済みのカードはありません".to_string())
+        } else if shown == 0 {
+            Some("絞り込みに一致するカードはありません".to_string())
+        } else {
+            None
+        };
+
         div()
             .id("archived-content")
             .flex_1()
@@ -3828,24 +3948,36 @@ impl BoardView {
             .overflow_y_scroll()
             .child(
                 div()
-                    .text_lg()
-                    .font_weight(gpui_kit::FontWeight::BOLD)
-                    .child("アーカイブ済みカード"),
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_lg()
+                            .font_weight(gpui_kit::FontWeight::BOLD)
+                            .child("アーカイブ済みカード"),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme_color(cx, UiColor::MutedForeground))
+                            // 絞り込み中は「何件のうち何件か」を出す。ここは
+                            // 減光ではなく非表示なので、出さないと消えた分に
+                            // 気づけない。
+                            .child(if filtering {
+                                format!("{shown} / {total} 件")
+                            } else {
+                                format!("{total} 件")
+                            }),
+                    ),
             )
-            .when(self.board.archived_cards.is_empty(), |this| {
-                this.child(
-                    div()
-                        .text_sm()
-                        .text_color(theme_color(cx, UiColor::MutedForeground))
-                        .child("アーカイブ済みのカードはありません"),
-                )
-            })
-            .children(
-                self.board
-                    .archived_cards
-                    .iter()
-                    .map(|card| self.render_archived_card(card, today, cx)),
-            )
+            .children(empty_note.map(|note| {
+                div()
+                    .text_sm()
+                    .text_color(theme_color(cx, UiColor::MutedForeground))
+                    .child(note)
+            }))
+            .children(rows)
     }
 
     fn render_archived_card(
@@ -3855,7 +3987,8 @@ impl BoardView {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let card_id = card.id;
-        let dimmed = card_is_dimmed(card, &self.search_query, self.tag_filter);
+        // ボードと違い、絞り込みから外れたカードはそもそも渡ってこない
+        // （`archived_groups` が落とす）ので、ここに減光は要らない。
         div()
             .w_full()
             .max_w(px(720.))
@@ -3868,7 +4001,6 @@ impl BoardView {
             .bg(theme_color(cx, UiColor::Surface))
             .border_1()
             .border_color(theme_color(cx, UiColor::Border))
-            .when(dimmed, |this| this.opacity(0.35))
             .child(
                 div()
                     .flex_1()
@@ -5113,6 +5245,60 @@ fn markdown_inline(value: &str) -> String {
         .replace(']', "\\]")
 }
 
+/// ボード一覧の 1 行に出す期限の件数。
+///
+/// 色だけに意味を持たせない決まりなので、数の隣に何の件数かを書く。件数が 0 の
+/// ものは出さない。両方 0 なら行は名前だけになる。
+fn render_due_counts(counts: DueCounts, theme: &Theme) -> Option<impl IntoElement> {
+    if counts.is_empty() {
+        return None;
+    }
+    Some(
+        div()
+            .flex()
+            .flex_wrap()
+            .gap_2()
+            .children((counts.overdue > 0).then(|| {
+                div()
+                    .text_xs()
+                    // `danger_foreground` は danger 背景の上に載せる文字色なので、
+                    // 素の面では読めない。背景色のほうを文字色に使う。
+                    .text_color(theme.danger)
+                    .child(format!("⚠ 期限切れ {}", counts.overdue))
+            }))
+            .children((counts.today > 0).then(|| {
+                div()
+                    .text_xs()
+                    .text_color(theme.warning)
+                    .child(format!("◷ 今日 {}", counts.today))
+            })),
+    )
+}
+
+/// 畳んだ帯に出す印。幅が 44px しかないので、記号と数だけにする。
+///
+/// 期限切れがあればそちらを出す。先に知りたいのは過ぎているほうで、両方を並べる
+/// 幅は無い。
+fn render_rail_due_mark(counts: DueCounts, theme: &Theme) -> Option<impl IntoElement> {
+    if counts.overdue > 0 {
+        Some(
+            div()
+                .text_xs()
+                .text_color(theme.danger)
+                .child(format!("⚠{}", counts.overdue)),
+        )
+    } else if counts.today > 0 {
+        Some(
+            div()
+                .text_xs()
+                .text_color(theme.warning)
+                .child(format!("◷{}", counts.today)),
+        )
+    } else {
+        None
+    }
+}
+
 fn render_due_badge(due_date: NaiveDate, today: NaiveDate, theme: &Theme) -> impl IntoElement {
     let status = due_status(Some(due_date), today);
     let (label, color) = match status {
@@ -5188,6 +5374,55 @@ fn card_is_dimmed(card: &Card, search_query: &str, tag_filter: Option<TagId>) ->
         || tag_filter.is_some_and(|tag_id| !card.tag_ids.contains(&tag_id))
 }
 
+/// アーカイブ表示に出すカードを、アーカイブした日ごとにまとめる。新しい日が先。
+///
+/// ボードでは絞り込みでカードを隠さず減光するが、アーカイブ表示では隠す。
+/// アーカイブは溜まる場所なので、100 枚が薄く並んでいても探せない。ここには
+/// D&D が無いため、隠すことで挿入位置が曖昧になる問題も起きない
+/// （`docs/DESIGN.md`）。
+///
+/// 並びは `archived_at` の新しい順。読み込み時の SQL は同じ順で返すが、その
+/// セッションでアーカイブしたカードは末尾に積まれるので、ここでそろえる。
+fn archived_groups<'a>(
+    cards: &'a [Card],
+    search_query: &str,
+    tag_filter: Option<TagId>,
+) -> Vec<(Option<NaiveDate>, Vec<&'a Card>)> {
+    let mut matched = cards
+        .iter()
+        .filter(|card| !card_is_dimmed(card, search_query, tag_filter))
+        .collect::<Vec<_>>();
+    matched.sort_by_key(|card| (std::cmp::Reverse(card.archived_at), card.id));
+
+    let mut groups: Vec<(Option<NaiveDate>, Vec<&Card>)> = Vec::new();
+    for card in matched {
+        let day = archived_on(card);
+        match groups.last_mut() {
+            Some((last_day, cards)) if *last_day == day => cards.push(card),
+            _ => groups.push((day, vec![card])),
+        }
+    }
+    groups
+}
+
+/// アーカイブした日。`archived_at` はミリ秒の UNIX 時刻なので、手元の時間帯の
+/// 日付に直してから見出しに使う。
+fn archived_on(card: &Card) -> Option<NaiveDate> {
+    Local
+        .timestamp_millis_opt(card.archived_at?)
+        .single()
+        .map(|at| at.date_naive())
+}
+
+fn archived_day_label(day: Option<NaiveDate>) -> String {
+    match day {
+        Some(day) => format!("{}/{:02}/{:02}", day.year(), day.month(), day.day()),
+        // `archived_cards` に入っているのに `archived_at` が無い行は、本来
+        // 作られない。出す場所が無くて消えるより、見出しを付けて出す。
+        None => "日付なし".to_string(),
+    }
+}
+
 fn tag_color_value(color: &str) -> u32 {
     let value = color.trim().trim_start_matches('#');
     if value.len() == 6 {
@@ -5207,6 +5442,20 @@ fn display_date(date: NaiveDate, today: NaiveDate) -> String {
     } else {
         format!("{}/{:02}/{:02}", date.year(), date.month(), date.day())
     }
+}
+
+/// 保存先を選ぶダイアログを開けなかったときの文言。
+///
+/// Linux ではこのダイアログを xdg-desktop-portal に頼んでいる。ポータルか、それを
+/// 実装するバックエンドが入っていないと、gpui は
+/// `Couldn't open file picker due to missing xdg-desktop-portal implementation.`
+/// という 1 行を返す。そのまま埋めても、何を入れれば直るのかが読み取れない（#51）。
+fn save_dialog_error_detail(error: &str) -> String {
+    if error.contains("xdg-desktop-portal") {
+        return "保存先を選ぶダイアログを開けませんでした。Linux ではこのダイアログに                 xdg-desktop-portal が要ります。ポータル本体と、デスクトップ環境に合った                 バックエンド（GNOME なら xdg-desktop-portal-gnome、KDE なら                 xdg-desktop-portal-kde、そのほかは xdg-desktop-portal-gtk）を入れてください"
+            .to_string();
+    }
+    format!("保存先を選択できませんでした: {error}")
 }
 
 fn board_error_detail(error: &BoardError) -> String {
@@ -5371,17 +5620,100 @@ mod view_tests;
 #[cfg(test)]
 mod tests {
     use super::{
-        board_error_detail, capture_destination, capture_target_is_in_board, capture_title,
-        card_is_dimmed, column_name_for_card, db_error_detail, default_capture_target,
-        field_error_for, moves_selected_card, next_card_id, next_tag_filter, render_board_markdown,
+        archived_day_label, archived_groups, board_error_detail, capture_destination,
+        capture_target_is_in_board, capture_title, card_is_dimmed, column_name_for_card,
+        db_error_detail, default_capture_target, field_error_for, moves_selected_card,
+        next_card_id, next_tag_filter, render_board_markdown, save_dialog_error_detail,
         window_title, CaptureTarget, CardDirection, EditorField,
     };
     use crate::{
         db::DbError,
-        model::{Board, BoardError},
+        model::{Board, BoardError, Card},
     };
-    use chrono::NaiveDate;
+    use chrono::{Local, NaiveDate, TimeZone as _};
     use gpui_kit::Modifiers;
+
+    /// アーカイブ表示のテスト用に、決まった日にアーカイブされたカードを作る。
+    fn archived_on_day(id: i64, title: &str, year: i32, month: u32, day: u32) -> Card {
+        let at = Local
+            .with_ymd_and_hms(year, month, day, 12, 0, 0)
+            .single()
+            .expect("a valid local time");
+        Card {
+            id,
+            column_id: 1,
+            title: title.to_string(),
+            description: String::new(),
+            position: 0,
+            created_at: at.timestamp_millis(),
+            updated_at: at.timestamp_millis(),
+            due_date: None,
+            tag_ids: Vec::new(),
+            checklist_items: Vec::new(),
+            archived_at: Some(at.timestamp_millis()),
+        }
+    }
+
+    /// 受け入れ条件「アーカイブ表示で検索して、目的のカードに辿り着ける」（#58）。
+    ///
+    /// ボードでは絞り込みから外れたカードを減光するが、アーカイブ表示では落とす。
+    #[test]
+    fn searching_the_archive_drops_the_cards_that_do_not_match() {
+        let cards = vec![
+            archived_on_day(1, "請求書を出す", 2026, 9, 5),
+            archived_on_day(2, "議事録を書く", 2026, 9, 5),
+            archived_on_day(3, "請求書をしまう", 2026, 9, 3),
+        ];
+
+        let groups = archived_groups(&cards, "請求書", None);
+        let titles = groups
+            .iter()
+            .flat_map(|(_, cards)| cards.iter().map(|card| card.title.as_str()))
+            .collect::<Vec<_>>();
+        assert_eq!(titles, vec!["請求書を出す", "請求書をしまう"]);
+        assert_eq!(groups.len(), 2, "the two days keep their own heading");
+    }
+
+    #[test]
+    fn groups_the_archive_by_the_day_it_was_archived_newest_first() {
+        // 読み込み直後は新しい順だが、そのセッションでアーカイブしたカードは
+        // 末尾に積まれる。並べ直さないと見出しが日ごとに割れる。
+        let cards = vec![
+            archived_on_day(1, "古い", 2026, 9, 3),
+            archived_on_day(2, "新しい", 2026, 9, 5),
+            archived_on_day(3, "同じ日のもう 1 枚", 2026, 9, 3),
+        ];
+
+        let groups = archived_groups(&cards, "", None);
+        assert_eq!(groups.len(), 2);
+        assert_eq!(
+            archived_day_label(groups[0].0),
+            "2026/09/05",
+            "the newest day comes first"
+        );
+        assert_eq!(groups[0].1.len(), 1);
+        assert_eq!(archived_day_label(groups[1].0), "2026/09/03");
+        assert_eq!(
+            groups[1].1.len(),
+            2,
+            "cards archived on the same day share one heading"
+        );
+    }
+
+    #[test]
+    fn finds_an_archived_card_by_its_number() {
+        let cards = vec![
+            archived_on_day(11, "請求書を出す", 2026, 9, 5),
+            archived_on_day(12, "議事録を書く", 2026, 9, 5),
+        ];
+
+        let groups = archived_groups(&cards, "#12", None);
+        let titles = groups
+            .iter()
+            .flat_map(|(_, cards)| cards.iter().map(|card| card.title.as_str()))
+            .collect::<Vec<_>>();
+        assert_eq!(titles, vec!["議事録を書く"]);
+    }
 
     #[test]
     fn tapping_a_tag_selects_it_and_tapping_the_same_one_clears_it() {
@@ -5500,6 +5832,25 @@ mod tests {
 
         assert_eq!(error.field, EditorField::DueDate);
         assert!(error.message.contains("YYYY-MM-DD"));
+    }
+
+    /// 受け入れ条件「ポータルの無い環境で書き出しを試したとき、足りないものが
+    /// 読んで分かる」（#51）。
+    #[test]
+    fn names_the_missing_package_when_the_file_picker_cannot_open() {
+        // gpui が返す 1 行そのまま。
+        let detail = save_dialog_error_detail(
+            "Couldn't open file picker due to missing xdg-desktop-portal implementation.",
+        );
+        assert!(detail.contains("xdg-desktop-portal-gnome"));
+        assert!(detail.contains("xdg-desktop-portal-kde"));
+        assert!(detail.contains("xdg-desktop-portal-gtk"));
+
+        // ポータルと関係のない失敗は、これまでどおり理由をそのまま出す。
+        assert_eq!(
+            save_dialog_error_detail("permission denied"),
+            "保存先を選択できませんでした: permission denied"
+        );
     }
 
     #[test]

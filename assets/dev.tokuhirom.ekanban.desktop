@@ -1,0 +1,19 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Ekanban
+GenericName=Kanban Board
+GenericName[ja]=かんばんボード
+Comment=A local-first Kanban board that keeps everything in one SQLite file
+Comment[ja]=1 つの SQLite ファイルで完結するローカル専用のかんばんボード
+# script/install-linux が、入れた実行ファイルの絶対パスに書き換えます。
+Exec=ekanban
+Icon=dev.tokuhirom.ekanban
+Terminal=false
+Categories=Office;ProjectManagement;
+Keywords=kanban;board;task;todo;
+Keywords[ja]=かんばん;カンバン;タスク;
+# デスクトップ環境がウィンドウをこのエントリに結びつけるための ID。
+# `src/lib.rs` の `APP_ID`（`WindowOptions.app_id`）と必ず同じにすること。
+StartupWMClass=dev.tokuhirom.ekanban
+StartupNotify=true

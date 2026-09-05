@@ -200,10 +200,28 @@ fn adding_a_card_and_saving_it_writes_the_title_to_the_database(cx: &mut TestApp
 | `make bundle` | リリースビルドから `target/release/bundle/Ekanban.app` を作る |
 | `make open` | `.app` を作って起動する |
 | `make install` | `.app` を `/Applications` にコピーする |
+| `make install-linux` | Linux のアプリ一覧に登録する（`~/.local` 以下） |
+| `make uninstall-linux` | `install-linux` で入れたものを消す |
 
 `cargo build` が作るのは実行ファイルだけで、`.app` バンドルにはなりません。Dock のアイコンやアプリ名、Launchpad からの起動を正しく扱うには `make bundle` を使ってください。バンドル生成の実体は `script/bundle-mac` です。
 
 `make bundle` は `assets/icon.png` から `assets/icon.icns` を生成してアイコンに取り込みます。生成には macOS の `sips` と `iconutil` が必要です。
+
+### Linux のデスクトップ統合
+
+Linux でも、実行ファイルだけではアプリ一覧に出ず、タスクバーのアイコンと名前も汎用のものになります。デスクトップ環境がウィンドウをアプリに結びつけるのはデスクトップエントリなので、それを入れる必要があります。
+
+| ファイル | 置き場所 | 何のため |
+| --- | --- | --- |
+| `assets/dev.tokuhirom.ekanban.desktop` | `$XDG_DATA_HOME/applications` | アプリ一覧に出す。`StartupWMClass` がウィンドウとエントリを結びつける |
+| `assets/icons/hicolor/<大きさ>/apps/dev.tokuhirom.ekanban.png` | `$XDG_DATA_HOME/icons/hicolor/…` | アイコン。`assets/icon.png` から縮小したものを 7 種類置いてある |
+| 実行ファイル | `$XDG_BIN_HOME`（既定 `~/.local/bin`） | 本体 |
+
+入れるのは `script/install-linux`（`make install-linux`）です。root は要りません。`--uninstall` で消します。エントリの `Exec=` は、入れた実行ファイルの絶対パスに書き換えてから置きます。`~/.local/bin` が PATH に入っていない環境でも一覧から起動できるようにするためです。
+
+**`StartupWMClass` は `src/lib.rs` の `APP_ID`（`WindowOptions.app_id`）と必ず同じにしてください。** 食い違うと、起動したウィンドウがそのエントリに結びつかず、タスクバーのアイコンと名前が元に戻ります。
+
+アイコンは大きさごとに `assets/icons/` へコミットしてあります。ビルド時に縮小しないのは、Linux のランナーに画像処理のツールを増やさないためです。`assets/icon.png` を差し替えたときは、同じ 7 種類（16 / 32 / 48 / 64 / 128 / 256 / 512）を作り直してください。
 
 ### 署名
 
@@ -288,21 +306,39 @@ git push origin v0.1.0
 | プラットフォーム | ランナー | 成果物 |
 | --- | --- | --- |
 | macOS (Apple Silicon) | `macos-latest` | `ekanban-<版>-aarch64-apple-darwin.zip`（`Ekanban.app`） |
-| Linux (x86_64) | `ubuntu-24.04` | `ekanban-<版>-x86_64-unknown-linux-gnu.tar.gz`（実行ファイル + README + LICENSE） |
+| Linux (x86_64) | `ubuntu-24.04` | `ekanban-<版>-x86_64-unknown-linux-gnu.tar.gz`（実行ファイル + README + LICENSE + `dev.tokuhirom.ekanban.desktop` + `icons/` + `install-linux`） |
 | Windows (x86_64) | `windows-latest` | `ekanban-<版>-x86_64-pc-windows-msvc.zip`（`ekanban.exe` + README + LICENSE） |
 
 あわせて `SHA256SUMS.txt` を置きます。
 
-- **Intel Mac 向けは出していません。** 要るようになったら `macos-15-intel` のジョブを足すか、`lipo` で universal binary にします
+- **Intel Mac 向けは出していません。** 判断と理由は [`docs/DESIGN.md`](DESIGN.md) と [ADR 0014](adr/0014-unsigned-apple-silicon-only-macos-builds.md) にあります。出すことにしたら、`macos-15-intel` のジョブを足すか、`lipo` で universal binary にします
 - **Linux は `ubuntu-24.04` でビルドします。** glibc 2.39 に依存するので、それより古いディストリビューションでは動きません。実行にはこのほか Vulkan のドライバと fontconfig が要ります。`ubuntu-22.04` は 2026-09-17 から段階的に廃止されるので使いません
+- **Linux では xdg-desktop-portal に依存する操作が 4 つあります。** ポータルと、デスクトップ環境に合ったバックエンド（`xdg-desktop-portal-gnome` / `-kde` / `-gtk`）が入っていない環境では動きません
+
+  | 操作 | 使っている API | ポータルが無いと |
+  | --- | --- | --- |
+  | ボードを書き出す（JSON / Markdown） | `cx.prompt_for_new_path` | ダイアログが開かず、何を入れれば直るかを添えたエラーを出す（`save_dialog_error_detail`） |
+  | データベースをコピー… | `cx.prompt_for_new_path` | 同上 |
+  | データベース / バックアップの場所を開く | `cx.reveal_path` | 何も起きない。gpui は `open` へのフォールバックを持つが、成否は返らないので画面には出せない |
+  | テーマ「システムに合わせる」 | `org.freedesktop.appearance` の `color-scheme` | 常にライト扱いになる。メニューからライト / ダークを選べば効く |
 - **Windows のバイナリは、ビルドが通ることしか確かめていません。** クイックキャプチャは対象外のままです
 
-### macOS の署名
+### macOS の署名と公証
 
-いまは ad-hoc 署名のままです。ダウンロードした `.app` は Gatekeeper に止められるので、初回は右クリックから開く必要があります。
+いまは ad-hoc 署名のままです。ダウンロードした `.app` は Gatekeeper に止められるので、初回だけ手順が要ります。**その手順は macOS 15 (Sequoia) で変わりました。**
+
+| macOS | 初回の開き方 |
+| --- | --- |
+| 15 (Sequoia) 以降 | 一度ダブルクリックして弾かれたあと、**システム設定 > プライバシーとセキュリティ** の「このまま開く」を押す。Control クリックからの回避は塞がれた |
+| 14 (Sonoma) 以前 | **Control クリック > 開く** |
+
+手順は README に書いてあります。**片方だけ直さないこと。** バージョンによって通らない案内は、通らない側の人にとっては「壊れている」のと同じです。
+
+Developer ID での署名と公証をやらない判断と、その理由は [`docs/DESIGN.md`](DESIGN.md) と [ADR 0014](adr/0014-unsigned-apple-silicon-only-macos-builds.md) にあります。やるときに要るものは次の通りです。
 
 ワークフローは `CODESIGN_IDENTITY` シークレットがあれば `script/bundle-mac` にそのまま渡します。実際に Developer ID で署名するには、これに加えて次が要ります。
 
+- Apple Developer Program の登録（年額）
 - 証明書（`.p12`）をシークレットに入れて、ビルド前に一時キーチェーンへ取り込むステップ
 - `xcrun notarytool submit --wait` と `xcrun stapler staple` による公証
 

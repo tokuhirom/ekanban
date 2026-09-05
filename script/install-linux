@@ -1,0 +1,94 @@
+#!/bin/sh
+# Linux のデスクトップ環境に ekanban を登録する。
+#
+# macOS の `make install`（`.app` を /Applications に入れる）に相当するもの。
+# 入れるのは実行ファイル、デスクトップエントリ、hicolor のアイコン一式。
+#
+#   script/install-linux            # target/release/ekanban を入れる
+#   script/install-linux ./ekanban  # 配布物を展開したディレクトリで使う
+#
+# 置き場所は XDG のユーザーディレクトリなので、root は要りません。
+#   実行ファイル      $XDG_BIN_HOME    (既定 ~/.local/bin)
+#   デスクトップ      $XDG_DATA_HOME/applications
+#   アイコン          $XDG_DATA_HOME/icons/hicolor/<大きさ>/apps
+#
+# 消すときは `script/install-linux --uninstall` です。
+set -eu
+
+app_id="dev.tokuhirom.ekanban"
+data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
+bin_home="${XDG_BIN_HOME:-$HOME/.local/bin}"
+applications_dir="$data_home/applications"
+icons_dir="$data_home/icons/hicolor"
+installed_binary="$bin_home/ekanban"
+installed_desktop="$applications_dir/$app_id.desktop"
+
+# このスクリプトから見た、同梱物の置き場所。リポジトリの中では `assets/`、
+# 配布物を展開したディレクトリでは隣に並んでいる。
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+if [ -f "$script_dir/../assets/$app_id.desktop" ]; then
+	assets_dir="$script_dir/../assets"
+elif [ -f "$script_dir/$app_id.desktop" ]; then
+	assets_dir="$script_dir"
+else
+	echo "$app_id.desktop が見つかりません" >&2
+	exit 1
+fi
+
+refresh_caches() {
+	# どちらも無くても動く。あればアプリ一覧への反映が早くなる。
+	if command -v update-desktop-database >/dev/null 2>&1; then
+		update-desktop-database "$applications_dir" >/dev/null 2>&1 || true
+	fi
+	if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+		gtk-update-icon-cache --force --quiet "$icons_dir" >/dev/null 2>&1 || true
+	fi
+}
+
+if [ "${1-}" = "--uninstall" ]; then
+	rm -f "$installed_binary" "$installed_desktop"
+	find "$icons_dir" -name "$app_id.png" -type f -delete 2>/dev/null || true
+	refresh_caches
+	echo "removed $installed_binary"
+	echo "removed $installed_desktop"
+	exit 0
+fi
+
+binary="${1-}"
+if [ -z "$binary" ]; then
+	for candidate in "$script_dir/../target/release/ekanban" "$script_dir/ekanban"; do
+		if [ -x "$candidate" ]; then
+			binary="$candidate"
+			break
+		fi
+	done
+fi
+if [ -z "$binary" ] || [ ! -x "$binary" ]; then
+	echo "実行ファイルが見つかりません。先に 'cargo build --release' を実行するか、パスを渡してください" >&2
+	echo "  例: script/install-linux ./ekanban" >&2
+	exit 1
+fi
+
+mkdir -p "$bin_home" "$applications_dir"
+install -m 0755 "$binary" "$installed_binary"
+
+# `Exec=` は入れた実行ファイルの絶対パスにする。`~/.local/bin` が PATH に
+# 入っていない環境でも、アプリ一覧から起動できるようにするため。
+sed "s|^Exec=.*|Exec=$installed_binary|" "$assets_dir/$app_id.desktop" >"$installed_desktop"
+chmod 0644 "$installed_desktop"
+
+for source in "$assets_dir/icons/hicolor"/*/apps/"$app_id.png"; do
+	[ -f "$source" ] || continue
+	size_dir=$(basename "$(dirname "$(dirname "$source")")")
+	mkdir -p "$icons_dir/$size_dir/apps"
+	install -m 0644 "$source" "$icons_dir/$size_dir/apps/$app_id.png"
+done
+
+refresh_caches
+
+echo "installed $installed_binary"
+echo "installed $installed_desktop"
+case ":$PATH:" in
+*":$bin_home:"*) ;;
+*) echo "note: $bin_home は PATH に入っていません。ターミナルから 'ekanban' で起動したいなら通してください" ;;
+esac

@@ -12,12 +12,18 @@ use crate::actions::{
 };
 
 pub fn install(cx: &mut App) {
-    // `secondary` は macOS では Cmd、Linux と Windows では Ctrl になる。アプリ独自の
-    // 割り当てはこれで定義する。`cmd-` を残すのは 2 種類だけ:
-    //   - `cmd-q` `cmd-h` `cmd-alt-h` は macOS のシステムメニューの割り当て
-    //   - `cmd-ctrl-*` は `secondary-ctrl-*` にすると非 macOS で Ctrl が重なって
-    //     `secondary-s` / `secondary-f` に潰れ、保存や検索と衝突する
-    cx.bind_keys([
+    cx.bind_keys(shared_key_bindings());
+    cx.bind_keys(platform_key_bindings());
+
+    cx.set_menus(menus());
+}
+
+/// どの OS でも同じ割り当て。
+///
+/// `secondary` は macOS では Cmd、Linux と Windows では Ctrl になる。アプリ独自の
+/// 割り当てはこれで定義する。
+fn shared_key_bindings() -> Vec<KeyBinding> {
+    vec![
         KeyBinding::new("secondary-shift-b", AddBoard, Some("Board")),
         KeyBinding::new("secondary-n", AddCard, Some("Board")),
         KeyBinding::new("secondary-shift-n", AddColumn, Some("Board")),
@@ -25,21 +31,51 @@ pub fn install(cx: &mut App) {
         KeyBinding::new("secondary-f", FocusSearch, Some("Board")),
         KeyBinding::new("secondary-s", SaveEdit, Some("Board")),
         KeyBinding::new("secondary-shift-a", ToggleArchiveView, Some("Board")),
-        KeyBinding::new("cmd-ctrl-s", ToggleBoardList, Some("Board")),
         KeyBinding::new("secondary-shift-f", ClearSearch, Some("Board")),
         KeyBinding::new("secondary-w", CloseWindow, Some("Board")),
-        KeyBinding::new("cmd-ctrl-f", ToggleFullscreen, Some("Board")),
         KeyBinding::new("secondary-z", Undo, Some("Board")),
         KeyBinding::new("secondary-shift-z", Redo, Some("Board")),
-        // macOS の「しまう」。`Cmd` を持たない環境では何も起きず、最小化は
-        // ウィンドウマネージャの仕事になる。
+    ]
+}
+
+/// macOS だけの割り当て。
+///
+/// gpui の `cmd-` は platform 修飾キーなので、macOS では Cmd、Linux と Windows では
+/// Super（Windows キー）になる。ここに置くのは Super では意味を成さないものだけ:
+///
+/// - `cmd-ctrl-*` は macOS の標準の組み合わせ。`secondary-ctrl-*` にすると非 macOS で
+///   `Ctrl` が重なって `secondary-s` / `secondary-f` と衝突するので、そもそも共通には
+///   できない
+/// - `cmd-q` `cmd-h` `cmd-alt-h` は macOS のシステムメニューの割り当て
+/// - `cmd-m`（しまう）は、macOS ではメニュー項目があってはじめて効く。ほかの環境では
+///   最小化はウィンドウマネージャの仕事
+#[cfg(target_os = "macos")]
+fn platform_key_bindings() -> Vec<KeyBinding> {
+    vec![
+        KeyBinding::new("cmd-ctrl-s", ToggleBoardList, Some("Board")),
+        KeyBinding::new("cmd-ctrl-f", ToggleFullscreen, Some("Board")),
         KeyBinding::new("cmd-m", MinimizeWindow, Some("Board")),
         KeyBinding::new("cmd-q", Quit, None),
         KeyBinding::new("cmd-h", HideApplication, None),
         KeyBinding::new("cmd-alt-h", HideOtherApplications, None),
-    ]);
+    ]
+}
 
-    cx.set_menus(menus());
+/// macOS 以外の割り当て。
+///
+/// macOS 向けの `cmd-*` をそのまま持ち込むと Super に落ちる。Super はデスクトップ
+/// 環境が先に取るので、終了もフルスクリーンもボード一覧も、届く手段が無くなる（#53）。
+/// 同じ操作に、その OS の慣習どおりの割り当てを足す。
+///
+/// `F11` は X11 / Windows のフルスクリーンの慣習。`Ctrl+Q` は終了、`Ctrl+B` は脇の
+/// 一覧の開け閉め。いずれも [`shared_key_bindings`] と重ならない。
+#[cfg(not(target_os = "macos"))]
+fn platform_key_bindings() -> Vec<KeyBinding> {
+    vec![
+        KeyBinding::new("f11", ToggleFullscreen, Some("Board")),
+        KeyBinding::new("secondary-b", ToggleBoardList, Some("Board")),
+        KeyBinding::new("secondary-q", Quit, None),
+    ]
 }
 
 /// ネイティブのメニューバー。
@@ -338,6 +374,109 @@ mod tests {
                 "{command} is a macOS window command and does not belong in the in-app menu"
             );
         }
+    }
+
+    fn all_key_bindings() -> Vec<KeyBinding> {
+        let mut bindings = shared_key_bindings();
+        bindings.extend(platform_key_bindings());
+        bindings
+    }
+
+    /// 割り当てを `"ctrl-cmd-f"` のような文字列にする。`cmd` は gpui の platform
+    /// 修飾キーで、macOS では Cmd、それ以外では Super になる。
+    fn written_out(binding: &KeyBinding) -> String {
+        binding
+            .keystrokes()
+            .iter()
+            .map(|keystroke| {
+                // 表示用ではなく gpui の表現のほうを見る。Windows では
+                // `modifiers()` が表示用に書き換わることがある。
+                let modifiers = &keystroke.inner().modifiers;
+                let mut text = String::new();
+                for (held, name) in [
+                    (modifiers.control, "ctrl-"),
+                    (modifiers.alt, "alt-"),
+                    (modifiers.shift, "shift-"),
+                    (modifiers.platform, "cmd-"),
+                    (modifiers.function, "fn-"),
+                ] {
+                    if held {
+                        text.push_str(name);
+                    }
+                }
+                text.push_str(&keystroke.inner().key);
+                text
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    fn keystrokes_for(action: &str) -> Vec<String> {
+        all_key_bindings()
+            .iter()
+            .filter(|binding| binding.action().name() == action)
+            .map(written_out)
+            .collect()
+    }
+
+    /// 終了・フルスクリーン・ボード一覧には、どの OS でも届く手段がある（#53）。
+    #[test]
+    fn binds_quit_fullscreen_and_the_board_list_on_every_platform() {
+        for action in [Quit.name(), ToggleFullscreen.name(), ToggleBoardList.name()] {
+            assert!(
+                !keystrokes_for(action).is_empty(),
+                "{action} has no key binding on this platform"
+            );
+        }
+    }
+
+    #[test]
+    fn assigns_each_combination_to_a_single_action() {
+        let mut written = all_key_bindings()
+            .iter()
+            .map(written_out)
+            .collect::<Vec<_>>();
+        let before = written.len();
+        written.sort();
+        written.dedup();
+        assert_eq!(before, written.len(), "two actions share a combination");
+    }
+
+    /// 受け入れ条件「Linux で `F11` がフルスクリーン、`Ctrl+Q` が終了になる」（#53）。
+    ///
+    /// gpui の platform 修飾キーは macOS 以外では Super（Windows キー）になり、
+    /// デスクトップ環境が先に取る。届かない割り当てを唯一の手段にしない。
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn reaches_every_command_without_the_super_key_outside_macos() {
+        for binding in all_key_bindings() {
+            for keystroke in binding.keystrokes() {
+                assert!(
+                    !keystroke.inner().modifiers.platform,
+                    "{} falls onto Super outside macOS",
+                    binding.action().name()
+                );
+            }
+        }
+
+        assert_eq!(keystrokes_for(ToggleFullscreen.name()), vec!["f11"]);
+        assert_eq!(keystrokes_for(Quit.name()), vec!["ctrl-q"]);
+        assert_eq!(keystrokes_for(ToggleBoardList.name()), vec!["ctrl-b"]);
+    }
+
+    /// 受け入れ条件「macOS の既存の割り当ては変わらない」（#53）。
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn keeps_the_macos_combinations_as_they_were() {
+        assert_eq!(keystrokes_for(ToggleFullscreen.name()), vec!["ctrl-cmd-f"]);
+        assert_eq!(keystrokes_for(ToggleBoardList.name()), vec!["ctrl-cmd-s"]);
+        assert_eq!(keystrokes_for(Quit.name()), vec!["cmd-q"]);
+        assert_eq!(keystrokes_for(MinimizeWindow.name()), vec!["cmd-m"]);
+        assert_eq!(keystrokes_for(HideApplication.name()), vec!["cmd-h"]);
+        assert_eq!(
+            keystrokes_for(HideOtherApplications.name()),
+            vec!["alt-cmd-h"]
+        );
     }
 
     #[test]
