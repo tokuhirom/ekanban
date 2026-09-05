@@ -1279,7 +1279,7 @@ impl Database {
                 row.get::<_, i64>(0)
             })?;
         if count == 0 {
-            let mut board = Board::demo();
+            let mut board = Board::first_run();
             self.save_board(&mut board)?;
             self.set_last_board_id(board.id)?;
         }
@@ -1313,11 +1313,55 @@ mod tests {
     };
     use crate::model::{Board, ChecklistItemDraft};
 
+    /// カードの入ったボードを持つデータベースを開く。
+    ///
+    /// 初回のシードは空の 3 カラムだけ（`Board::first_run`）なので、中身が要る
+    /// テストはここを通してテスト用の盤面を載せる。載せるのはファイルが新しい
+    /// ときだけ。保存したデータベースを開き直して中身を確かめるテストが多く、
+    /// 開くたびに載せ直すと、そのテストが自分で保存した内容を潰す。
+    fn open_with_cards(path: &std::path::Path) -> Database {
+        let is_new = !path.exists();
+        let mut database = Database::open(path).expect("the database opens");
+        if is_new {
+            let mut fixture = Board::fixture();
+            database
+                .save_board(&mut fixture)
+                .expect("the fixture board is stored");
+        }
+        database
+    }
+
+    /// 初回起動で見えるもの。読んだ人が消して回らずに使い始められること（#57）。
+    #[test]
+    fn starts_a_new_database_with_empty_columns() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("board.sqlite3");
+        let database = Database::open(&path).unwrap();
+
+        let board = database.load_board().unwrap();
+
+        assert_eq!(
+            board
+                .columns
+                .iter()
+                .map(|column| column.name.as_str())
+                .collect::<Vec<_>>(),
+            ["やること", "進行中", "完了"],
+            "the board opens with the three columns a kanban needs"
+        );
+        assert!(
+            board.columns.iter().all(|column| column.cards.is_empty()),
+            "and with nothing to delete first: {:?}",
+            board.columns
+        );
+        assert!(board.archived_cards.is_empty());
+    }
+
     #[test]
     fn creates_schema_and_round_trips_a_board() {
         let directory = tempdir().unwrap();
         let path = directory.path().join("board.sqlite3");
-        let mut database = Database::open(&path).unwrap();
+        let mut database = open_with_cards(&path);
         let original = database.load_board().unwrap();
 
         assert_eq!(original.columns.len(), 3);
@@ -1335,7 +1379,7 @@ mod tests {
     fn saves_a_detached_board_snapshot() {
         let directory = tempdir().unwrap();
         let path = directory.path().join("board.sqlite3");
-        let database = Database::open(&path).unwrap();
+        let database = open_with_cards(&path);
         let mut board = database.load_board().unwrap();
         let card_id = board.add_card(1, "バックグラウンド保存", "").unwrap();
         let expected_title = board.columns[0]
@@ -1348,7 +1392,7 @@ mod tests {
 
         save_board_snapshot(&path, board).unwrap();
 
-        let reloaded = Database::open(&path).unwrap().load_board().unwrap();
+        let reloaded = open_with_cards(&path).load_board().unwrap();
         assert_eq!(
             reloaded.columns[0]
                 .cards
@@ -1364,11 +1408,11 @@ mod tests {
     fn existing_database_is_migrated_only_once() {
         let directory = tempdir().unwrap();
         let path = directory.path().join("board.sqlite3");
-        let database = Database::open(&path).unwrap();
+        let database = open_with_cards(&path);
         let first = database.load_board().unwrap();
         drop(database);
 
-        let database = Database::open(&path).unwrap();
+        let database = open_with_cards(&path);
         assert_eq!(database.load_board().unwrap(), first);
     }
 
@@ -1376,7 +1420,7 @@ mod tests {
     fn lists_loads_and_remembers_multiple_boards() {
         let directory = tempdir().unwrap();
         let path = directory.path().join("board.sqlite3");
-        let mut database = Database::open(&path).unwrap();
+        let mut database = open_with_cards(&path);
         let first = database.load_board().unwrap();
         let second = database.create_board("仕事").unwrap();
 
@@ -1390,7 +1434,7 @@ mod tests {
         assert_eq!(database.load_last_board_id().unwrap(), Some(second.id));
         drop(database);
 
-        let database = Database::open(&path).unwrap();
+        let database = open_with_cards(&path);
         assert_eq!(database.load_last_board_id().unwrap(), Some(second.id));
         assert_eq!(database.load_board().unwrap().id, second.id);
     }
@@ -1399,7 +1443,7 @@ mod tests {
     fn persists_window_bounds_and_filter_state_in_app_state() {
         let directory = tempdir().unwrap();
         let path = directory.path().join("board.sqlite3");
-        let database = Database::open(&path).unwrap();
+        let database = open_with_cards(&path);
         let bounds = WindowBoundsState {
             x: -120.5,
             y: 42.25,
@@ -1426,7 +1470,7 @@ mod tests {
     fn persists_and_clears_the_quick_capture_shortcut() {
         let directory = tempdir().unwrap();
         let path = directory.path().join("board.sqlite3");
-        let database = Database::open(&path).unwrap();
+        let database = open_with_cards(&path);
 
         assert_eq!(database.load_quick_capture_shortcut().unwrap(), None);
 
@@ -1446,7 +1490,7 @@ mod tests {
     fn persists_and_clears_the_capture_target() {
         let directory = tempdir().unwrap();
         let path = directory.path().join("board.sqlite3");
-        let database = Database::open(&path).unwrap();
+        let database = open_with_cards(&path);
         let board = database.load_boards().unwrap()[0].id;
         let column = database.load_board_by_id(board).unwrap().columns[1].id;
 
@@ -1466,7 +1510,7 @@ mod tests {
     fn reads_a_column_name_only_within_its_own_board() {
         let directory = tempdir().unwrap();
         let path = directory.path().join("board.sqlite3");
-        let mut database = Database::open(&path).unwrap();
+        let mut database = open_with_cards(&path);
         let board = database
             .load_board_by_id(database.load_boards().unwrap()[0].id)
             .unwrap();
@@ -1489,7 +1533,7 @@ mod tests {
     fn exports_board_state_and_card_events_as_json() {
         let directory = tempdir().unwrap();
         let path = directory.path().join("board.sqlite3");
-        let mut database = Database::open(&path).unwrap();
+        let mut database = open_with_cards(&path);
         let mut board = database.load_board().unwrap();
         let card_id = board.columns[0].cards[0].id;
         let tag_id = board.add_tag("書き出し", "#ef4444").unwrap();
@@ -1532,7 +1576,7 @@ mod tests {
         let directory = tempdir().unwrap();
         let path = directory.path().join("board.sqlite3");
         let backup_path = directory.path().join("backup.sqlite3");
-        let database = Database::open(&path).unwrap();
+        let database = open_with_cards(&path);
 
         database.backup_to(&backup_path).unwrap();
 
@@ -1544,7 +1588,7 @@ mod tests {
     fn creates_boards_with_non_overlapping_item_ids() {
         let directory = tempdir().unwrap();
         let path = directory.path().join("board.sqlite3");
-        let mut database = Database::open(&path).unwrap();
+        let mut database = open_with_cards(&path);
         let mut first = database.load_board().unwrap();
         let mut second = database.create_board("別のボード").unwrap();
 
@@ -1572,7 +1616,7 @@ mod tests {
     fn refuses_to_delete_the_last_board() {
         let directory = tempdir().unwrap();
         let path = directory.path().join("board.sqlite3");
-        let mut database = Database::open(&path).unwrap();
+        let mut database = open_with_cards(&path);
         let first = database.load_board().unwrap();
         let second = database.create_board("削除対象").unwrap();
 
@@ -1591,7 +1635,7 @@ mod tests {
     fn does_not_reuse_deleted_board_ids() {
         let directory = tempdir().unwrap();
         let path = directory.path().join("board.sqlite3");
-        let mut database = Database::open(&path).unwrap();
+        let mut database = open_with_cards(&path);
         let first = database.load_board().unwrap();
         let second = database.create_board("一時ボード").unwrap();
 
@@ -1607,7 +1651,7 @@ mod tests {
     fn rejects_empty_board_names() {
         let directory = tempdir().unwrap();
         let path = directory.path().join("board.sqlite3");
-        let mut database = Database::open(&path).unwrap();
+        let mut database = open_with_cards(&path);
 
         assert!(matches!(
             database.create_board("  "),
@@ -1619,8 +1663,8 @@ mod tests {
     fn saves_a_new_local_board_snapshot() {
         let directory = tempdir().unwrap();
         let path = directory.path().join("board.sqlite3");
-        let mut database = Database::open(&path).unwrap();
-        let mut board = Board::demo();
+        let mut database = open_with_cards(&path);
+        let mut board = Board::fixture();
         board.name = "日本語ボード".to_string();
         database.save_board(&mut board).unwrap();
 
@@ -1631,7 +1675,7 @@ mod tests {
     fn round_trips_edited_and_deleted_cards() {
         let directory = tempdir().unwrap();
         let path = directory.path().join("board.sqlite3");
-        let mut database = Database::open(&path).unwrap();
+        let mut database = open_with_cards(&path);
         let mut board = database.load_board().unwrap();
         let edited_id = board.columns[0].cards[0].id;
         let deleted_id = board.columns[0].cards[1].id;
@@ -1653,7 +1697,7 @@ mod tests {
     fn preserves_created_at_when_saving_a_moved_card() {
         let directory = tempdir().unwrap();
         let path = directory.path().join("board.sqlite3");
-        let mut database = Database::open(&path).unwrap();
+        let mut database = open_with_cards(&path);
         let mut board = database.load_board().unwrap();
         let card_id = board.columns[0].cards[0].id;
         let created_at = board.columns[0].cards[0].created_at;
@@ -1674,7 +1718,7 @@ mod tests {
     fn saves_undo_and_redo_without_repeating_lifecycle_events() {
         let directory = tempdir().unwrap();
         let path = directory.path().join("board.sqlite3");
-        let mut database = Database::open(&path).unwrap();
+        let mut database = open_with_cards(&path);
         let mut board = database.load_board().unwrap();
         let card_id = board.columns[0].cards[0].id;
         let initial_event_count = lifecycle_event_count(&database, card_id);
@@ -1702,7 +1746,7 @@ mod tests {
     fn saves_card_lifecycle_events_and_clears_pending_events() {
         let directory = tempdir().unwrap();
         let path = directory.path().join("board.sqlite3");
-        let mut database = Database::open(&path).unwrap();
+        let mut database = open_with_cards(&path);
         let mut board = database.load_board().unwrap();
         let card_id = board.add_card(1, "履歴を記録", "").unwrap();
         board.move_card(card_id, 2, 0).unwrap();
@@ -1743,7 +1787,7 @@ mod tests {
     fn keeps_events_when_a_card_is_deleted() {
         let directory = tempdir().unwrap();
         let path = directory.path().join("board.sqlite3");
-        let mut database = Database::open(&path).unwrap();
+        let mut database = open_with_cards(&path);
         let mut board = database.load_board().unwrap();
         let card_id = board.add_card(1, "削除するカード", "").unwrap();
         board.delete_card(card_id).unwrap();
@@ -1776,7 +1820,7 @@ mod tests {
     fn archives_a_column_with_one_event_per_card() {
         let directory = tempdir().unwrap();
         let path = directory.path().join("board.sqlite3");
-        let mut database = Database::open(&path).unwrap();
+        let mut database = open_with_cards(&path);
         let mut board = database.load_board().unwrap();
         let card_ids = board.columns[0]
             .cards
@@ -1803,7 +1847,7 @@ mod tests {
     fn drops_pending_events_when_saving_fails() {
         let directory = tempdir().unwrap();
         let path = directory.path().join("board.sqlite3");
-        let mut database = Database::open(&path).unwrap();
+        let mut database = open_with_cards(&path);
         let mut board = database.load_board().unwrap();
         let card_id = board.add_card(1, "保存に失敗するカード", "").unwrap();
         board.columns[0]
@@ -1844,7 +1888,7 @@ mod tests {
         let path = directory.path().join("board.sqlite3");
         {
             // v9 まで進んだ DB を作り、当時の絞り込みの選択を残しておく。
-            let database = Database::open(&path).unwrap();
+            let database = open_with_cards(&path);
             database
                 .connection
                 .execute("DELETE FROM schema_migrations WHERE version = ?1", [10])
@@ -1858,7 +1902,7 @@ mod tests {
                 .unwrap();
         }
 
-        let database = Database::open(&path).unwrap();
+        let database = open_with_cards(&path);
 
         assert_eq!(database.load_app_state("filter_due").unwrap(), None);
         assert_eq!(
@@ -1921,7 +1965,7 @@ mod tests {
             .unwrap();
         drop(connection);
 
-        let database = Database::open(&path).unwrap();
+        let database = open_with_cards(&path);
         let board = database.load_board().unwrap();
 
         assert_eq!(board.next_card_id, 35);
@@ -1952,7 +1996,7 @@ mod tests {
     fn round_trips_due_dates_and_clear_values() {
         let directory = tempdir().unwrap();
         let path = directory.path().join("board.sqlite3");
-        let mut database = Database::open(&path).unwrap();
+        let mut database = open_with_cards(&path);
         let mut board = database.load_board().unwrap();
         let card_with_due_date = board.columns[0].cards[0].id;
         let card_without_due_date = board.columns[0].cards[1].id;
@@ -1983,7 +2027,7 @@ mod tests {
     fn round_trips_the_sidebar_collapsed_state() {
         let directory = tempdir().unwrap();
         let path = directory.path().join("board.sqlite3");
-        let database = Database::open(&path).unwrap();
+        let database = open_with_cards(&path);
 
         assert!(!database.load_sidebar_collapsed().unwrap());
 
@@ -1998,7 +2042,7 @@ mod tests {
     fn round_trips_wip_limits() {
         let directory = tempdir().unwrap();
         let path = directory.path().join("board.sqlite3");
-        let mut database = Database::open(&path).unwrap();
+        let mut database = open_with_cards(&path);
         let mut board = database.load_board().unwrap();
 
         board.set_column_wip_limit(1, Some(5)).unwrap();
@@ -2011,7 +2055,7 @@ mod tests {
     fn round_trips_tags_and_card_assignments() {
         let directory = tempdir().unwrap();
         let path = directory.path().join("board.sqlite3");
-        let mut database = Database::open(&path).unwrap();
+        let mut database = open_with_cards(&path);
         let mut board = database.load_board().unwrap();
         let tag_id = board.add_tag("重要", "#ef4444").unwrap();
         let card_id = board.columns[0].cards[0].id;
@@ -2027,7 +2071,7 @@ mod tests {
     fn round_trips_checklist_items_and_removes_deleted_items() {
         let directory = tempdir().unwrap();
         let path = directory.path().join("board.sqlite3");
-        let mut database = Database::open(&path).unwrap();
+        let mut database = open_with_cards(&path);
         let mut board = database.load_board().unwrap();
         let card_id = board.columns[0].cards[0].id;
         board
@@ -2079,7 +2123,7 @@ mod tests {
     fn round_trips_archived_cards_and_restoration() {
         let directory = tempdir().unwrap();
         let path = directory.path().join("board.sqlite3");
-        let mut database = Database::open(&path).unwrap();
+        let mut database = open_with_cards(&path);
         let mut board = database.load_board().unwrap();
         let card_id = board.columns[0].cards[0].id;
         let tag_id = board.add_tag("保管", "#64748b").unwrap();
