@@ -4562,6 +4562,12 @@ impl Render for BoardView {
                         div()
                             .id("board-content")
                             .flex_1()
+                            // flex アイテムの min-height は既定が auto で、中身より
+                            // 小さくは縮まない。これが無いとカードが増えたぶんだけ
+                            // ここが縦に伸び、カラムも一緒に伸びるので、カラム内の
+                            // overflow_y_scroll が「はみ出していない」と判断されて
+                            // 縦スクロールが効かなくなる（#43）。
+                            .min_h_0()
                             .flex()
                             .gap_4()
                             .p_6()

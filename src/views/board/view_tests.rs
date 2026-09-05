@@ -106,15 +106,30 @@ impl Harness {
 /// `crate::run` がやっていることのうち、ウィンドウを開くまでを再現する。
 /// ルートを `Root` にするのは本番と同じで、確認ダイアログや通知がここに載るため。
 fn open_board(cx: &mut TestAppContext) -> (Harness, &mut VisualTestContext) {
+    open_seeded_board(cx, |_, _| {})
+}
+
+/// デモボードの中身を差し替えてからウィンドウを開く。
+///
+/// `seed` はウィンドウが開く前に呼ばれる。書き換えた結果を SQLite にも残したい
+/// なら、`seed` の中で `save_board` まで済ませておく。
+fn open_seeded_board(
+    cx: &mut TestAppContext,
+    seed: impl FnOnce(&mut Database, &mut Board),
+) -> (Harness, &mut VisualTestContext) {
     let dir = tempfile::tempdir().expect("a temporary directory is available");
     let database_path = dir.path().join("board.sqlite3");
 
     let (board, boards) = {
-        let database = Database::open(&database_path).expect("a new database is created");
+        let mut database = Database::open(&database_path).expect("a new database is created");
+        let mut board = {
+            let boards = database.load_boards().expect("the seeded board is listed");
+            database
+                .load_board_by_id(boards[0].id)
+                .expect("the seeded board loads")
+        };
+        seed(&mut database, &mut board);
         let boards = database.load_boards().expect("the seeded board is listed");
-        let board = database
-            .load_board_by_id(boards[0].id)
-            .expect("the seeded board loads");
         (board, boards)
     };
 
@@ -593,5 +608,47 @@ fn shortcuts_stay_out_of_the_way_while_a_field_has_focus(cx: &mut TestAppContext
         harness.selected_card(cx),
         selected,
         "arrow keys belong to the field while it is focused"
+    );
+}
+
+/// カードがカラムに収まらない枚数になっても、カラムはウィンドウの高さの中に
+/// 収まり、あふれた分はカラムの中で縦スクロールできる。
+///
+/// 見るのは絶対値ではなく関係。カード一覧の表示領域がウィンドウに収まっている
+/// ことと、スクロールできる余地（`max_offset`）が残っていることを確かめるので、
+/// カードの高さやテーマが変わっても意味が保たれる。
+#[gpui_kit::test]
+fn a_column_with_more_cards_than_fit_scrolls_inside_the_window(cx: &mut TestAppContext) {
+    let (harness, cx) = open_seeded_board(cx, |database, board| {
+        let column_id = board.columns[0].id;
+        for index in 0..60 {
+            board
+                .add_card(column_id, format!("カード {index}"), "")
+                .expect("the first column takes a card");
+        }
+        database
+            .save_board(board)
+            .expect("the seeded cards are stored");
+    });
+
+    let viewport = cx.update(|window, _| window.viewport_size());
+    let (list_bounds, max_offset) = harness.view.read_with(cx, |view, _| {
+        let column_id = view.board.columns[0].id;
+        let handle = view
+            .column_scroll_handles
+            .get(&column_id)
+            .expect("the rendered column has a scroll handle");
+        (handle.bounds(), handle.max_offset())
+    });
+
+    assert!(
+        list_bounds.size.height <= viewport.height,
+        "the card list stays inside the window instead of stretching to fit every card: \
+         list {list_bounds:?} in a window of {viewport:?}"
+    );
+    assert!(
+        max_offset.y > gpui_kit::px(0.),
+        "the cards that do not fit can be reached by scrolling the column: \
+         max_offset {max_offset:?}"
     );
 }
