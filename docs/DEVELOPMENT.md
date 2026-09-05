@@ -152,6 +152,7 @@ app_state
 | --- | --- |
 | `make run` | ターミナルから直接起動する（デバッグビルド） |
 | `make check` | CI と同じ fmt / clippy / test を走らせる |
+| `make screenshots` | マニュアルのスクリーンショットを撮り直す（Linux/X11 のみ） |
 | `make icon` | macOS 用の `assets/icon.icns` を `assets/icon.png` から生成する |
 | `make bundle` | リリースビルドから `target/release/bundle/Ekanban.app` を作る |
 | `make open` | `.app` を作って起動する |
@@ -170,6 +171,40 @@ CODESIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" make bundle
 ```
 
 ad-hoc 以外の ID を指定したときは hardened runtime（`--options runtime`）とタイムスタンプが自動で付き、公証をそのまま通せる状態になります。entitlements が必要になったら `script/entitlements.plist` を置けば署名時に読み込まれます。
+
+## マニュアルのスクリーンショット
+
+[マニュアル](MANUAL.md) の画像は `docs/images/` に置き、`script/manual-screenshots` で撮り直します（`make screenshots` でも同じです）。
+
+```sh
+script/manual-screenshots              # 6 枚すべて
+script/manual-screenshots board-dark   # 1 枚だけ
+```
+
+| ファイル | 見せているもの |
+| --- | --- |
+| `board.png` | ボードの全体 |
+| `card-edit.png` | カードの編集パネル |
+| `search.png` | 検索での絞り込み |
+| `filter-tag.png` | タグでの絞り込み |
+| `board-list-collapsed.png` | ボード一覧を畳んだところ |
+| `board-dark.png` | ダークモード |
+
+要るものは `Xvfb`、`xdotool`、ImageMagick の `import`、日本語フォント（`fonts-noto-cjk` など）です。`optipng` があれば自動で通し、無ければそのまま置きます。macOS では動きません。Linux（X11）で揃えているのは、誰でも同じものを撮り直せるようにするためです。マニュアルの冒頭にも、そう撮ったものだと断ってあります。
+
+### 撮り方
+
+盤面は `examples/manual_screenshot_seed.rs` が `EKANBAN_DATABASE` のデータベースを作り直して用意します。SQL を直接書かず、アプリ自身の API（`Database` と `Board`）で組み立てます。**撮れた絵が、アプリの本当に復元できる状態であること**を、作り方の側で保証するためです。
+
+検索語、絞り込みのタグ、ボード一覧の開閉、テーマは `app_state` に残るので、seed が状態まで作ってからアプリを起動すれば、そのまま撮れます。カードの編集パネルだけは保存されないので、これは `script/manual-screenshots` がカードを実際に押して開きます。
+
+ウィンドウマネージャは動かしません。飾り枠が付かないので、アプリの既定のウィンドウがそのまま 1200x800 で撮れます。撮る直前にポインタをカードの無いところへ逃がすのは、たまたま下にあったカードが hover の色で写り込まないようにするためです。
+
+### 撮り直すときに気をつけること
+
+- **期限は撮った日からの相対で入ります。** `期限切れ 2日 (9/3)` のような日付は撮る日によって変わります。マニュアルの「期限の書き分け」の表は画像と同じ日付を載せているので、撮り直したら表も直してください
+- 画面を足すときは、`examples/manual_screenshot_seed.rs` の `SCREENS` と `script/manual-screenshots` の両方に名前を足します。その名前がそのまま `docs/images/<名前>.png` になります
+- フォントが変わると折り返しも変わります。カードの説明が 2 行になって句点だけが取り残されるようなら、画像ではなく文言のほうを詰めてください
 
 ## 起動に失敗したときの記録
 
