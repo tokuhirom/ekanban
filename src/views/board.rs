@@ -32,9 +32,9 @@ use crate::{
     actions::{
         About, AddBoard, AddCard, AddColumn, AddTag, BackupDatabase, CancelEdit, ClearSearch,
         CloseWindow, DeleteBoard, ExportBoardJson, ExportBoardMarkdown, FocusSearch, ManageTags,
-        Redo, RenameBoard, RevealBackups, RevealDatabase, SaveEdit, SetQuickCaptureShortcut,
-        ToggleArchiveView, ToggleBoardList, ToggleFullscreen, Undo, UseDarkTheme, UseLightTheme,
-        UseSystemTheme,
+        MinimizeWindow, Redo, RenameBoard, RevealBackups, RevealDatabase, SaveEdit,
+        SetQuickCaptureShortcut, ToggleArchiveView, ToggleBoardList, ToggleFullscreen, Undo,
+        UseDarkTheme, UseLightTheme, UseSystemTheme, ZoomWindow,
     },
     db::{save_board_snapshot, Database, DbError, FilterState, WindowBoundsState},
     hotkey::{QuickCapture, Shortcut},
@@ -4656,6 +4656,14 @@ impl Render for BoardView {
             )
             .on_action(cx.listener(|_, _: &ToggleFullscreen, window, _| {
                 window.toggle_fullscreen();
+            }))
+            // macOS の「ウインドウ」メニューの受け口。ほかの環境では
+            // ウィンドウマネージャがやるので、割り当ても項目も無い。
+            .on_action(cx.listener(|_, _: &MinimizeWindow, window, _| {
+                window.minimize_window();
+            }))
+            .on_action(cx.listener(|_, _: &ZoomWindow, window, _| {
+                window.zoom_window();
             }))
             .size_full()
             .flex()
