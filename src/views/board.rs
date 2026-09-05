@@ -99,6 +99,17 @@ struct CardEditor {
     error: Option<FieldError>,
 }
 
+/// 「+ カードを追加」で作った直後の、まだ保存していないカード。
+///
+/// タイトルを入れて保存するまでは仮のものとして扱い、キャンセルされたら
+/// カードごと取り下げる。タイトルの無いカードをボードにも DB にも残さない。
+struct NewCard {
+    card_id: CardId,
+    /// 追加のあとに、別の操作の保存が走ったか。走っていればこのカードも
+    /// 一緒に書かれているので、取りやめるときに保存し直す必要がある。
+    saved: bool,
+}
+
 struct ChecklistEditorItem {
     id: Option<ChecklistItemId>,
     text: Entity<InputState>,
@@ -209,9 +220,14 @@ struct FieldError {
     value: Option<String>,
 }
 
+/// タイトルがまだ空のカードを、ボードの上でどう呼ぶか。
+///
+/// 出るのは「+ カードを追加」を押してから保存するまでの間だけ。保存には
+/// タイトルが要るので、この文言のまま残ることはない。
+const UNTITLED_CARD_TITLE: &str = "（タイトル未入力）";
+
 enum SaveFailure {
     None,
-    ClearCardEditor,
     RestoreCardEditor(CardEditor),
     RestoreColumnEditor(ColumnEditor),
     RestoreTagEditor(TagEditor),
@@ -312,6 +328,8 @@ pub struct BoardView {
     active_save: Option<ActiveSave>,
     status: Option<StatusMessage>,
     editing_card: Option<CardEditor>,
+    /// 追加したが、まだタイトルを入れて保存していないカード。
+    new_card: Option<NewCard>,
     editing_column: Option<ColumnEditor>,
     editing_tag: Option<TagEditor>,
     editing_board: Option<BoardEditor>,
@@ -425,6 +443,7 @@ impl BoardView {
             active_save: None,
             status: None,
             editing_card: None,
+            new_card: None,
             editing_column: None,
             editing_tag: None,
             editing_board: None,
@@ -949,6 +968,8 @@ impl BoardView {
     }
 
     fn reset_board_view(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // ボードごと入れ替わるので、保存していない追加カードは消えて構わない。
+        self.new_card = None;
         self.editing_card = None;
         self.editing_column = None;
         self.editing_tag = None;
@@ -1194,6 +1215,9 @@ impl BoardView {
         cx: &mut Context<Self>,
     ) {
         self.next_save_id += 1;
+        if let Some(new_card) = self.new_card.as_mut() {
+            new_card.saved = true;
+        }
         self.pending_saves.push_back(PendingSave {
             id: self.next_save_id,
             snapshot: self.board.clone(),
@@ -1275,7 +1299,6 @@ impl BoardView {
                 self.rollback_board(active.before);
                 match active.on_failure {
                     SaveFailure::None => {}
-                    SaveFailure::ClearCardEditor => self.editing_card = None,
                     SaveFailure::RestoreCardEditor(editor) => self.editing_card = Some(editor),
                     SaveFailure::RestoreColumnEditor(editor) => self.editing_column = Some(editor),
                     SaveFailure::RestoreTagEditor(editor) => {
@@ -1626,19 +1649,18 @@ impl BoardView {
             cx.notify();
             return;
         }
-        let before = self.board.clone();
-        let result = self
-            .board
-            .add_card(column_id, "新しいカード", "説明を追加してください");
-        match result {
+        // 入力欄の初期値は空にする。案内は placeholder が出す。既定値として
+        // 入れてしまうと、消し忘れた文言がそのままカードの中身になる。
+        match self.board.add_card(column_id, "", "") {
             Ok(card_id) => {
+                // タイトルが空のうちは保存しない。ここで書くと、保存したあとに
+                // やめたときの後始末が要るうえ、落ちれば無題のカードが残る。
+                self.new_card = Some(NewCard {
+                    card_id,
+                    saved: false,
+                });
                 self.begin_card_edit(card_id, window, cx);
-                self.enqueue_save(
-                    before,
-                    "カードを追加しました",
-                    SaveFailure::ClearCardEditor,
-                    cx,
-                );
+                self.set_info("タイトルを入力して保存してください");
             }
             Err(error) => self.present_board_error(ErrorContext::Card, error),
         }
@@ -1678,7 +1700,7 @@ impl BoardView {
         });
         let description_input = cx.new(|cx| {
             TextareaState::new(window, cx)
-                .placeholder("カードの説明")
+                .placeholder("カードの説明（任意）")
                 .default_value(description)
         });
         let due_date_input = cx.new(|cx| {
@@ -1769,10 +1791,38 @@ impl BoardView {
     }
 
     fn cancel_card_edit(&mut self, cx: &mut Context<Self>) {
-        if self.editing_card.take().is_some() {
+        let Some(editor) = self.editing_card.take() else {
+            return;
+        };
+        if self.discard_new_card(editor.card_id, cx) {
+            self.set_info("カードの追加をやめました");
+        } else {
             self.set_info("カードの編集をキャンセルしました");
-            cx.notify();
         }
+        cx.notify();
+    }
+
+    /// 保存しないまま閉じられた追加カードを取り下げる。取り下げたら `true`。
+    ///
+    /// 追加した時点では保存していないので、ふつうは書き込みが要らない。別の操作の
+    /// 保存に巻き込まれて書かれていたときだけ、消すために保存し直す。
+    fn discard_new_card(&mut self, card_id: CardId, cx: &mut Context<Self>) -> bool {
+        if self.new_card.as_ref().map(|new_card| new_card.card_id) != Some(card_id) {
+            return false;
+        }
+        let new_card = self.new_card.take().expect("just matched");
+        let before = self.board.clone();
+        if let Err(error) = self.board.discard_added_card(card_id) {
+            self.present_board_error(ErrorContext::Card, error);
+            return false;
+        }
+        if self.selected_card == Some(card_id) {
+            self.selected_card = None;
+        }
+        if new_card.saved {
+            self.enqueue_save(before, "カードの追加をやめました", SaveFailure::None, cx);
+        }
+        true
     }
 
     fn save_card_edit(&mut self, cx: &mut Context<Self>) {
@@ -1785,6 +1835,7 @@ impl BoardView {
         let Some(editor) = self.editing_card.take() else {
             return;
         };
+        let card_id = editor.card_id;
         let title = editor.title.read(cx).value().to_string();
         let description = editor.description.read(cx).value().to_string();
         let due_date_text = editor.due_date.read(cx).value().to_string();
@@ -1845,9 +1896,16 @@ impl BoardView {
         };
 
         if changed {
+            let added = self
+                .new_card
+                .take_if(|new_card| new_card.card_id == card_id);
             self.enqueue_save(
                 before,
-                "カードを更新しました",
+                if added.is_some() {
+                    "カードを追加しました"
+                } else {
+                    "カードを更新しました"
+                },
                 SaveFailure::RestoreCardEditor(editor),
                 cx,
             );
@@ -2095,7 +2153,9 @@ impl BoardView {
 
     fn toggle_archive_view(&mut self, cx: &mut Context<Self>) {
         self.show_archived = !self.show_archived;
-        self.editing_card = None;
+        if let Some(editor) = self.editing_card.take() {
+            self.discard_new_card(editor.card_id, cx);
+        }
         self.editing_column = None;
         self.selected_card = None;
         self.context_menu_card = None;
@@ -3827,8 +3887,14 @@ impl BoardView {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let card_id = card.id;
-        let title = card.title.clone();
-        let drag_title = SharedString::from(card.title.clone());
+        let untitled = card.title.trim().is_empty();
+        // 追加したばかりでタイトルがまだ無いカードを、白い箱のまま置かない。
+        let title = if untitled {
+            UNTITLED_CARD_TITLE.to_string()
+        } else {
+            card.title.clone()
+        };
+        let drag_title = SharedString::from(title.clone());
         let today = Local::now().date_naive();
         let due_badge = card
             .due_date
@@ -3884,7 +3950,14 @@ impl BoardView {
                     .child(
                         div()
                             .text_sm()
-                            .text_color(theme_color(cx, UiColor::Foreground))
+                            .text_color(theme_color(
+                                cx,
+                                if untitled {
+                                    UiColor::MutedForeground
+                                } else {
+                                    UiColor::Foreground
+                                },
+                            ))
                             .child(title),
                     )
                     .when_some(due_badge, |this, badge| this.child(badge))
@@ -4001,6 +4074,14 @@ impl BoardView {
             .h_full()
             .flex()
             .flex_col()
+            // カラム名やタグ名の編集と同じく Escape で閉じる。Enter は取らない。
+            // 説明が複数行のテキストなので、改行のほうを優先する。
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                if event.keystroke.key.as_str() == "escape" {
+                    cx.stop_propagation();
+                    this.cancel_card_edit(cx);
+                }
+            }))
             .bg(theme_color(cx, UiColor::Surface))
             .border_l_1()
             .border_color(theme_color(cx, UiColor::Border))
