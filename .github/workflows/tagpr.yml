@@ -1,0 +1,45 @@
+name: tagpr
+
+# main に push されるたびに、次のリリース用の pull request を作り直します。
+# その pull request を merge すると tagpr がタグを打ち、GitHub Release を作ります。
+#
+# GITHUB_TOKEN ではなく GitHub App のインストールトークンを使うのは、
+# GITHUB_TOKEN で打ったタグが push イベントを発火しないからです。App の
+# トークンなら発火するので、タグがそのまま release.yml を動かします。
+#
+# 要る設定 (リポジトリ側):
+#   vars.TAGPR_APP_ID          GitHub App の App ID
+#   secrets.TAGPR_APP_PRIVATE_KEY  その App の秘密鍵
+#   Settings → Actions → General の
+#   "Allow GitHub Actions to create and approve pull requests" を有効にする
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  tagpr:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app-token
+        with:
+          app-id: ${{ vars.TAGPR_APP_ID }}
+          private-key: ${{ secrets.TAGPR_APP_PRIVATE_KEY }}
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+
+      # .tagpr の postVersionCommand が cargo update を走らせるので、
+      # Rust を用意しておきます。
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Songmu/tagpr@7ebae2dcc300132baa7cc9dd108c8923b07fc366 # v1.20.3
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
