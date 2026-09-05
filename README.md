@@ -85,4 +85,4 @@ EKANBAN_DATABASE=/tmp/試し.sqlite3 make run
 
 ## ライセンス
 
-MIT
+[MIT License](LICENSE)
