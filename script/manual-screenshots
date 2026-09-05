@@ -1,0 +1,123 @@
+#!/usr/bin/env bash
+#
+# docs/MANUAL.md のスクリーンショットを撮り直す。
+#
+#   script/manual-screenshots            すべて撮り直す
+#   script/manual-screenshots board-dark 1 枚だけ撮り直す
+#
+# 撮り方は docs/DEVELOPMENT.md の「マニュアルのスクリーンショット」を読んでください。
+# 必要なもの: Xvfb, xdotool, ImageMagick (import), 日本語フォント。optipng があれば使う。
+set -euo pipefail
+
+repository=$(cd "$(dirname "$0")/.." && pwd)
+images=$repository/docs/images
+
+# 画面の大きさ。アプリの既定のウィンドウは 1200x800 で、仮想ディスプレイの中央に出る。
+# ウィンドウマネージャを動かさないので飾り枠が付かず、撮れる絵はちょうど 1200x800 になる。
+window_width=1200
+window_height=800
+screen_width=1600
+screen_height=1200
+window_x=$(((screen_width - window_width) / 2))
+window_y=$(((screen_height - window_height) / 2))
+
+# ウィンドウの中の位置を画面の位置に直す。
+screen_point() { echo "$((window_x + $1)) $((window_y + $2))"; }
+
+# カードやボタンに重ならないところ。撮る前にポインタをここへ逃がして、
+# たまたま下にあったカードが hover の色で写らないようにする。
+readonly PARK_POINT="$(screen_point 700 130)"
+# 「SQLite のスキーマを決める」カードのタイトル。押すと編集パネルが開く。
+readonly CARD_POINT="$(screen_point 700 231)"
+
+display=:99
+work=$(mktemp -d)
+database=$work/manual.sqlite3
+xvfb_pid=
+trap 'kill "$xvfb_pid" 2>/dev/null || true; rm -rf "$work"' EXIT
+
+for tool in Xvfb xdotool import; do
+  if ! command -v "$tool" >/dev/null; then
+    echo "$tool が要ります。docs/DEVELOPMENT.md を読んでください" >&2
+    exit 1
+  fi
+done
+
+Xvfb "$display" -screen 0 "${screen_width}x${screen_height}x24" -nolisten tcp >"$work/xvfb.log" 2>&1 &
+xvfb_pid=$!
+for _ in $(seq 40); do
+  DISPLAY=$display xdotool getdisplaygeometry >/dev/null 2>&1 && break
+  sleep 0.25
+done
+
+cd "$repository"
+cargo build --example manual_screenshot_seed
+cargo build
+
+# 撮る 1 枚。名前は docs/images/<名前>.png と、seed に渡す画面の名前を兼ねる。
+shoot() {
+  local screen=$1
+  shift
+
+  EKANBAN_DATABASE=$database ./target/debug/examples/manual_screenshot_seed "$screen"
+
+  DISPLAY=$display EKANBAN_DATABASE=$database ./target/debug/ekanban >"$work/app.log" 2>&1 &
+  local app_pid=$!
+
+  local window=
+  for _ in $(seq 80); do
+    window=$(DISPLAY=$display xdotool search --onlyvisible --class ekanban 2>/dev/null | head -1 || true)
+    [ -n "$window" ] && break
+    sleep 0.5
+  done
+  if [ -z "$window" ]; then
+    echo "ウィンドウが出ませんでした" >&2
+    cat "$work/app.log" >&2
+    kill "$app_pid" 2>/dev/null || true
+    return 1
+  fi
+
+  # 最初の描画とフォントの読み込みを待つ。
+  DISPLAY=$display xdotool mousemove $PARK_POINT
+  sleep 4
+
+  # 保存されない状態（編集パネルなど）は、ここで実際に操作して作る。
+  if [ $# -ge 2 ]; then
+    DISPLAY=$display xdotool mousemove "$1" "$2" click 1
+    sleep 3
+    DISPLAY=$display xdotool mousemove $PARK_POINT
+    sleep 1
+  fi
+
+  DISPLAY=$display import -window "$window" "$images/$screen.png"
+  kill "$app_pid" 2>/dev/null || true
+  wait "$app_pid" 2>/dev/null || true
+
+  command -v optipng >/dev/null && optipng -o5 -quiet "$images/$screen.png"
+  echo "docs/images/$screen.png"
+}
+
+shoot_named() {
+  case $1 in
+    board) shoot board ;;
+    card-edit) shoot card-edit $CARD_POINT ;;
+    search) shoot search ;;
+    filter-tag) shoot filter-tag ;;
+    board-list-collapsed) shoot board-list-collapsed ;;
+    board-dark) shoot board-dark ;;
+    *)
+      echo "そんな画面はありません: $1" >&2
+      exit 2
+      ;;
+  esac
+}
+
+if [ $# -gt 0 ]; then
+  for screen in "$@"; do
+    shoot_named "$screen"
+  done
+else
+  for screen in board card-edit search filter-tag board-list-collapsed board-dark; do
+    shoot_named "$screen"
+  done
+fi

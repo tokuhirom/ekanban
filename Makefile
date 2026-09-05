@@ -2,7 +2,7 @@ APP_NAME := Ekanban
 RELEASE_APP := target/release/bundle/$(APP_NAME).app
 DEBUG_APP := target/debug/bundle/$(APP_NAME).app
 
-.PHONY: help build release run test fmt fmt-check lint check icon bundle bundle-debug open install clean
+.PHONY: help build release run test fmt fmt-check lint check screenshots icon bundle bundle-debug open install clean
 
 help: ## このヘルプを表示する
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -30,6 +30,9 @@ lint: ## clippy を実行する
 	cargo clippy --all-targets --all-features -- -D warnings
 
 check: fmt-check lint test ## CI と同じチェックを一通り走らせる
+
+screenshots: ## マニュアルのスクリーンショットを撮り直す (Linux/X11 のみ)
+	script/manual-screenshots
 
 icon: assets/icon.icns ## macOS 用の .icns アイコンを生成する
 
