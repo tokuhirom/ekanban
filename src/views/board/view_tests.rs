@@ -423,6 +423,36 @@ fn undo_takes_back_a_saved_card(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn searching_for_a_card_number_leaves_only_that_card(cx: &mut TestAppContext) {
+    let (harness, cx) = open_board(cx);
+    focus_board(&harness, cx);
+
+    let board = harness.stored_board();
+    let wanted = &board.columns[0].cards[0];
+    let other = &board.columns[0].cards[1];
+    assert_ne!(
+        wanted.id, other.id,
+        "the seeded board has two distinct cards"
+    );
+
+    cx.dispatch_action(FocusSearch);
+    cx.run_until_parked();
+    cx.simulate_input(&format!("#{}", wanted.id));
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+
+    let dimmed = harness.dimmed_titles(cx);
+    assert!(
+        !dimmed.contains(&wanted.title),
+        "the card with that number stays lit: {dimmed:?}"
+    );
+    assert!(
+        dimmed.contains(&other.title),
+        "every other card is dimmed: {dimmed:?}"
+    );
+}
+
+#[gpui_kit::test]
 fn searching_dims_the_cards_that_do_not_match(cx: &mut TestAppContext) {
     let (harness, cx) = open_board(cx);
     focus_board(&harness, cx);
