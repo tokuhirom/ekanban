@@ -377,6 +377,12 @@ struct CaptureWindow {
     /// 開いたときにボードのウィンドウが前面でなかったか。閉じるときに直前の
     /// アプリへフォーカスを返すかの判断に使う。
     restore_previous_app: bool,
+    /// このキャプチャを開いたボードのウィンドウ。
+    ///
+    /// 閉じたあとにボードを前へ出すのに使う。`App::activate` は macOS の実装で、
+    /// Linux では何もしない（`gpui-pre-linux` の `platform.rs`）ので、ウィンドウ
+    /// 単位の `activate_window` を呼ぶ経路が要る（#52）。
+    board_window: gpui_kit::AnyWindowHandle,
 }
 
 impl BoardView {
@@ -599,6 +605,7 @@ impl BoardView {
         // ホットキーを押した時点でボードが前面だったかを覚えておく。閉じるときに
         // アプリごと隠すかどうかがこれで決まる。
         let restore_previous_app = !window.is_window_active();
+        let board_window = window.window_handle();
         let board_view = cx.entity().downgrade();
         let bounds = Bounds::centered(None, size(px(520.), px(132.)), cx);
         let created: Rc<RefCell<Option<Entity<CaptureView>>>> = Rc::default();
@@ -635,6 +642,7 @@ impl BoardView {
                     handle,
                     view,
                     restore_previous_app,
+                    board_window,
                 });
             }
             Err(error) => {
@@ -829,7 +837,7 @@ impl BoardView {
         let _ = capture.handle.update(cx, |_, window, _| {
             window.remove_window();
         });
-        self.restore_focus_after_capture(capture.restore_previous_app, cx);
+        self.restore_focus_after_capture(&capture, cx);
     }
 
     /// キャプチャウィンドウが自分で閉じたとき（`Escape`）。
@@ -838,15 +846,28 @@ impl BoardView {
             return;
         };
         self.capture_save = None;
-        self.restore_focus_after_capture(capture.restore_previous_app, cx);
+        self.restore_focus_after_capture(&capture, cx);
     }
 
-    fn restore_focus_after_capture(&mut self, restore_previous_app: bool, cx: &mut Context<Self>) {
-        if restore_previous_app {
+    /// キャプチャウィンドウを閉じたあとのフォーカスの行き先。
+    ///
+    /// `App::hide` と `App::activate` は macOS の実装で、Linux では呼んでも
+    /// 何もしない（`gpui-pre-linux` の `platform.rs` がログを出して戻る）。
+    /// そこで、ボードを前へ出す側だけはウィンドウ単位の `activate_window` で
+    /// やる。X11 では `_NET_ACTIVE_WINDOW` を投げるので効く。
+    ///
+    /// 直前のアプリへ返すほうは、Linux では合わせられない。アプリを隠す仕組みが
+    /// 無く、他アプリを名指しで前に出す手段も無い。キャプチャウィンドウが消えた
+    /// あとの行き先はウィンドウマネージャが決める。マニュアルに OS 別でそう書く。
+    fn restore_focus_after_capture(&mut self, capture: &CaptureWindow, cx: &mut Context<Self>) {
+        if capture.restore_previous_app {
             // ほかのアプリを使っている途中で呼ばれたので、そのアプリに戻す。
             cx.hide();
         } else {
             cx.activate(true);
+            let _ = capture
+                .board_window
+                .update(cx, |_, window, _| window.activate_window());
         }
         cx.notify();
     }

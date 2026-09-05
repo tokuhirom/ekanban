@@ -91,3 +91,4 @@
 | [0009](0009-per-platform-key-bindings.md) | `cmd-ctrl-*` に頼る操作には、macOS 以外の割り当てを別に持つ | 2026-09-05 | 有効 |
 | [0010](0010-hiding-instead-of-dimming-in-the-archive.md) | アーカイブ表示では、絞り込みから外れたカードを隠す | 2026-09-05 | 有効 |
 | [0011](0011-due-counts-in-the-board-list.md) | 期限の件数を、ボード一覧の各行に出す | 2026-09-05 | 有効 |
+| [0012](0012-focus-after-quick-capture-on-linux.md) | クイックキャプチャを閉じたあとの行き先は、Linux では 1 つだけ保証する | 2026-09-05 | 有効 |
