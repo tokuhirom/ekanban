@@ -2,11 +2,10 @@
 #
 # `crates/core` が盤面のモデル・SQLite・控え・置き場所を持ち、UI ツールキットに
 # 依存しない。`crates/app` が Tauri のアプリ。`crates/harness` は開発とテスト
-# 専用で、そのコマンドを HTTP に出す（§10）。`crates/gpui` は gpui-kit で描く
-# 今のアプリで、Tauri へ移り終えたら消える（`docs/TAURI-MIGRATION.md` の段階 10）。
+# 専用で、そのコマンドを HTTP に出す。
 [workspace]
 resolver = "2"
-members = ["crates/app", "crates/core", "crates/gpui", "crates/harness"]
+members = ["crates/app", "crates/core", "crates/harness"]
 
 [workspace.package]
 # tagpr がここを書き換え、`script/bundle-mac` がここから .app のバージョンを作る
@@ -21,9 +20,6 @@ ekanban-core = { path = "crates/core" }
 # `serde` は期限 (`NaiveDate`) のためです。chrono の実装が "YYYY-MM-DD" の
 # 文字列に落とすので、`docs/TAURI-MIGRATION.md` §3 の決めごとがそのまま出ます。
 chrono = { version = "0.4.45", features = ["clock", "serde"] }
-global-hotkey = "0.8.0"
-gpui-kit = "0.6.0"
-lsp-types = "0.97"
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0"

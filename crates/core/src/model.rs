@@ -654,7 +654,7 @@ impl Board {
         };
 
         board
-            .add_card(1, "GPUI の画面を作る", "カラムとカードを表示する")
+            .add_card(1, "画面の描画をひととおり通す", "カラムとカードを表示する")
             .expect("demo column exists");
         board
             .add_card(1, "D&D の操作を試す", "カードを掴んで移動する")
@@ -2790,7 +2790,7 @@ mod tests {
             .unwrap();
         assert!(board.undo().unwrap());
         let card = &board.columns[0].cards[0];
-        assert_eq!(card.title, "GPUI の画面を作る");
+        assert_eq!(card.title, "画面の描画をひととおり通す");
         assert_eq!(card.description, "カラムとカードを表示する");
         assert_eq!(card.due_date, None);
         assert!(card.tag_ids.is_empty());
@@ -3282,7 +3282,10 @@ mod tests {
 
         board.undo().unwrap();
         assert!(board.columns[0].cards[0].checklist_items.is_empty());
-        assert_eq!(board.columns[0].cards[0].title, "GPUI の画面を作る");
+        assert_eq!(
+            board.columns[0].cards[0].title,
+            "画面の描画をひととおり通す"
+        );
         board.redo().unwrap();
         assert_eq!(board.columns[0].cards[0].checklist_items.len(), 2);
     }

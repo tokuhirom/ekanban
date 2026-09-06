@@ -23,5 +23,11 @@ serde.workspace = true
 serde_json.workspace = true
 tiny_http.workspace = true
 
+[dev-dependencies]
+# マニュアルのスクリーンショット用の盤面を組む example が使います
+# （`examples/manual_screenshot_seed.rs`）。
+chrono.workspace = true
+ekanban-core = { workspace = true, features = ["test-fixtures"] }
+
 [lints]
 workspace = true

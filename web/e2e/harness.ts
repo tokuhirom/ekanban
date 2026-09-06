@@ -27,7 +27,7 @@ export async function startHarness(): Promise<void> {
   // アプリが本当に復元できる状態であることを、作り方の側で保証するため。
   execFileSync(
     "cargo",
-    ["run", "-q", "-p", "ekanban", "--example", "manual_screenshot_seed", "board"],
+    ["run", "-q", "-p", "ekanban-harness", "--example", "manual_screenshot_seed", "board"],
     { cwd: ROOT, env: { ...process.env, EKANBAN_DATABASE: database }, stdio: "ignore" },
   );
 

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # ekanban-core が UI ツールキットに依存していないことを確かめる。
 #
-# `crates/core` に gpui も tauri も入れないのは、移行の全体を支えている前提です
-# (`docs/TAURI-MIGRATION.md` §1)。テストが GUI のランタイム無しで走り続けること、
-# Tauri のアプリと開発用のハーネスが同じコードを使えることが、これで決まります。
+# `crates/core` に UI のものを入れないのは、テストが GUI のランタイム無しで
+# 走り続けること、アプリと開発用のハーネスが同じコードを使えることが、
+# これで決まるからです (`docs/DESIGN.md`)。
 #
 # Cargo.toml を読むだけでは足りません。依存の依存から引きずり込むほうが、
 # 手で書いて足すよりありがちなので、解決した依存グラフを見ます。
@@ -13,8 +13,7 @@ cd "$(dirname "$0")/.."
 
 # 見るクレートと、そこに入ってはいけない依存の名前の先頭。
 #
-#   ekanban-core  gpui も tauri も入らない。これが移行の全体を支えている前提です
-#   ekanban-app   tauri は段階 3 で入りますが、gpui は最後まで入りません
+#   ekanban-core  tauri が入らない。中核は画面の作りを知りません
 check() {
   local package=$1 forbidden=$2 reason=$3
   local found
@@ -31,9 +30,7 @@ check() {
 }
 
 status=0
-check ekanban-core '^(gpui|tauri)' \
-  "docs/TAURI-MIGRATION.md §1 を読んでください。中核は gpui にも tauri にも依存しません。
-依存が要るなら crates/app か crates/gpui に置いてください。" || status=1
-check ekanban-app '^gpui' \
-  "crates/app は Tauri の側です。gpui のものを使う理由はありません。" || status=1
+check ekanban-core '^tauri' \
+  "docs/DESIGN.md を読んでください。中核は画面の作りを知りません。
+Tauri に触る依存が要るなら crates/app に置いてください。" || status=1
 exit "$status"

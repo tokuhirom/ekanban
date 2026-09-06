@@ -32,6 +32,10 @@ crates/
     icons/          `tauri icon` が assets/icon.png から作ったもの
     src/
       run.rs          起動。多重起動の防止、控え、ウィンドウ
+      menu.rs         メニューバーとキーの割り当て。まず「データ」として組む
+      window.rs       ウィンドウの矩形を覚えて、次の起動で戻す
+      capture.rs      クイックキャプチャの窓とグローバルな割り当て
+      shortcut.rs     割り当ての形。保存も登録もここを通る
       ipc.rs          `#[tauri::command]` の包み。中身は持たない
       commands.rs     `docs/TAURI-MIGRATION.md` §3 のコマンド
       state.rs        開いている盤面。適用と保存をコマンドの中で終わらせる
@@ -40,23 +44,6 @@ crates/
       events.rs       Rust から webview への 3 つのイベント
     tests/
       commands.rs     コマンドを外から呼んで、SQLite まで見るテスト
-  gpui/           ekanban: gpui-kit で描くいまのアプリ
-    src/
-      main.rs         バイナリのエントリポイント
-      lib.rs          データベースとウィンドウの初期化
-      actions.rs      GPUI のアクション定義
-      menu.rs         ネイティブメニューバー、画面内メニューの項目、ショートカットの割り当て
-      hotkey.rs       グローバルホットキーの登録と、環境ごとの利用可否の判定
-      views/
-        mod.rs
-        board.rs      ボードの描画、入力、ドラッグ＆ドロップ
-        board/
-          view_tests.rs  ウィンドウを開いて確かめるテスト
-        capture.rs    クイックキャプチャの 1 行ウィンドウ
-        window_chrome.rs  装飾を寄越さない環境で出す自前のタイトルバー
-        description_links.rs  説明欄の中で URL をリンクとして見せ、開けるようにする
-    examples/
-      manual_screenshot_seed.rs  マニュアルのスクリーンショット用のデータベースを作る
 web/             画面。TypeScript + React + Vite（ADR 0019）
   src/
     ipc/          Rust を呼ぶ唯一の口。tauri と harness の 2 実装。
@@ -68,6 +55,9 @@ web/             画面。TypeScript + React + Vite（ADR 0019）
     shell/        webview だから自分で切るもの（右クリック、拡大縮小、スワイプ）
     styles.css    色のトークンと骨組み
   e2e/            Playwright。ハーネス越しに Chromium と WebKit で動かす
+harness/         ekanban-harness: コマンドを HTTP に出す開発・テスト専用のバイナリ
+  examples/
+    manual_screenshot_seed.rs  マニュアルのスクリーンショット用のデータベースを作る
 ```
 
 - **`ekanban-core` に UI ツールキットを足しません。** gpui にも tauri にも依存しないことが、テストを GUI のランタイム無しで走らせ続ける条件であり、Tauri のアプリと開発用のハーネスが同じコードを使える条件でもあります（[Tauri 移行の設計](TAURI-MIGRATION.md) §1）。依存の依存から入り込むほうがありがちなので、解決した依存グラフを `script/check-core-independence` が CI で見ています
@@ -76,7 +66,6 @@ web/             画面。TypeScript + React + Vite（ADR 0019）
 - **どの OS で動いているかを `navigator.userAgent` から決めません。** あれは webview が書き換えられる文字列です（Playwright の Safari 模擬は Linux 上で `Macintosh` を名乗ります）。`secondary` が Cmd か Ctrl かを取り違えると割り当てが丸ごと効かないので、Rust が `StartupState.platform` で渡します（[ADR 0009](adr/0009-per-platform-key-bindings.md)、[ADR 0023](adr/0023-verifying-the-webview-engines.md)）
 - **`crates/app` のコンパイルには `web/dist` が要ります。** `tauri::generate_context!` が画面を実行ファイルに埋め込むためです。checkout したてなら `npm --prefix web ci && npm --prefix web run build` を先に走らせてください（`make dev` と CI はそうしています）
 - **Tauri のアプリは `make dev` で起動します。** デバッグビルドには Vite の開発サーバの URL が焼き込まれているので、`cargo run -p ekanban-app` だけでは白い画面になります
-- **`crates/gpui` は凍結してあります。** 直すのは使えなくなる不具合だけです（[ADR 0017](adr/0017-moving-the-ui-to-tauri.md)）。中核のモジュールを `ekanban_core` から同じ名前で出し直しているので、`crate::db::…` と書いてある行はそのままです。移行が着地したらこのクレートごと消えます
 - **UI から SQL を直接実行しません。** SQL は `crates/core/src/db/` に閉じます
 - **`web/src/ipc/types/` は手で書きません。** `ts-rs` が Rust の型から書き出します（`cargo test -p ekanban-core`、`make types`）。同じ型を 2 か所に書くと必ずずれるので、生成物をコミットして CI で差分を見ています（[Tauri 移行の設計](TAURI-MIGRATION.md) §3）。境界を越える値の決まり——**ID も時刻も JSON の数値**（`i64` を `bigint` にしない。`.cargo/config.toml` の `TS_RS_LARGE_INT`）、**期限は `"YYYY-MM-DD"` の文字列**、**時刻はエポックからのミリ秒**、鍵は camelCase——は `crates/core` のテストが見ています
 - テストは実装と同じモジュールの `#[cfg(test)]` に置きます。データベースのテストは `tempfile` を使い、実物のデータベースを触りません。ビューのテストについては [テスト](#テスト) を見てください
@@ -84,9 +73,9 @@ web/             画面。TypeScript + React + Vite（ADR 0019）
 
 ## UI の基盤
 
-UI には [GPUI Kit](https://github.com/longbridge/gpui-kit) を使います。GPUI 本体と platform 層を個別に管理せず、GPUI Kit のテーマ・コンポーネント・入力処理に乗ります。
+画面は Tauri の webview で、TypeScript + React + Vite で書きます（[ADR 0019](adr/0019-typescript-react-vite-for-the-webview.md)）。**盤面を持つのは Rust**で、webview が描くのはその投影です（[ADR 0018](adr/0018-rust-owns-the-board-state.md)）。
 
-ドラッグ＆ドロップは GPUI の `on_drag` / `on_drop` を使い、見た目は GPUI Kit のコンポーネントとテーマに合わせます。色は `ActiveTheme::theme()` から引きます（`rgb(0x…)` の直書きは、ユーザーが指定したタグの色だけに許しています）。
+ドラッグ＆ドロップは `@dnd-kit/core` に載せますが、**どこに落ちるかを決めるのは `web/src/board/dnd.ts`** です（[ADR 0022](adr/0022-dnd-kit-core-for-drag-and-drop.md)）。色は `web/src/styles.css` のカスタムプロパティから引きます（直書きは、ユーザーが指定したタグの色だけに許しています）。
 
 ## ドラッグ＆ドロップの保存
 
@@ -189,47 +178,44 @@ app_state
 ## 日本語の扱い
 
 - SQLite には UTF-8 の文字列をそのまま保存します
-- 入力は GPUI の入力コンポーネントに任せ、IME の composition を扱わせます
+- 入力は webview の入力欄に任せ、IME の composition を扱わせます
 - 日本語の文字列をキーイベントから自前で組み立てません
 - IME の変換中の Enter や Escape を、ショートカットとして取り上げません
 - 入力欄を追加・変更したら、日本語 IME での入力を実機で確認してください
 
 ## テスト
 
-テストは 2 種類あります。
+テストは 4 つの層に分かれます（[ADR 0021](adr/0021-two-layer-testing-for-the-webview.md)）。
 
-**関数のテスト。** 実装と同じモジュールの `#[cfg(test)]` に置きます。モデルの並べ替え、期限の判定、エラー文言の組み立てのように、ウィンドウが無くても答えの出るものはこちらで書きます。データベースのテストは `tempfile` を使い、実物のデータベースを触りません。
+| 層 | 何で | 何を担保するか |
+| --- | --- | --- |
+| 中核 | `cargo test` | モデル・SQLite・移行・控え。実装と同じモジュールの `#[cfg(test)]` に置き、データベースのテストは `tempfile` を使う |
+| コマンド | `crates/app/tests/commands.rs` | コマンドを外から呼び、**返るスナップショットと SQLite の中身の両方**を見る |
+| 画面 | Playwright ＋ `ekanban-harness` | 操作からデータベースまでを通した振る舞い |
+| 部品 | Vitest | 日付の表示、挿入位置の計算、キーの振り分けのような純粋な部分 |
 
-**ビューのテスト。** `crates/gpui/src/views/board/view_tests.rs` にあります。GPUI にはヘッドレスのテスト用プラットフォーム（`TestPlatform`）があり、`#[gpui_kit::test]` を付けると GPU もウィンドウマネージャも無いまま `App` と `Window` が立ち上がります。ここでは `BoardView` を本物のウィンドウに載せ、キー入力とアクションを流し込んで、画面の状態と SQLite に書かれた内容の両方を確かめます。使うには `test-support` feature が要るので、`crates/gpui/Cargo.toml` の `[dev-dependencies]` で `gpui-kit` にだけ付けてあります（製品ビルドには入りません）。
+**画面のテストはハーネス越しに動かします。** `crates/harness` が `crates/app` のコマンドをそのまま HTTP に出すので、同じ画面がふつうのブラウザで動きます。**通っているのは本物の `ekanban-core`** です——偽物のバックエンドを TypeScript で書くと、テストの中でだけ正しいものができあがります（[ADR 0021](adr/0021-two-layer-testing-for-the-webview.md)）。
 
-```rust
-#[gpui_kit::test]
-fn adding_a_card_and_saving_it_writes_the_title_to_the_database(cx: &mut TestAppContext) {
-    let (harness, cx) = open_board(cx);
-    focus_board(&harness, cx);
+```ts
+test("カードを足して保存すると、タイトルがデータベースに入る", async ({ page }) => {
+  await openBoard(page);
+  await page.locator(".column").first().locator(".add-card").click();
+  await page.locator(".card-title-input").fill("牛乳を買う");
+  await page.locator(".save-card").click();
 
-    cx.dispatch_action(AddCard);
-    cx.run_until_parked();
-    cx.simulate_input("牛乳を買う");
-    cx.dispatch_action(SaveEdit);
-    cx.run_until_parked();
-
-    assert!(harness.stored_board().columns[0]
-        .cards
-        .iter()
-        .any(|card| card.title == "牛乳を買う"));
-}
+  // 画面ではなく、保存されたほうを読み直す。
+  await expect.poll(storedTitles).toContain("牛乳を買う");
+});
 ```
 
 書くときの決まりごと:
 
-- **待ち時間は `run_until_parked()` で決めます。** テストの時計は偽物なので、`sleep` は使いません。非同期の保存を挟む操作は、確かめる前に必ず `run_until_parked()` します
-- **キー入力の前にボードへフォーカスを戻します**（`focus_board`）。入力欄にフォーカスがある間はボードのショートカットが効かないためです
-- **割り当ては `crate::menu::install` が入れた本物を使います。** テスト用に定義し直すと、`crates/gpui/src/menu.rs` の割り当てを変えたときにテストだけ通ってしまいます
-- **確かめるのは画面とディスクの両方です。** `Harness::stored_board` がデータベースを開き直して読みます。メモリ上のモデルだけを見ると、保存の経路が壊れても気づけません
-- ウィンドウのルートは本番と同じ `Root` にします。確認ダイアログと通知がここに載ります
+- **確かめるのは画面とディスクの両方です。** `e2e/harness.ts` の `invoke()` がハーネスを直に叩いて盤面を読み直します。画面に出ているだけでは、保存の配線が抜けていても気づけません
+- **盤面はテストごとに作り直します。** 1 つのデータベースを使い回すと、前のテストが動かしたカードの位置に次のテストが引きずられます
+- **`sleep` で待ちません。** `expect.poll` と `toBeVisible` の待ちを使います
+- **走らせるのは Chromium と WebKit の 2 つ**です。本物の webview は 3 つですが、エンジンは 2 系統しかありません（[ADR 0023](adr/0023-verifying-the-webview-engines.md)）
 
-`TestPlatform` は実際の描画も IME もウィンドウ管理もしません。日本語 IME での入力とライト／ダークの見え方は、これまで通り実機で確認してください。
+**ここに出てこないもの。** 本物のメニューバー、OS の保存ダイアログ、グローバルホットキー、ウィンドウの矩形——**Tauri の殻はブラウザには無い**ので、そこは実機で触って確かめます（[アプリを動かして確かめるとき](#アプリを動かして確かめるとき)）。日本語 IME での入力とライト／ダークの見え方も同じです。
 
 ## ビルド
 
@@ -237,8 +223,7 @@ fn adding_a_card_and_saving_it_writes_the_title_to_the_database(cx: &mut TestApp
 
 | コマンド | 内容 |
 | --- | --- |
-| `make run` | ターミナルから直接起動する（デバッグビルド） |
-| `make dev` | Tauri のアプリを開発モードで起動する（Vite の開発サーバごと） |
+| `make dev` | アプリを開発モードで起動する（Vite の開発サーバごと） |
 | `make check` | CI と同じ fmt / clippy / test / 型 / 依存 / 画面側の確認を走らせる |
 | `make types` | Rust の型から TypeScript の型を書き出す |
 | `make web-check` | 画面側の `tsc --noEmit` / ESLint / Vitest |
@@ -288,10 +273,16 @@ APPLE_SIGNING_IDENTITY="Developer ID Application: Your Name (TEAMID)" make bundl
 変更が画面でどう見えるかを確かめるときは、**仮想ディスプレイの上で動かします。**
 
 ```sh
+# デバッグの実行ファイルには Vite の開発サーバの URL が焼き込まれる。
+# `--debug` のバンドルは画面を埋め込むので、開発サーバなしで動かせる。
+(cd crates/app && ../../web/node_modules/.bin/tauri build --debug --no-bundle)
+
 Xvfb :99 -screen 0 1600x1200x24 &
 DISPLAY=:99 EKANBAN_DATABASE=$(mktemp -d)/board.sqlite3 ./target/debug/ekanban &
 DISPLAY=:99 import -window root shot.png
 ```
+
+**ここでしか確かめられないものがあります**——OS のメニューバー、保存ダイアログ、グローバルホットキー、キャプチャの窓。ハーネス越しの Playwright にはどれも出てきません。
 
 デスクトップで動いているものに紛れ込ませないためです。データベースも普段使いのものとは分けます。1 つのデータベースを開けるのは 1 プロセスだけ（[ADR 0004](adr/0004-one-process-per-database.md)）なので、同じものを指すと後から起動したほうが弾かれます。
 
@@ -352,7 +343,7 @@ GitHub Actions（`.github/workflows/ci.yml`）が、`main` への push と pull 
 
 3 つの OS すべてで画面を先に組み立てるのは、`crates/app` のコンパイルが `web/dist` を実行ファイルに埋め込むからです。型検査と lint はプラットフォームに依らないので ubuntu だけで回します。
 
-macOS と Windows を回すのは、そこでしかコンパイルされないコードがあるためです。`crates/gpui/src/menu.rs` のネイティブメニューバー（`cx.set_menus` が実際に効くのは macOS だけ）、`crates/core/src/paths.rs` と `crates/core/src/diagnostics.rs` の `#[cfg(windows)]` / `#[cfg(target_os = "macos")]` の分岐が該当します。fmt と clippy はプラットフォームに依らないので ubuntu だけで回します。
+macOS と Windows を回すのは、そこでしかコンパイルされないコードがあるためです。`crates/app/src/menu.rs` の OS ごとのメニューバー、`crates/core/src/paths.rs` と `crates/core/src/diagnostics.rs` の `#[cfg(windows)]` / `#[cfg(target_os = "macos")]` の分岐が該当します。fmt と clippy はプラットフォームに依らないので ubuntu だけで回します。
 
 **`check` ジョブを matrix にしてはいけません。**（この判断の経緯は [ADR 0006](adr/0006-ci-on-three-platforms.md)） matrix にすると check run の名前が `Check and test (ubuntu-latest)` になり、ルールセットが必須にしている `Check and test` がどこにも現れなくなって、すべての pull request がマージ不能になります。プラットフォームを足すときは、別ジョブとして足してください。
 
