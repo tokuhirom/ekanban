@@ -1,3 +1,5 @@
+import { resolve } from "node:path";
+
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
@@ -21,5 +23,13 @@ export default defineConfig({
     // 作りません (`docs/TAURI-MIGRATION.md` §9)。
     target: "es2022",
     assetsInlineLimit: 0,
+    // 窓ごとにエントリポイントを分けます (§4)。1 行を放り込むだけの
+    // クイックキャプチャに、盤面と D&D の一式を読ませる理由がありません。
+    rollupOptions: {
+      input: {
+        index: resolve(import.meta.dirname, "index.html"),
+        capture: resolve(import.meta.dirname, "capture.html"),
+      },
+    },
   },
 });

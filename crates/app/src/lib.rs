@@ -10,12 +10,14 @@
 //!
 //! [ADR 0018]: ../../../docs/adr/0018-rust-owns-the-board-state.md
 
+pub mod capture;
 pub mod commands;
 pub mod error;
 pub mod events;
 pub mod ipc;
 pub mod menu;
 pub mod run;
+pub mod shortcut;
 pub mod snapshot;
 pub mod state;
 pub mod window;

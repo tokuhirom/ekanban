@@ -20,6 +20,8 @@ interface Props {
   selectedCard: number | null;
   /** 最後の 1 本は消せない。理由を言わずにコントロールを無効にする（`docs/DESIGN.md`）。 */
   lastColumn: boolean;
+  /** クイックキャプチャの入れ先。どこが入れ先かは Rust が決める（`Snapshot`）。 */
+  captureTarget: boolean;
   run: (call: () => Promise<Snapshot>) => Promise<AppError | null>;
   onSelectCard: (cardId: number) => void;
   onOpenCard: (cardId: number) => void;
@@ -40,6 +42,7 @@ export function Column({
   matched,
   selectedCard,
   lastColumn,
+  captureTarget,
   run,
   onSelectCard,
   onOpenCard,
@@ -111,6 +114,9 @@ export function Column({
           >
             …
           </button>
+          {/* 色だけに意味を持たせない。文言でキャプチャ先だと分かるようにする。
+              名前と枚数の下へ回り込ませたいので、`…` のあとに置く。 */}
+          {captureTarget && <span className="column-capture">⚡ クイックキャプチャ先</span>}
         </header>
       )}
       {menuOpen && (
@@ -137,6 +143,18 @@ export function Column({
             }}
           >
             アーカイブ
+          </button>
+          <button
+            type="button"
+            className="ghost set-capture-column"
+            // すでに入れ先なら押す意味がない。理由は「⚡」が出ていることで分かる。
+            disabled={captureTarget}
+            onClick={() => {
+              setMenuOpen(false);
+              void run(() => ipc.setCaptureColumn(column.id));
+            }}
+          >
+            クイックキャプチャ先にする
           </button>
           <button
             type="button"

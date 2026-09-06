@@ -11,6 +11,7 @@
 
 import type { Ipc } from "./index";
 import type { AppAction } from "./types/AppAction";
+import type { CaptureTarget } from "./types/CaptureTarget";
 import type { Snapshot } from "./types/Snapshot";
 import type { StartupState } from "./types/StartupState";
 import type { UrlSpan } from "./types/UrlSpan";
@@ -39,6 +40,8 @@ declare global {
   interface Window {
     /** ハーネスのときだけ生える、メニューを押したことにする口。 */
     ekanbanMenu?: (action: AppAction) => void;
+    /** 同じく、`board:changed` が届いたことにする口。 */
+    ekanbanBoardChanged?: (snapshot: Snapshot) => void;
   }
 }
 
@@ -129,6 +132,22 @@ export function harnessIpc(base: string): Ipc {
     descriptionLinks: (text) => call<UrlSpan[]>(base, "description_links", { text }),
     openUrl: async (url) => {
       await call(base, "open_url", { url });
+    },
+    captureTarget: () => call<CaptureTarget | null>(base, "capture_target"),
+    setCaptureColumn: (columnId) => call<Snapshot>(base, "set_capture_column", { columnId }),
+    captureCard: (title) => call<Snapshot>(base, "capture_card", { title }),
+    quickCaptureSupport: () => call<string | null>(base, "quick_capture_support"),
+    setQuickCaptureShortcut: (press) =>
+      call<string | null>(base, "set_quick_capture_shortcut", { press }),
+    // ブラウザに閉じる窓がありません。ハーネスでは何も起きないことだけが違い。
+    closeCaptureWindow: () => Promise.resolve(),
+    onBoardChanged: (handler) => {
+      // ハーネスにイベントの経路はありません。**届いたことにする口**だけ開けて、
+      // 受け取ったあとの差し替えを Playwright から確かめられるようにします。
+      window.ekanbanBoardChanged = handler;
+      return () => {
+        delete window.ekanbanBoardChanged;
+      };
     },
     logFrontendError: async (message) => {
       await call(base, "log_frontend_error", { message });

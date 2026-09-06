@@ -33,6 +33,12 @@ pub struct Snapshot {
     pub due_statuses: Vec<CardDueStatus>,
     /// `due_statuses` を出したときの日付。
     pub today: NaiveDate,
+    /// クイックキャプチャの入れ先が、このボードのどのカラムか。
+    ///
+    /// 設定が無ければ既定（先頭カラム）、別のボードを指していれば `None` です。
+    /// **印を出すのは画面ですが、どこが入れ先かを決めるのは Rust**——同じ既定を
+    /// TypeScript にもう 1 つ持たせません。
+    pub capture_column: Option<ColumnId>,
     /// ウィンドウのタイトル。webview がそのまま `set_window_title` に渡します。
     ///
     /// 組み立てを TypeScript に持たせません。ボード名の扱い（空白だけの名前は

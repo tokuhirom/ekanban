@@ -313,6 +313,9 @@ textarea {
 
 .column-header {
   display: flex;
+  /* キャプチャ先の印は、名前と枚数の下へ回り込ませる。同じ行に並べると、
+   * カラム名がその幅ぶん削られて読めなくなる（実機で 1 度そうなった）。 */
+  flex-wrap: wrap;
   align-items: baseline;
   gap: 8px;
   flex: 0 0 auto;
@@ -936,4 +939,35 @@ button.danger {
 
 .rename-board {
   color: var(--color-muted-foreground);
+}
+
+/* ---------------------------------------------------------------- キャプチャ */
+
+/* 1 行入力の窓（§9）。盤面とは別のエントリポイントだが、色と字は同じものを使う。 */
+.capture {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  height: 100vh;
+  background: var(--color-popover);
+}
+
+.capture-destination,
+.capture-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-muted-foreground);
+}
+
+/* 色だけに意味を持たせない。失敗は文言そのもので分かる（`docs/DESIGN.md`）。 */
+.capture-hint.failure {
+  color: var(--color-danger);
+}
+
+/* カラムがクイックキャプチャの入れ先であること。色ではなく文言で示す。 */
+.column-capture {
+  font-size: 11px;
+  color: var(--color-muted-foreground);
+  flex-basis: 100%;
 }
