@@ -35,8 +35,8 @@
 
 ## 動作環境
 
-- **macOS (Apple Silicon)** — `.app` バンドルまで用意しています。配っているものは署名も公証もしていないので、初回だけ手順が要ります（下を見てください）。Intel Mac 向けは配っていません。ソースからのビルドは通ります
-- **Linux / BSD** — 動きます。クイックキャプチャのグローバルホットキーは X11 のセッションでだけ使えます（Wayland にはアプリから使える共通の仕組みがありません）
+- **macOS (Apple Silicon)** — `.app` と `.dmg` を用意しています。配っているものは署名も公証もしていないので、初回だけ手順が要ります（下を見てください）。Intel Mac 向けは配っていません。ソースからのビルドは通ります
+- **Linux / BSD** — 動きます。`.deb`・`.AppImage`・素の実行ファイルのどれでも入れられます。クイックキャプチャのグローバルホットキーは X11 のセッションでだけ使えます（Wayland にはアプリから使える共通の仕組みがありません）
 - **Windows** — データとログの置き場所は解決します。クイックキャプチャは対象外です。実行ファイルは配っていますが、ビルドが通ることしか確かめていません
 
 ## インストールと起動
@@ -47,15 +47,16 @@
 
 | OS | ファイル |
 | --- | --- |
-| macOS (Apple Silicon) | `ekanban-<版>-aarch64-apple-darwin.zip`（`Ekanban.app`） |
-| Linux (x86_64) | `ekanban-<版>-x86_64-unknown-linux-gnu.tar.gz`（実行ファイル、デスクトップエントリ、アイコン、`install-linux`） |
-| Windows (x86_64) | `ekanban-<版>-x86_64-pc-windows-msvc.zip` |
+| macOS (Apple Silicon) | `ekanban-<版>-aarch64-apple-darwin.zip`（`Ekanban.app`）、`ekanban-<版>-aarch64-apple-darwin.dmg` |
+| Linux (x86_64) | `ekanban-<版>-x86_64-unknown-linux-gnu.tar.gz`（実行ファイル、デスクトップエントリ、アイコン、`install-linux`）、`.deb`、`.AppImage` |
+| Windows (x86_64) | `ekanban-<版>-x86_64-pc-windows-msvc.zip`、`ekanban-<版>-x86_64-pc-windows-msvc-setup.exe`（インストーラ） |
 
 `SHA256SUMS.txt` も一緒に置いてあります。
 
 - **macOS の `.app` は ad-hoc 署名しかしていません。** 初回の起動には下の手順が要ります。Intel Mac 向けは出していません（Apple Silicon のみ）
-- **Linux のバイナリは Ubuntu 24.04 でビルドしています。** glibc 2.39 以降と、Vulkan のドライバ、fontconfig が要ります
-- **Linux では xdg-desktop-portal も要ります。** 書き出し、データベースのコピー、データベースの場所を開く、テーマの「システムに合わせる」がこれを通ります。ポータル本体と、デスクトップ環境に合ったバックエンド（GNOME なら `xdg-desktop-portal-gnome`、KDE なら `xdg-desktop-portal-kde`、そのほかは `xdg-desktop-portal-gtk`）の両方を入れてください。無くてもボードの操作はできますが、上の 4 つが動きません
+- **Linux のバイナリは Ubuntu 24.04 でビルドしています。** glibc 2.39 以降と、WebKitGTK 4.1（`libwebkit2gtk-4.1-0`）、GTK 3 が要ります。`.deb` はこれを依存として書いてあるので、パッケージマネージャが入れてくれます
+- **`.deb` を入れるには root が要ります。** 要らないほうがよければ `.tar.gz` を展開して `install-linux` を実行してください。`~/.local` 以下だけで完結します
+- **xdg-desktop-portal は要りません。** 書き出しとデータベースのコピーは GTK のファイル選択、テーマの「システムに合わせる」は OS の設定をそのまま見ます。**「場所を開く」だけ**は、ファイル管理（GNOME Files、Dolphin など）か `xdg-open` の設定に届かない環境では何も起きません
 
 #### macOS で初めて開く
 

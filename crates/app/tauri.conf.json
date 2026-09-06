@@ -2,12 +2,12 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Ekanban",
   "identifier": "dev.tokuhirom.ekanban",
-  "mainBinaryName": "ekanban-tauri",
+  "mainBinaryName": "ekanban",
   "build": {
     "frontendDist": "../../web/dist",
     "devUrl": "http://127.0.0.1:1420",
-    "beforeDevCommand": "npm --prefix ../../web run dev",
-    "beforeBuildCommand": "npm --prefix ../../web run build"
+    "beforeDevCommand": "npm --prefix ../web run dev",
+    "beforeBuildCommand": "npm --prefix ../web run build"
   },
   "app": {
     "withGlobalTauri": false,
@@ -37,7 +37,7 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "category": "Utility",
+    "category": "Productivity",
     "shortDescription": "A local-first Kanban board",
     "longDescription": "アカウントもサーバーもネットワーク接続も要らない、手元の SQLite だけで動く Kanban ボード。",
     "linux": {
@@ -46,7 +46,8 @@
       }
     },
     "macOS": {
-      "minimumSystemVersion": "11.0"
+      "minimumSystemVersion": "11.0",
+      "signingIdentity": "-"
     }
   }
 }

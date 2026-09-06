@@ -28,6 +28,21 @@ pub const APP_NAME: &str = "Ekanban";
 /// `script/bundle-mac` の `BUNDLE_ID` と揃える。
 pub const APP_ID: &str = "dev.tokuhirom.ekanban";
 
+/// ウィンドウが X11 に載せる `WM_CLASS`（instance のほう）。
+///
+/// **これは `APP_ID` ではありません。** Tauri（tao）は実行ファイルの名前から
+/// 作るので、`ekanban` という実行ファイルは `("ekanban", "Ekanban")` と名乗ります。
+/// デスクトップエントリの `StartupWMClass` はこちらと揃える必要があります——
+/// 食い違うと、アプリ一覧からは起動できるのにタスクバーのアイコンと名前が
+/// 汎用のものに戻ります（[ADR 0013]）。
+///
+/// instance のほう（小文字）を採るのは、**Tauri のバンドラが `.deb` と
+/// `.AppImage` に入れるエントリもそう書くから**です。入れ方が 2 通りあるのに
+/// 印が食い違うと、片方だけ結びつきません。
+///
+/// [ADR 0013]: ../../docs/adr/0013-linux-desktop-integration.md
+pub const WM_CLASS: &str = "ekanban";
+
 /// データベースの置き場所を決める。
 ///
 /// GUI から起動するとカレントディレクトリが当てにならないため、相対パスは使わない。
@@ -82,12 +97,12 @@ mod tests {
         }
     }
 
-    /// Linux のデスクトップエントリと `APP_ID` の対応（#50）。
+    /// Linux のデスクトップエントリと、ウィンドウが名乗る名前の対応（#50）。
     ///
     /// `StartupWMClass` はデスクトップ環境が「このウィンドウはこのエントリのもの」
-    /// と判断するための印で、ウィンドウに渡すアプリ識別子と同じでなければ結びつかない。
+    /// と判断するための印で、ウィンドウの `WM_CLASS` と同じでなければ結びつかない。
     /// 食い違うと、アプリ一覧からは起動できるのにタスクバーのアイコンと名前が
-    /// 汎用のものに戻る。ファイル名も `<APP_ID>.desktop` である必要があり、
+    /// 汎用のものに戻る。ファイル名は `<APP_ID>.desktop` である必要があり、
     /// こちらは `include_str!` のパスがコンパイル時に見ている。
     #[test]
     fn the_linux_desktop_entry_points_at_the_app_id() {
@@ -97,8 +112,8 @@ mod tests {
         let entry =
             include_str!("../../../assets/dev.tokuhirom.ekanban.desktop").replace("\r\n", "\n");
         assert!(
-            entry.contains(&format!("\nStartupWMClass={APP_ID}\n")),
-            "StartupWMClass must match the app id given to the window"
+            entry.contains(&format!("\nStartupWMClass={WM_CLASS}\n")),
+            "StartupWMClass must match the WM_CLASS the window announces"
         );
         assert!(
             entry.contains(&format!("\nIcon={APP_ID}\n")),

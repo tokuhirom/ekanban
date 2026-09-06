@@ -22,7 +22,7 @@ README が使う人向けの入口、[マニュアル](MANUAL.md) が使い方�
 | 守り | 起動時の日ごと世代バックアップ（`crates/core/src/backup.rs`、`backups/` に 7 世代） |
 | クイックキャプチャ | グローバルホットキー（macOS / X11）、1 行入力のキャプチャウィンドウ、キャプチャ先のカラム設定 |
 | メニュー | メニューバーとショートカット（`crates/gpui/src/menu.rs`）。macOS は OS が描き、Linux と Windows は `AppMenuBar` で自分で描く |
-| macOS | `.app` バンドルと署名（`script/bundle-mac`、`Makefile`）、OS ごとのデータ・ログ配置（`crates/core/src/paths.rs`）、起動失敗とパニックの記録（`crates/core/src/diagnostics.rs`） |
+| macOS | `.app` バンドルと ad-hoc 署名（Tauri のバンドラ、`crates/app/tauri.conf.json`）、OS ごとのデータ・ログ配置（`crates/core/src/paths.rs`）、起動失敗とパニックの記録（`crates/core/src/diagnostics.rs`） |
 | Linux | デスクトップエントリとアイコン（`assets/`）、`~/.local` 以下に入れる `script/install-linux` |
 
 スキーマは v10（`boards` / `columns` / `cards` / `tags` / `card_tags` / `checklist_items` / `card_events` / `app_state` / `schema_migrations`）。

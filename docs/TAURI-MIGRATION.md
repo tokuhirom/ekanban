@@ -353,7 +353,7 @@ make bundle   tauri build（3 OS のバンドラ）
 | 6 ✅ | メニュー、キー割り当て、テーマ、ウィンドウの状態 | §7 の表のとおりに効き、入力中の `Cmd+Z` が盤面を巻き戻さない |
 | 7 ✅ | アーカイブ、書き出し、バックアップ、場所を開く | 書き出したファイルが読め、控えが `backups/` に増える |
 | 8 ✅ | クイックキャプチャ（別ウィンドウ、割り当て、v11 移行） | 旧形式の割り当てが入ったデータベースを開いて、そのまま使える（**移行は要りませんでした**、下記） |
-| 9 | 配布（バンドル、CI、リリース） | 3 OS の成果物が CI から出て、手元で起動する |
+| 9 ✅ | 配布（バンドル、CI、リリース） | 3 OS の成果物が CI から出て、手元で起動する |
 | 10 | 入れ替え | gpui のコードと依存を消す。`docs/DESIGN.md` の gpui 由来の行を書き換え、置き換える ADR を書く。この文書を消す |
 
 ### 段階 1 で決まったこと
@@ -524,6 +524,20 @@ spike が見つけた、こちら側の不備が 3 つあります。**ライブ
 | キャプチャ → 保存 → 盤面へ反映 | ✅ `Enter` でカードが SQLite に入り、窓が閉じ、ボードの枚数がその場で変わる |
 
 ここで 2 つ見つけて直しました。**カラムの見出しが「や…」まで縮んでいた**こと（⚡ の印を同じ行に並べていた）と、**キャプチャの窓にメニューバーが付いていた**ことです。どちらも Playwright には出ません——前者は幅の問題で、後者はそもそも窓が Tauri のものだからです。
+
+### 段階 9 で決まったこと（配布）
+
+**実行ファイルの名前が入れ替わりました。** 配るものが Tauri のビルドになったので、`ekanban` は `crates/app` のものになり、出ていく gpui のほうが `ekanban-gpui` になりました。§12 の段階 10 に書いてありましたが、**配る前にやらないと名前の違う成果物を 1 回配ることになります**。
+
+**`StartupWMClass` は `APP_ID` ではありませんでした。** §8 は「生成された `.desktop` を見て確かめる」と書いていましたが、実機の `xprop` で見ると、Tauri（tao）が名乗る `WM_CLASS` は**実行ファイルの名前**から作られていました（`ekanban` → `("ekanban", "Ekanban")`）。gpui は `WindowOptions.app_id` にこちらが渡した `dev.tokuhirom.ekanban` を使っていたので、そのままではエントリとウィンドウが結びつきません。`crates/core` に `WM_CLASS` の定数を置き、デスクトップエントリと突き合わせるテストをそちらに向けました（[ADR 0013](adr/0013-linux-desktop-integration.md) の意図は変わりません）。
+
+**`beforeBuildCommand` の相対パスは、`tauri.conf.json` の隣からは解決されません。** Tauri の CLI はアプリのディレクトリの**親**（ここでは `crates/`）でフックを走らせます。`npm --prefix ../../web` は `/home/user/web` を探して落ちました。`../web` に直してあります。
+
+**署名の指定は `tauri.conf.json` に移りました。** ad-hoc（`-`）は `bundle.macOS.signingIdentity` にあり、ローカルでも CI でも同じものが使われます（[ADR 0014](adr/0014-unsigned-apple-silicon-only-macos-builds.md)）。Developer ID で署名するときは `APPLE_SIGNING_IDENTITY` を渡します——`script/bundle-mac` と `CODESIGN_IDENTITY` は消えました。
+
+**`.deb` と `.AppImage` を配りつつ、`.tar.gz` も残します。** [ADR 0013](adr/0013-linux-desktop-integration.md) が決めたのは「root を要求しない導線を持つ」ことなので、パッケージを足しても、`~/.local` だけで完結する道は消しません。
+
+**README のポータルの行を落としました**（[ADR 0024](adr/0024-no-portal-requirement-on-linux.md) の予告どおり）。配るものが Tauri のビルドになったので、書いてあることと配っているものが揃いました。
 
 ---
 

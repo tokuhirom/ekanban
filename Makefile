@@ -1,6 +1,9 @@
 APP_NAME := Ekanban
-RELEASE_APP := target/release/bundle/$(APP_NAME).app
-DEBUG_APP := target/debug/bundle/$(APP_NAME).app
+# Tauri のバンドラが出す先（`docs/TAURI-MIGRATION.md` §11）。
+BUNDLE := target/release/bundle
+RELEASE_APP := $(BUNDLE)/macos/$(APP_NAME).app
+# 画面側の依存として入っている Tauri の CLI。別に入れる必要はない。
+TAURI := ../../web/node_modules/.bin/tauri
 
 .PHONY: help build release run dev web-install web-check e2e test types types-check fmt fmt-check lint deps-check check screenshots icon bundle bundle-debug open install install-linux uninstall-linux clean
 
@@ -14,11 +17,11 @@ build: ## デバッグビルド
 release: ## リリースビルド
 	cargo build --workspace --release
 
-run: ## いまのアプリ (gpui) をターミナルから直接起動する
-	cargo run -p ekanban
+run: ## 出ていくほうのアプリ (gpui) をターミナルから直接起動する
+	cargo run -p ekanban --bin ekanban-gpui
 
-dev: web-install ## Tauri のアプリを開発モードで起動する (Vite の開発サーバごと)
-	cd crates/app && ../../web/node_modules/.bin/tauri dev
+dev: web-install ## アプリを開発モードで起動する (Vite の開発サーバごと)
+	cd crates/app && $(TAURI) dev
 
 web-install: ## 画面側の依存を入れる (ロックファイルのとおりに)
 	npm --prefix web ci
@@ -59,39 +62,25 @@ check: fmt-check lint test types-check deps-check web-check ## CI と同じチ�
 screenshots: ## マニュアルのスクリーンショットを撮り直す (Linux/X11 のみ)
 	script/manual-screenshots
 
-icon: assets/icon.icns ## macOS 用の .icns アイコンを生成する
+icon: web-install ## 3 つの OS 分のアイコンを assets/icon.png から生成する
+	cd crates/app && $(TAURI) icon ../../assets/icon.png
 
-assets/icon.icns: assets/icon.png
-	@set -eu; \
-	if [ "$$(uname -s)" != "Darwin" ]; then \
-		echo "assets/icon.icns は macOS 上でのみ生成できます (sips/iconutil が必要です)" >&2; \
-		exit 1; \
-	fi; \
-	iconset="$$(mktemp -d "$${TMPDIR:-/tmp}/ekanban-iconset.XXXXXX").iconset"; \
-	mkdir -p "$$iconset"; \
-	trap 'rm -rf "$$iconset"' EXIT; \
-	for size in 16 32 128 256 512; do \
-		sips -z $$size $$size assets/icon.png --out "$$iconset/icon_$${size}x$${size}.png" >/dev/null; \
-		retina_size=$$((size * 2)); \
-		sips -z $$retina_size $$retina_size assets/icon.png --out "$$iconset/icon_$${size}x$${size}@2x.png" >/dev/null; \
-	done; \
-	iconutil -c icns "$$iconset" -o "$@"
+bundle: web-install ## この OS の配布物を作る (.app/.dmg、.deb/.AppImage、インストーラ)
+	cd crates/app && $(TAURI) build
 
-bundle: icon ## リリースビルドから .app を作る
-	script/bundle-mac release
+bundle-debug: web-install ## デバッグビルドから配布物を作る
+	cd crates/app && $(TAURI) build --debug
 
-bundle-debug: icon ## デバッグビルドから .app を作る
-	script/bundle-mac debug
-
-open: bundle ## .app を作って起動する
+open: bundle ## .app を作って起動する (macOS)
 	open $(RELEASE_APP)
 
-install: bundle ## .app を /Applications にインストールする
+install: bundle ## .app を /Applications にインストールする (macOS)
 	rm -rf /Applications/$(APP_NAME).app
 	cp -R $(RELEASE_APP) /Applications/
 	@echo "installed /Applications/$(APP_NAME).app"
 
-install-linux: release ## Linux のアプリ一覧に登録する (~/.local 以下)
+install-linux: ## Linux のアプリ一覧に登録する (~/.local 以下、root は要らない)
+	cargo build -p ekanban-app --release
 	script/install-linux
 
 uninstall-linux: ## install-linux で入れたものを消す
