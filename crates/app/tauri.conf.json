@@ -5,7 +5,7 @@
   "mainBinaryName": "ekanban-tauri",
   "build": {
     "frontendDist": "../../web/dist",
-    "devUrl": "http://localhost:1420",
+    "devUrl": "http://127.0.0.1:1420",
     "beforeDevCommand": "npm --prefix ../../web run dev",
     "beforeBuildCommand": "npm --prefix ../../web run build"
   },

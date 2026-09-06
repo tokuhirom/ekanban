@@ -18,9 +18,16 @@ export default defineConfig({
   // テストの中で盤面ごとに上げ下げします（`e2e/drag.spec.ts`）。
   webServer: {
     command: "npm run dev",
+    // `vite.config.ts` が `127.0.0.1` に結んでいます。`localhost` と書くと、
+    // 名前解決の順番次第で会えない機械があります。
     url: "http://127.0.0.1:1420",
     reuseExistingServer: true,
-    timeout: 60_000,
+    // 冷えた runner では、Vite の初回が依存の下ごしらえで少しかかる。
+    timeout: 120_000,
+    // 立ち上がらなかったときに、理由が読めるように。黙って 60 秒待って
+    // 落ちるのは、いちばん直しにくい失敗です。
+    stdout: "pipe",
+    stderr: "pipe",
   },
   projects: [
     // WebView2 (Windows) と同じ系統。
