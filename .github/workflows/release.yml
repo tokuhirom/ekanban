@@ -137,7 +137,7 @@ jobs:
 
       - name: Build
         if: runner.os != 'macOS'
-        run: cargo build --release
+        run: cargo build -p ekanban --release
 
       - name: Package the .app
         if: runner.os == 'macOS'

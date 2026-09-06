@@ -53,8 +53,8 @@ for _ in $(seq 40); do
 done
 
 cd "$repository"
-cargo build --example manual_screenshot_seed
-cargo build
+cargo build -p ekanban --example manual_screenshot_seed
+cargo build -p ekanban
 
 # 撮る 1 枚。名前は docs/images/<名前>.png と、seed に渡す画面の名前を兼ねる。
 shoot() {

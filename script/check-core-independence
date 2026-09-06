@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# ekanban-core が UI ツールキットに依存していないことを確かめる。
+#
+# `crates/core` に gpui も tauri も入れないのは、移行の全体を支えている前提です
+# (`docs/TAURI-MIGRATION.md` §1)。テストが GUI のランタイム無しで走り続けること、
+# Tauri のアプリと開発用のハーネスが同じコードを使えることが、これで決まります。
+#
+# Cargo.toml を読むだけでは足りません。依存の依存から引きずり込むほうが、
+# 手で書いて足すよりありがちなので、解決した依存グラフを見ます。
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+# UI ツールキットとその周辺。名前の先頭で見ます (`gpui-kit`、`tauri-plugin-*`)。
+forbidden='^(gpui|tauri)'
+
+found=$(cargo tree --package ekanban-core --edges normal,build --prefix none --no-dedupe \
+  | awk '{print $1}' | sort -u | grep -E "$forbidden" || true)
+
+if [ -n "$found" ]; then
+  echo "ekanban-core が UI ツールキットに依存しています:" >&2
+  echo "$found" | sed 's/^/  /' >&2
+  echo >&2
+  echo "docs/TAURI-MIGRATION.md §1 を読んでください。中核は gpui にも tauri にも" >&2
+  echo "依存しません。依存が要るなら crates/gpui か Tauri 側に置いてください。" >&2
+  exit 1
+fi
+
+echo "ekanban-core は UI ツールキットに依存していません"

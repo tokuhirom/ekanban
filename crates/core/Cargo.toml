@@ -1,0 +1,27 @@
+[package]
+name = "ekanban-core"
+description = "ekanban の中核。盤面のモデル、SQLite、控え、置き場所、多重起動の防止"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# ここに UI ツールキットを足さない。gpui にも tauri にも依存しないことが、
+# テストを GUI のランタイム無しで走らせ続ける条件であり、Tauri のアプリと
+# 開発用のハーネスが同じコードを使える条件でもある
+# （`docs/TAURI-MIGRATION.md` §1）。`make deps-check` が見張っている。
+[dependencies]
+chrono.workspace = true
+rusqlite.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[features]
+# テスト用のボード (`Board::fixture`)。`crates/gpui` のテストも使うので、
+# crate をまたいで見えるようにこの feature で出す。実行ファイルには入らない。
+test-fixtures = []
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

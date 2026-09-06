@@ -48,17 +48,24 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Run clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
       - name: Run tests
-        run: cargo test --all-features
+        run: cargo test --workspace --all-features
 
       - name: Build
-        run: cargo build --all-features
+        run: cargo build --workspace --all-features
 
-  # macOS と Windows でしか通らないコード（`src/menu.rs` のネイティブメニューバー、
-  # `src/paths.rs` と `src/diagnostics.rs` の cfg 分岐）は、ubuntu のジョブでは
-  # 一度もコンパイルされない。ここで型検査とテストだけ通す。
+      # 中核が UI ツールキットを引きずり込んでいないことを見る。
+      # 依存の依存から入るほうがありがちなので、解決した依存グラフで確かめる
+      # (`docs/TAURI-MIGRATION.md` §1)。
+      - name: Check that the core crate stays free of UI toolkits
+        run: script/check-core-independence
+
+  # macOS と Windows でしか通らないコード（`crates/gpui/src/menu.rs` のネイティブ
+  # メニューバー、`crates/core/src/paths.rs` と `crates/core/src/diagnostics.rs` の
+  # cfg 分岐）は、ubuntu のジョブでは一度もコンパイルされない。ここで型検査と
+  # テストだけ通す。
   #
   # `check` を matrix にしないのは意図的。matrix にすると check run の名前が
   # `Check and test (ubuntu-latest)` になり、ルールセットが必須にしている
@@ -84,7 +91,7 @@ jobs:
 
       # fmt と clippy はプラットフォームに依らないので ubuntu だけで回す。
       - name: Run tests
-        run: cargo test --all-features
+        run: cargo test --workspace --all-features
 
       - name: Build
-        run: cargo build --all-features
+        run: cargo build --workspace --all-features

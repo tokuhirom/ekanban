@@ -1309,7 +1309,7 @@ impl BoardView {
         // The snapshot owns the events produced by this operation. New
         // operations append to the live board while this snapshot is being
         // written, so they can be saved independently by the next request.
-        self.board.pending_events.clear();
+        self.board.discard_pending_events();
         self.start_next_save(cx);
     }
 

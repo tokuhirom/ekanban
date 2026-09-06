@@ -21,7 +21,7 @@ APP_NAME="Ekanban"
 BUNDLE_ID="dev.tokuhirom.ekanban"
 VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
 
-cargo build "${CARGO_FLAGS[@]}"
+cargo build -p ekanban "${CARGO_FLAGS[@]}"
 
 APP_DIR="target/$PROFILE/bundle/$APP_NAME.app"
 rm -rf "$APP_DIR"

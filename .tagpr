@@ -8,6 +8,9 @@
 	# tag だけでなく Cargo.toml も上げます。script/bundle-mac が
 	# ここから .app の CFBundleShortVersionString を作るので、
 	# 置いていかれるとバンドルのバージョンがタグと食い違います。
+	# ここはワークスペースのルートで、上がるのは [workspace.package] の
+	# version です。tagpr も bundle-mac も行頭の `version = "..."` の
+	# 先頭の 1 つを見るので、ルートにそれを 2 つ書かないでください。
 	versionFile = Cargo.toml
 	# tagpr は *.lock を対象外にするので Cargo.lock は書き換わりません。
 	# Cargo.toml を上げたあとに、lock 側の ekanban の行を揃えます。

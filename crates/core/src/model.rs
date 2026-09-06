@@ -593,7 +593,9 @@ impl Board {
     /// 初回のシード（[`Board::first_run`]）とは別物にしてある。1 つの関数が
     /// 両方を兼ねていたころは、初回の見た目を直すつもりで中身を変えると
     /// テストが壊れた。
-    #[cfg(test)]
+    // `crates/gpui` のテストもこれを使うので、feature で出す。
+    // 実行ファイルには入れない（`cargo build --release` では立たない）。
+    #[cfg(any(test, feature = "test-fixtures"))]
     pub fn fixture() -> Self {
         let now = timestamp();
         let mut board = Self {
@@ -2565,7 +2567,10 @@ impl Board {
         });
     }
 
-    pub(crate) fn discard_pending_events(&mut self) {
+    /// 積んである `card_events` を捨てる。
+    ///
+    /// 保存し終えたぶんと、巻き戻して無かったことにするぶんの両方が通る。
+    pub fn discard_pending_events(&mut self) {
         self.pending_events.clear();
     }
 }

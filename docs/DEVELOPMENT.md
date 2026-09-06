@@ -11,31 +11,42 @@ ekanban に手を入れる人向けの文書です。
 
 ## 構成
 
+Cargo のワークスペースです。**中核と UI を別のクレートに分けてあります**（[Tauri 移行の設計](TAURI-MIGRATION.md) §1）。
+
 ```text
-src/
-  main.rs         バイナリのエントリポイント
-  lib.rs          データベースとウィンドウの初期化
-  model.rs        Board / Column / Card などのドメインモデルと移動・並べ替え
-  actions.rs      GPUI のアクション定義
-  backup.rs       起動時の日ごと世代バックアップ（置き場所・命名・世代数）
-  instance.rs     同じデータベースを 2 プロセスに開かせないロック
-  menu.rs         ネイティブメニューバー、画面内メニューの項目、ショートカットの割り当て
-  hotkey.rs       グローバルホットキーの登録と、環境ごとの利用可否の判定
-  paths.rs        OS ごとのデータベースとログの配置の解決
-  diagnostics.rs  起動失敗とパニックのログ記録、ダイアログ表示
-  db/
-    mod.rs        SQLite のスキーマ移行、読み書き、トランザクション
-  views/
-    mod.rs
-    board.rs      ボードの描画、入力、ドラッグ＆ドロップ
-    board/
-      view_tests.rs  ウィンドウを開いて確かめるテスト
-    capture.rs    クイックキャプチャの 1 行ウィンドウ
-    window_chrome.rs  装飾を寄越さない環境で出す自前のタイトルバー
-    description_links.rs  説明欄の中で URL をリンクとして見せ、開けるようにする
+crates/
+  core/           ekanban-core: 盤面のモデル、SQLite、控え、置き場所
+    src/
+      lib.rs          アプリ名・識別子・データベースの置き場所
+      model.rs        Board / Column / Card などのドメインモデルと移動・並べ替え
+      backup.rs       起動時の日ごと世代バックアップ（置き場所・命名・世代数）
+      instance.rs     同じデータベースを 2 プロセスに開かせないロック
+      paths.rs        OS ごとのデータベースとログの配置の解決
+      diagnostics.rs  起動失敗とパニックのログ記録、ダイアログ表示
+      db/
+        mod.rs        SQLite のスキーマ移行、読み書き、トランザクション
+  gpui/           ekanban: gpui-kit で描くいまのアプリ
+    src/
+      main.rs         バイナリのエントリポイント
+      lib.rs          データベースとウィンドウの初期化
+      actions.rs      GPUI のアクション定義
+      menu.rs         ネイティブメニューバー、画面内メニューの項目、ショートカットの割り当て
+      hotkey.rs       グローバルホットキーの登録と、環境ごとの利用可否の判定
+      views/
+        mod.rs
+        board.rs      ボードの描画、入力、ドラッグ＆ドロップ
+        board/
+          view_tests.rs  ウィンドウを開いて確かめるテスト
+        capture.rs    クイックキャプチャの 1 行ウィンドウ
+        window_chrome.rs  装飾を寄越さない環境で出す自前のタイトルバー
+        description_links.rs  説明欄の中で URL をリンクとして見せ、開けるようにする
+    examples/
+      manual_screenshot_seed.rs  マニュアルのスクリーンショット用のデータベースを作る
 ```
 
-- **UI から SQL を直接実行しません。** SQL は `src/db/` に閉じます
+- **`ekanban-core` に UI ツールキットを足しません。** gpui にも tauri にも依存しないことが、テストを GUI のランタイム無しで走らせ続ける条件であり、Tauri のアプリと開発用のハーネスが同じコードを使える条件でもあります（[Tauri 移行の設計](TAURI-MIGRATION.md) §1）。依存の依存から入り込むほうがありがちなので、解決した依存グラフを `script/check-core-independence` が CI で見ています
+- **`crates/gpui` は凍結してあります。** 直すのは使えなくなる不具合だけです（[ADR 0017](adr/0017-moving-the-ui-to-tauri.md)）。中核のモジュールを `ekanban_core` から同じ名前で出し直しているので、`crate::db::…` と書いてある行はそのままです。移行が着地したらこのクレートごと消えます
+- **UI から SQL を直接実行しません。** SQL は `crates/core/src/db/` に閉じます
 - テストは実装と同じモジュールの `#[cfg(test)]` に置きます。データベースのテストは `tempfile` を使い、実物のデータベースを触りません。ビューのテストについては [テスト](#テスト) を見てください
 - カード移動やカラム移動の保存は、必ず 1 つのトランザクションで行います
 
@@ -65,7 +76,7 @@ SQLite に 1 トランザクションで保存
 
 ## データモデル
 
-スキーマは v10 です。移行は起動時に自動で走ります（`src/db/mod.rs` の `migrate`）。
+スキーマは v10 です。移行は起動時に自動で走ります（`crates/core/src/db/mod.rs` の `migrate`）。
 
 ```text
 schema_migrations
@@ -157,7 +168,7 @@ app_state
 
 **関数のテスト。** 実装と同じモジュールの `#[cfg(test)]` に置きます。モデルの並べ替え、期限の判定、エラー文言の組み立てのように、ウィンドウが無くても答えの出るものはこちらで書きます。データベースのテストは `tempfile` を使い、実物のデータベースを触りません。
 
-**ビューのテスト。** `src/views/board/view_tests.rs` にあります。GPUI にはヘッドレスのテスト用プラットフォーム（`TestPlatform`）があり、`#[gpui_kit::test]` を付けると GPU もウィンドウマネージャも無いまま `App` と `Window` が立ち上がります。ここでは `BoardView` を本物のウィンドウに載せ、キー入力とアクションを流し込んで、画面の状態と SQLite に書かれた内容の両方を確かめます。使うには `test-support` feature が要るので、`Cargo.toml` の `[dev-dependencies]` で `gpui-kit` にだけ付けてあります（製品ビルドには入りません）。
+**ビューのテスト。** `crates/gpui/src/views/board/view_tests.rs` にあります。GPUI にはヘッドレスのテスト用プラットフォーム（`TestPlatform`）があり、`#[gpui_kit::test]` を付けると GPU もウィンドウマネージャも無いまま `App` と `Window` が立ち上がります。ここでは `BoardView` を本物のウィンドウに載せ、キー入力とアクションを流し込んで、画面の状態と SQLite に書かれた内容の両方を確かめます。使うには `test-support` feature が要るので、`crates/gpui/Cargo.toml` の `[dev-dependencies]` で `gpui-kit` にだけ付けてあります（製品ビルドには入りません）。
 
 ```rust
 #[gpui_kit::test]
@@ -182,7 +193,7 @@ fn adding_a_card_and_saving_it_writes_the_title_to_the_database(cx: &mut TestApp
 
 - **待ち時間は `run_until_parked()` で決めます。** テストの時計は偽物なので、`sleep` は使いません。非同期の保存を挟む操作は、確かめる前に必ず `run_until_parked()` します
 - **キー入力の前にボードへフォーカスを戻します**（`focus_board`）。入力欄にフォーカスがある間はボードのショートカットが効かないためです
-- **割り当ては `crate::menu::install` が入れた本物を使います。** テスト用に定義し直すと、`src/menu.rs` の割り当てを変えたときにテストだけ通ってしまいます
+- **割り当ては `crate::menu::install` が入れた本物を使います。** テスト用に定義し直すと、`crates/gpui/src/menu.rs` の割り当てを変えたときにテストだけ通ってしまいます
 - **確かめるのは画面とディスクの両方です。** `Harness::stored_board` がデータベースを開き直して読みます。メモリ上のモデルだけを見ると、保存の経路が壊れても気づけません
 - ウィンドウのルートは本番と同じ `Root` にします。確認ダイアログと通知がここに載ります
 
@@ -195,7 +206,7 @@ fn adding_a_card_and_saving_it_writes_the_title_to_the_database(cx: &mut TestApp
 | コマンド | 内容 |
 | --- | --- |
 | `make run` | ターミナルから直接起動する（デバッグビルド） |
-| `make check` | CI と同じ fmt / clippy / test を走らせる |
+| `make check` | CI と同じ fmt / clippy / test / 依存の確認を走らせる |
 | `make screenshots` | マニュアルのスクリーンショットを撮り直す（Linux/X11 のみ） |
 | `make icon` | macOS 用の `assets/icon.icns` を `assets/icon.png` から生成する |
 | `make bundle` | リリースビルドから `target/release/bundle/Ekanban.app` を作る |
@@ -220,7 +231,7 @@ Linux でも、実行ファイルだけではアプリ一覧に出ず、タス�
 
 入れるのは `script/install-linux`（`make install-linux`）です。root は要りません。`--uninstall` で消します。エントリの `Exec=` は、入れた実行ファイルの絶対パスに書き換えてから置きます。`~/.local/bin` が PATH に入っていない環境でも一覧から起動できるようにするためです。
 
-**`StartupWMClass` は `src/lib.rs` の `APP_ID`（`WindowOptions.app_id`）と必ず同じにしてください。** 食い違うと、起動したウィンドウがそのエントリに結びつかず、タスクバーのアイコンと名前が元に戻ります。
+**`StartupWMClass` は `crates/core/src/lib.rs` の `APP_ID`（`WindowOptions.app_id`）と必ず同じにしてください。** 食い違うと、起動したウィンドウがそのエントリに結びつかず、タスクバーのアイコンと名前が元に戻ります。
 
 アイコンは大きさごとに `assets/icons/` へコミットしてあります。ビルド時に縮小しないのは、Linux のランナーに画像処理のツールを増やさないためです。`assets/icon.png` を差し替えたときは、同じ 7 種類（16 / 32 / 48 / 64 / 128 / 256 / 512）を作り直してください。
 
@@ -297,11 +308,11 @@ GitHub Actions（`.github/workflows/ci.yml`）が、`main` への push と pull 
 
 | ジョブ | ランナー | 実行するもの |
 | --- | --- | --- |
-| `Check and test` | `ubuntu-latest` | `cargo fmt --all -- --check` / `cargo clippy --all-targets --all-features -- -D warnings` / `cargo test --all-features` / `cargo build --all-features` |
-| `Build and test (macos-latest)` | `macos-latest` | `cargo test --all-features` / `cargo build --all-features` |
-| `Build and test (windows-latest)` | `windows-latest` | `cargo test --all-features` / `cargo build --all-features` |
+| `Check and test` | `ubuntu-latest` | `cargo fmt --all -- --check` / `cargo clippy --workspace --all-targets --all-features -- -D warnings` / `cargo test --workspace --all-features` / `cargo build --workspace --all-features` / `script/check-core-independence` |
+| `Build and test (macos-latest)` | `macos-latest` | `cargo test --workspace --all-features` / `cargo build --workspace --all-features` |
+| `Build and test (windows-latest)` | `windows-latest` | `cargo test --workspace --all-features` / `cargo build --workspace --all-features` |
 
-macOS と Windows を回すのは、そこでしかコンパイルされないコードがあるためです。`src/menu.rs` のネイティブメニューバー（`cx.set_menus` が実際に効くのは macOS だけ）、`src/paths.rs` と `src/diagnostics.rs` の `#[cfg(windows)]` / `#[cfg(target_os = "macos")]` の分岐が該当します。fmt と clippy はプラットフォームに依らないので ubuntu だけで回します。
+macOS と Windows を回すのは、そこでしかコンパイルされないコードがあるためです。`crates/gpui/src/menu.rs` のネイティブメニューバー（`cx.set_menus` が実際に効くのは macOS だけ）、`crates/core/src/paths.rs` と `crates/core/src/diagnostics.rs` の `#[cfg(windows)]` / `#[cfg(target_os = "macos")]` の分岐が該当します。fmt と clippy はプラットフォームに依らないので ubuntu だけで回します。
 
 **`check` ジョブを matrix にしてはいけません。**（この判断の経緯は [ADR 0006](adr/0006-ci-on-three-platforms.md)） matrix にすると check run の名前が `Check and test (ubuntu-latest)` になり、ルールセットが必須にしている `Check and test` がどこにも現れなくなって、すべての pull request がマージ不能になります。プラットフォームを足すときは、別ジョブとして足してください。
 
@@ -393,8 +404,8 @@ App には Contents と Pull requests の write 権限が要ります。あわ�
 
 `.tagpr` で気をつけているところが 2 つあります。
 
-- **`versionFile = Cargo.toml`。** tag だけでなく `Cargo.toml` も上げます。`script/bundle-mac` がここから `.app` の `CFBundleShortVersionString` を作るので、置いていかれるとバンドルのバージョンがタグと食い違います
-- **`postVersionCommand = cargo update --workspace`。** tagpr は `*.lock` を対象外にするので、これが無いと `Cargo.lock` の `ekanban` のバージョンだけ取り残されます
+- **`versionFile = Cargo.toml`。** tag だけでなくワークスペースのルートの `Cargo.toml`（`[workspace.package]` の `version`）も上げます。`script/bundle-mac` がここから `.app` の `CFBundleShortVersionString` を作るので、置いていかれるとバンドルのバージョンがタグと食い違います。行頭の `version = "..."` はこの 1 か所だけにしてください。両方とも先頭の 1 つを見ています
+- **`postVersionCommand = cargo update --workspace`。** tagpr は `*.lock` を対象外にするので、これが無いと `Cargo.lock` の `ekanban` と `ekanban-core` のバージョンだけ取り残されます
 
 `main` のルールセットが `Check and test` を必須にしているので、tagpr の pull request も CI を通ってから merge されます。
 

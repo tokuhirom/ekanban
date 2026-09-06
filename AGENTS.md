@@ -2,24 +2,31 @@
 
 ## Project Structure
 
-This is a local-first Rust desktop Kanban app built with GPUI Kit and SQLite.
+This is a local-first Rust desktop Kanban app built with GPUI Kit and SQLite. It is a Cargo workspace.
 
-- `src/main.rs` is the binary entry point; `src/lib.rs` initializes the database and window.
-- `src/model.rs` defines `Board`, `Column`, `Card`, and board operations such as moving and reindexing.
-- `src/db/mod.rs` owns SQLite schema migration, loading, seeding, and transactional saves.
-- `src/views/` contains GPUI rendering, input handling, and drag-and-drop behavior.
+- `crates/core/` is `ekanban-core`: the board model, SQLite, backups, file locations. **It depends on no UI toolkit** — neither gpui nor tauri — and `script/check-core-independence` fails CI if one gets pulled in. See `docs/TAURI-MIGRATION.md` §1 for why.
+  - `crates/core/src/model.rs` defines `Board`, `Column`, `Card`, and board operations such as moving and reindexing.
+  - `crates/core/src/db/mod.rs` owns SQLite schema migration, loading, seeding, and transactional saves.
+  - `crates/core/src/paths.rs`, `backup.rs`, `instance.rs`, `diagnostics.rs` hold the per-OS file locations, the daily generational backup, the one-process-per-database lock, and the crash log.
+- `crates/gpui/` is the `ekanban` binary drawn with GPUI Kit. `src/main.rs` is the entry point; `src/lib.rs` opens the database and the window; `src/views/` contains rendering, input handling, and drag-and-drop.
+  - **It is frozen** while the move to Tauri is under way (ADR 0017): fix only what stops it from being usable. It re-exports `ekanban_core`'s modules under their old names so the frozen code keeps reading `crate::db::…`, and it goes away when the migration lands.
 - Tests are colocated with implementation modules under `#[cfg(test)]`; CI configuration is in `.github/workflows/ci.yml`.
 
-Keep SQL inside `src/db/` and keep UI code independent of direct database queries.
+Keep SQL inside `crates/core/src/db/` and keep UI code independent of direct database queries.
+
+The move from GPUI Kit to Tauri is designed in `docs/TAURI-MIGRATION.md`. Read it before adding anything that would have to be moved twice.
 
 ## Build, Test, and Development Commands
 
-Run the application with `cargo run`. It stores its database under the OS data directory resolved by `src/paths.rs`; set `EKANBAN_DATABASE=/absolute/path/board.sqlite3` to use another file.
+Run the application with `cargo run -p ekanban` (the workspace root has no package, so `cargo run` alone cannot pick a binary). It stores its database under the OS data directory resolved by `crates/core/src/paths.rs`; set `EKANBAN_DATABASE=/absolute/path/board.sqlite3` to use another file.
 
 - `cargo fmt --all -- --check` checks formatting.
-- `cargo clippy --all-targets --all-features -- -D warnings` runs lint checks as errors.
-- `cargo test --all-features` runs the unit and database round-trip tests.
-- `cargo build --all-features` verifies a complete build.
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings` runs lint checks as errors.
+- `cargo test --workspace --all-features` runs the unit and database round-trip tests.
+- `cargo build --workspace --all-features` verifies a complete build.
+- `script/check-core-independence` verifies `ekanban-core` pulls in no UI toolkit.
+
+`make check` runs all five.
 
 These are the same checks enforced by GitHub Actions. The bundled SQLite dependency means no database server is required.
 
@@ -33,7 +40,7 @@ Use Rust 2021 conventions and four-space indentation; let `rustfmt` determine la
 
 Name tests after observable behavior, for example `moves_card_to_another_column`. Add model tests for ordering and invalid IDs, and database tests using `tempfile` rather than the real `.ekanban.sqlite3`.
 
-View behavior is tested against a real window. `src/views/board/view_tests.rs` uses GPUI's headless test platform through `#[gpui_kit::test]`: it opens a `BoardView` in a `TestAppContext` window, dispatches the actions and keystrokes a user would, and asserts on both the on-screen state and what reached SQLite. Wait with `run_until_parked()` rather than `sleep`, take the key bindings from `crate::menu::install` instead of redefining them, and read the saved result back through `Harness::stored_board`. See the テスト section of `docs/DEVELOPMENT.md` for the details.
+View behavior is tested against a real window. `crates/gpui/src/views/board/view_tests.rs` uses GPUI's headless test platform through `#[gpui_kit::test]`: it opens a `BoardView` in a `TestAppContext` window, dispatches the actions and keystrokes a user would, and asserts on both the on-screen state and what reached SQLite. Wait with `run_until_parked()` rather than `sleep`, take the key bindings from `crate::menu::install` instead of redefining them, and read the saved result back through `Harness::stored_board`. See the テスト section of `docs/DEVELOPMENT.md` for the details.
 
 Run formatting, Clippy, and all-feature tests before submitting changes.
 
