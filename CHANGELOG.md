@@ -1,5 +1,28 @@
 # Changelog
 
+## [v0.2.0](https://github.com/tokuhirom/ekanban/compare/v0.1.3...v0.2.0) - 2026-09-06
+
+### 変更
+- Record the decision to move the UI from gpui-kit to Tauri by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/95
+- Tauri でいまの機能をどう実現するかの設計 by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/98
+- Split the core out of the UI as a Cargo workspace by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/99
+- Draw the board in a Tauri window by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/100
+- Drag and drop cards and columns with dnd-kit by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/101
+- Check the drag conditions on both webview engines by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/102
+- Let the webview edit cards, columns, tags and boards by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/103
+- Put the menu bar, the theme and the window state on Tauri by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/104
+- Give the webview the archive, the files and the description links by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/105
+- Bring quick capture over to Tauri by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/106
+- Ship the Tauri build instead of the gpui one by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/107
+- Delete the gpui app by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/108
+- Move the migration's rules into the design record by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/109
+- Start the app from `cargo run`, or say why it cannot by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/110
+- Correct the manual where it still describes the gpui app by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/111
+- Filter by tag from the chips on a card by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/112
+- Let the description's text show through its input field by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/121
+- Explain the code without pointing at gpui by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/122
+- Work through the open issues on the card and board panels by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/123
+
 ## [v0.1.3](https://github.com/tokuhirom/ekanban/compare/v0.1.2...v0.1.3) - 2026-09-06
 
 ### 変更
