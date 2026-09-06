@@ -5,6 +5,7 @@
 // core を HTTP へ出すもの、`docs/TAURI-MIGRATION.md` §10）を挟めなくなり、
 // 画面の振る舞いを Playwright から確かめる道が閉じます。
 
+import type { ChecklistItemDraft } from "./types/ChecklistItemDraft";
 import type { FilterState } from "./types/FilterState";
 import type { Snapshot } from "./types/Snapshot";
 import type { StartupState } from "./types/StartupState";
@@ -19,6 +20,39 @@ export interface Ipc {
   /** いまの盤面。イベントで差し替えるときにも使う。 */
   snapshot(): Promise<Snapshot>;
   switchBoard(boardId: number): Promise<Snapshot>;
+  createBoard(name: string): Promise<Snapshot>;
+  renameBoard(name: string): Promise<Snapshot>;
+  deleteBoard(boardId: number): Promise<Snapshot>;
+
+  /** タイトルが決まってから 1 回だけ呼ぶ。空白だけのタイトルは Rust が断る（§2）。 */
+  addCard(columnId: number, title: string, description: string): Promise<Snapshot>;
+  /** カードの中身をまとめて書き換える。チェックリストも項目ごと一括で渡す（§3）。 */
+  updateCard(
+    cardId: number,
+    title: string,
+    description: string,
+    dueDate: string,
+    tagIds: number[],
+    checklist: ChecklistItemDraft[],
+  ): Promise<Snapshot>;
+  copyCard(cardId: number): Promise<Snapshot>;
+  deleteCard(cardId: number): Promise<Snapshot>;
+  archiveCard(cardId: number): Promise<Snapshot>;
+  /** 右クリックメニューからタグだけを付け外しする。パネルを開かずに済ませるため。 */
+  setCardTags(cardId: number, tagIds: number[]): Promise<Snapshot>;
+
+  addColumn(name: string): Promise<Snapshot>;
+  renameColumn(columnId: number, name: string): Promise<Snapshot>;
+  removeColumn(columnId: number): Promise<Snapshot>;
+  /** 空文字で「上限なし」。読めない値は `Validation` で入力欄に返る。 */
+  setColumnWipLimit(columnId: number, wipLimit: string): Promise<Snapshot>;
+  sortColumnByDueDate(columnId: number): Promise<Snapshot>;
+  archiveColumn(columnId: number): Promise<Snapshot>;
+
+  addTag(name: string, color: string): Promise<Snapshot>;
+  renameTag(tagId: number, name: string): Promise<Snapshot>;
+  setTagColor(tagId: number, color: string): Promise<Snapshot>;
+  removeTag(tagId: number): Promise<Snapshot>;
   /** 落とした瞬間に 1 回だけ呼ぶ。ドラッグ中は webview の中で完結させる（§6）。 */
   moveCard(cardId: number, toColumnId: number, toIndex: number): Promise<Snapshot>;
   moveColumn(columnId: number, toIndex: number): Promise<Snapshot>;

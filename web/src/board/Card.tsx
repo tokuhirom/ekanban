@@ -87,9 +87,13 @@ interface Props extends FaceProps {
   dimmed: boolean;
   selected: boolean;
   onSelect: (cardId: number) => void;
+  /** 編集パネルを開く。 */
+  onOpen: (cardId: number) => void;
+  /** 右クリックメニューを、画面の座標で開く。描くのは `Board`。 */
+  onContextMenu: (cardId: number, at: { x: number; y: number }) => void;
 }
 
-export function Card({ card, tags, due, dimmed, selected, onSelect }: Props) {
+export function Card({ card, tags, due, dimmed, selected, onSelect, onOpen, onContextMenu }: Props) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: handleId({ kind: "card", id: card.id }),
   });
@@ -98,6 +102,7 @@ export function Card({ card, tags, due, dimmed, selected, onSelect }: Props) {
     <article
       ref={setNodeRef}
       className="card"
+      data-card={card.id}
       data-dimmed={dimmed || undefined}
       data-selected={selected || undefined}
       // 掴んでいる間、元の場所は空きとして残す。周りが詰まってしまうと、
@@ -113,8 +118,102 @@ export function Card({ card, tags, due, dimmed, selected, onSelect }: Props) {
         onSelect(card.id);
         listeners?.onPointerDown?.(event);
       }}
+      // **1 回のクリックでは開きません。** クリックは選ぶ操作で、そこから
+      // ドラッグも始まります（`activationConstraint` の 4px）。開くたびに
+      // パネルが出ると、掴もうとしただけで画面が動きます。開くのは
+      // ダブルクリックか、選んだうえでの Enter（gpui 版の割り当てと同じ）。
+      onDoubleClick={() => {
+        onOpen(card.id);
+      }}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        onSelect(card.id);
+        onContextMenu(card.id, { x: event.clientX, y: event.clientY });
+      }}
     >
       <CardFace card={card} tags={tags} due={due} />
     </article>
+  );
+}
+
+export interface MenuProps {
+  card: CardData;
+  tags: readonly Tag[];
+  at: { x: number; y: number };
+  onClose: () => void;
+  onCopy: () => void;
+  onArchive: () => void;
+  onDelete: () => void;
+  onToggleTag: (tagId: number) => void;
+}
+
+/// カードの右クリックメニュー。
+///
+/// **カードの操作はここに集約します**（`docs/DESIGN.md`「常用しない操作を画面に
+/// 常時出さない」）。webview では既定の右クリックメニューが先に出るので、
+/// `shell/harden.ts` がそれを止めています（§4）。
+///
+/// **カードの中には描きません。** カードは dnd-kit の `transform` を持つことが
+/// あり、`transform` を持つ要素は `position: fixed` の基準になります。画面の
+/// 座標で置いたメニューが、掴んだ量だけずれることになるので、`Board` が盤面の
+/// 外側で描きます。
+export function CardMenu({ card, tags, at, onClose, onCopy, onArchive, onDelete, onToggleTag }: MenuProps) {
+  return (
+    <div
+      className="menu card-menu"
+      style={{ left: at.x, top: at.y }}
+      // 中を押しても閉じないようにする。閉じるのは項目を選んだときと、
+      // 外を押したとき（`.menu-scrim`）。
+      onPointerDown={(event) => {
+        event.stopPropagation();
+      }}
+    >
+      <button
+        type="button"
+        className="ghost"
+        onClick={() => {
+          onClose();
+          onCopy();
+        }}
+      >
+        コピー
+      </button>
+      <span className="menu-label">タグ</span>
+      {tags.map((tag) => (
+        <button
+          key={tag.id}
+          type="button"
+          className="ghost"
+          onClick={() => {
+            onClose();
+            onToggleTag(tag.id);
+          }}
+        >
+          {/* 色だけに意味を持たせない。付いているかどうかは印で書く。 */}
+          {card.tagIds.includes(tag.id) ? "✓ " : "□ "}
+          {tag.name}
+        </button>
+      ))}
+      <button
+        type="button"
+        className="ghost"
+        onClick={() => {
+          onClose();
+          onArchive();
+        }}
+      >
+        アーカイブ
+      </button>
+      <button
+        type="button"
+        className="danger-item"
+        onClick={() => {
+          onClose();
+          onDelete();
+        }}
+      >
+        削除
+      </button>
+    </div>
   );
 }

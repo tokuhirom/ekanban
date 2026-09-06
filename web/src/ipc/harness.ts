@@ -38,6 +38,36 @@ export function harnessIpc(base: string): Ipc {
     startupState: () => call<StartupState>(base, "startup_state"),
     snapshot: () => call<Snapshot>(base, "snapshot"),
     switchBoard: (boardId) => call<Snapshot>(base, "switch_board", { boardId }),
+    createBoard: (name) => call<Snapshot>(base, "create_board", { name }),
+    renameBoard: (name) => call<Snapshot>(base, "rename_board", { name }),
+    deleteBoard: (boardId) => call<Snapshot>(base, "delete_board", { boardId }),
+    addCard: (columnId, title, description) =>
+      call<Snapshot>(base, "add_card", { columnId, title, description }),
+    updateCard: (cardId, title, description, dueDate, tagIds, checklist) =>
+      call<Snapshot>(base, "update_card", {
+        cardId,
+        title,
+        description,
+        dueDate,
+        tagIds,
+        checklist,
+      }),
+    copyCard: (cardId) => call<Snapshot>(base, "copy_card", { cardId }),
+    deleteCard: (cardId) => call<Snapshot>(base, "delete_card", { cardId }),
+    archiveCard: (cardId) => call<Snapshot>(base, "archive_card", { cardId }),
+    setCardTags: (cardId, tagIds) => call<Snapshot>(base, "set_card_tags", { cardId, tagIds }),
+    addColumn: (name) => call<Snapshot>(base, "add_column", { name }),
+    renameColumn: (columnId, name) => call<Snapshot>(base, "rename_column", { columnId, name }),
+    removeColumn: (columnId) => call<Snapshot>(base, "remove_column", { columnId }),
+    setColumnWipLimit: (columnId, wipLimit) =>
+      call<Snapshot>(base, "set_column_wip_limit", { columnId, wipLimit }),
+    sortColumnByDueDate: (columnId) =>
+      call<Snapshot>(base, "sort_column_by_due_date", { columnId }),
+    archiveColumn: (columnId) => call<Snapshot>(base, "archive_column", { columnId }),
+    addTag: (name, color) => call<Snapshot>(base, "add_tag", { name, color }),
+    renameTag: (tagId, name) => call<Snapshot>(base, "rename_tag", { tagId, name }),
+    setTagColor: (tagId, color) => call<Snapshot>(base, "set_tag_color", { tagId, color }),
+    removeTag: (tagId) => call<Snapshot>(base, "remove_tag", { tagId }),
     moveCard: (cardId, toColumnId, toIndex) =>
       call<Snapshot>(base, "move_card", { cardId, toColumnId, toIndex }),
     moveColumn: (columnId, toIndex) => call<Snapshot>(base, "move_column", { columnId, toIndex }),
