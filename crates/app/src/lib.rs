@@ -14,11 +14,14 @@ pub mod commands;
 pub mod error;
 pub mod events;
 pub mod ipc;
+pub mod menu;
 pub mod run;
 pub mod snapshot;
 pub mod state;
+pub mod window;
 
 pub use error::{AppError, ErrorKind, Field};
+pub use menu::{Action, AppAction, WindowAction};
 pub use run::run;
 pub use snapshot::{
     CaptureTarget, CardDueStatus, Platform, Snapshot, StartupState, ThemePreference,

@@ -12,7 +12,7 @@ import {
   type DragStartEvent,
 } from "@dnd-kit/core";
 import { SortableContext, horizontalListSortingStrategy } from "@dnd-kit/sortable";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useIpc } from "../ipc";
 import type { AppError } from "../ipc/types/AppError";
@@ -21,7 +21,9 @@ import type { Column as ColumnData } from "../ipc/types/Column";
 import type { Snapshot } from "../ipc/types/Snapshot";
 import { CardPanel } from "../panel/CardPanel";
 import { TagPanel } from "../panel/TagPanel";
+import { useAppActions, useAppActionSource } from "../shell/actions";
 import { AlertDialog, ConfirmDialog, PromptDialog } from "../shell/Dialog";
+import { targetOf, undoIntent } from "../shell/keys";
 import { useBoardState } from "../state/board";
 import { CardFace, CardMenu } from "./Card";
 import { Column } from "./Column";
@@ -83,11 +85,91 @@ export function Board() {
   const [confirming, setConfirming] = useState<Pending | null>(null);
   const [prompt, setPrompt] = useState<Prompt | null>(null);
   const [cardMenu, setCardMenu] = useState<{ cardId: number; x: number; y: number } | null>(null);
+  const [addingColumn, setAddingColumn] = useState(false);
+  const [about, setAbout] = useState(false);
+  const searchInput = useRef<HTMLInputElement>(null);
+
+  // メニューが押されたことを受けはじめる。配る先はこの下と、開いている
+  // パネルの中（`shell/actions.ts`）。
+  useAppActionSource();
+  useAppActions({
+    addBoard: () => {
+      askCreateBoard();
+    },
+    // 選んでいるカードのカラムへ。選んでいなければ先頭のカラムへ（gpui 版と
+    // 同じ決め方）。
+    addCard: () => {
+      if (board === null) return;
+      const column =
+        board.columns.find((each) => each.cards.some((card) => card.id === selectedCard)) ??
+        board.columns[0];
+      if (column !== undefined) state.newCard(column.id);
+    },
+    addColumn: () => {
+      setAddingColumn(true);
+    },
+    addTag: state.openTagPanel,
+    manageTags: state.openTagPanel,
+    renameBoard: () => {
+      if (board !== null) askRenameBoard(board);
+    },
+    deleteBoard: () => {
+      const summary = state.snapshot?.boards.find((each) => each.id === board?.id);
+      if (summary !== undefined) askDeleteBoard(summary);
+    },
+    // 開いているパネルは自分で畳みます（`CardPanel` と `TagPanel`）。ここが
+    // 引き受けるのは、盤面の上に出ているカラムの下書きだけ。
+    cancelEdit: () => {
+      setAddingColumn(false);
+    },
+    clearSearch: () => {
+      state.setSearch("");
+    },
+    focusSearch: () => {
+      searchInput.current?.focus();
+    },
+    toggleBoardList: state.toggleSidebar,
+    // メニューからの取り消しも、入力欄にフォーカスがあるときは盤面を巻き戻し
+    // ません（gpui 版と同じ）。打っている途中の欄が、下の盤面ごと戻るのを
+    // 避けるためです。
+    undo: () => {
+      if (targetOf(document.activeElement) === "board") state.undo();
+    },
+    redo: () => {
+      if (targetOf(document.activeElement) === "board") state.redo();
+    },
+    useLightTheme: () => {
+      state.setTheme("light");
+    },
+    useDarkTheme: () => {
+      state.setTheme("dark");
+    },
+    useSystemTheme: () => {
+      state.setTheme("system");
+    },
+    about: () => {
+      setAbout(true);
+    },
+  });
 
   // キーボードでの選択と移動（§6 の条件 6）。gpui 版と同じ 1 手の割り当て。
+  const { undo, redo } = state;
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
-      if (board === null || boardShortcutsDisabled(event)) return;
+      if (board === null) return;
+
+      // 取り消しは入力欄の中でも打たれる。**入力欄では何もしません**——
+      // 既定の動きを止めなければ、webview が自分の履歴で取り消します（§7）。
+      const intent = undoIntent(event, platform);
+      if (intent !== null) {
+        if (intent.target === "field") return;
+        event.preventDefault();
+        if (intent.kind === "undo") undo();
+        else redo();
+        return;
+      }
+
+      if (boardShortcutsDisabled(event)) return;
       const direction = arrowDirection(event.key);
       if (direction === null) {
         // 選んでいるカードを開く。1 回のクリックでは開かないので
@@ -121,7 +203,7 @@ export function Board() {
     return () => {
       document.removeEventListener("keydown", onKeyDown);
     };
-  }, [board, moveCard, openCard, platform, selectCard, selectedCard]);
+  }, [board, moveCard, openCard, platform, redo, selectCard, selectedCard, undo]);
 
   // 掴んだと判定するまでに少し動かす。押しただけでドラッグが始まると、
   // カードを選ぶだけのつもりが動いてしまう。
@@ -258,6 +340,7 @@ export function Board() {
           <input
             type="search"
             className="search"
+            ref={searchInput}
             value={state.search}
             placeholder="カードを検索 (#12 で番号)"
             aria-label="カードを検索"
@@ -265,8 +348,8 @@ export function Board() {
               state.setSearch(event.target.value);
             }}
           />
-          {/* タグの追加・編集・削除はここだけから（`docs/DESIGN.md`）。段階 6 で
-              メニューからも開けるようになります。 */}
+          {/* タグの追加・編集・削除はここだけから（`docs/DESIGN.md`）。メニューの
+              「タグを整理…」も同じパネルを開きます。 */}
           <button
             type="button"
             className="secondary open-tag-panel"
@@ -320,7 +403,18 @@ export function Board() {
                 />
               ))}
             </SortableContext>
-            <AddColumn run={run} />
+            <AddColumn
+              // 畳んだときに打ちかけを残さない。開き直したら空から始める。
+              key={addingColumn ? "adding" : "idle"}
+              open={addingColumn}
+              onOpen={() => {
+                setAddingColumn(true);
+              }}
+              onClose={() => {
+                setAddingColumn(false);
+              }}
+              run={run}
+            />
           </div>
           {/* ゴーストは自分の要素。見た目も追従も OS に取られない（ADR 0020）。 */}
           <DragOverlay dropAnimation={null}>
@@ -445,37 +539,49 @@ export function Board() {
           onDismiss={state.dismissAlert}
         />
       )}
+      {about && (
+        <AlertDialog
+          title="ekanbanについて"
+          detail="ローカル SQLite で動作する Kanban アプリです。"
+          onDismiss={() => {
+            setAbout(false);
+          }}
+        />
+      )}
     </div>
   );
 }
 
 /// カラムを足す枠。カラムの右端に、点線の場所として置く。
+///
+/// 開いているかどうかは `Board` が持ちます。メニューの「カラムを追加」から
+/// 開けるようにするためで、下書きの中身はここに残したままです。
 function AddColumn({
+  open,
+  onOpen,
+  onClose,
   run,
 }: {
+  open: boolean;
+  onOpen: () => void;
+  onClose: () => void;
   run: (call: () => Promise<Snapshot>) => Promise<AppError | null>;
 }) {
   const ipc = useIpc();
-  const [name, setName] = useState<string | null>(null);
+  const [name, setName] = useState("");
   const [failed, setFailed] = useState<AppError | null>(null);
 
   async function save() {
-    if (name === null || name.trim() === "") return;
+    if (name.trim() === "") return;
     const failure = await run(() => ipc.addColumn(name));
     setFailed(failure);
-    if (failure === null) setName(null);
+    if (failure === null) onClose();
   }
 
-  if (name === null) {
+  if (!open) {
     return (
       <div className="add-column-placeholder">
-        <button
-          type="button"
-          className="secondary add-column"
-          onClick={() => {
-            setName("");
-          }}
-        >
+        <button type="button" className="secondary add-column" onClick={onOpen}>
           ＋ カラムを追加
         </button>
       </div>
@@ -493,8 +599,7 @@ function AddColumn({
           void save();
         } else if (event.key === "Escape") {
           event.stopPropagation();
-          setName(null);
-          setFailed(null);
+          onClose();
         }
       }}
     >
@@ -522,14 +627,7 @@ function AddColumn({
         >
           保存
         </button>
-        <button
-          type="button"
-          className="secondary"
-          onClick={() => {
-            setName(null);
-            setFailed(null);
-          }}
-        >
+        <button type="button" className="secondary" onClick={onClose}>
           取消
         </button>
       </div>

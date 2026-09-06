@@ -10,7 +10,7 @@ use std::path::PathBuf;
 
 use ekanban_core::db::{FilterState, WindowBoundsState};
 use ekanban_core::model::{BoardId, CardId, ChecklistItemDraft, ColumnId, TagId};
-use tauri::State;
+use tauri::{State, WebviewWindow};
 
 use crate::commands::{self, ExportFormat};
 use crate::error::AppError;
@@ -242,6 +242,18 @@ pub fn set_theme_preference(state: State<'_, AppState>, preference: ThemePrefere
 #[tauri::command]
 pub fn set_sidebar_collapsed(state: State<'_, AppState>, collapsed: bool) -> Reply<()> {
     commands::set_sidebar_collapsed(&state, collapsed)
+}
+
+/// ウィンドウのタイトルを差し替える。
+///
+/// 文言は `Snapshot::window_title` が組んだものをそのまま受けます。ここに
+/// 組み立てを書くと、同じ規則が Rust と TypeScript の 2 か所に散ります。
+#[tauri::command]
+pub fn set_window_title(window: WebviewWindow, title: String) {
+    // 失敗しても盤面は動く。使う人に打てる手も無いので、記録だけ残す。
+    if let Err(error) = window.set_title(&title) {
+        ekanban_core::diagnostics::log(&format!("failed to set the window title: {error}"));
+    }
 }
 
 #[tauri::command]

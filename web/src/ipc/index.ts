@@ -5,10 +5,12 @@
 // core を HTTP へ出すもの、`docs/TAURI-MIGRATION.md` §10）を挟めなくなり、
 // 画面の振る舞いを Playwright から確かめる道が閉じます。
 
+import type { AppAction } from "./types/AppAction";
 import type { ChecklistItemDraft } from "./types/ChecklistItemDraft";
 import type { FilterState } from "./types/FilterState";
 import type { Snapshot } from "./types/Snapshot";
 import type { StartupState } from "./types/StartupState";
+import type { ThemePreference } from "./types/ThemePreference";
 
 /// 画面が呼べるコマンド。Rust の `crates/app/src/commands.rs` に 1 対 1。
 ///
@@ -58,8 +60,16 @@ export interface Ipc {
   moveColumn(columnId: number, toIndex: number): Promise<Snapshot>;
   /** 検索語とタグに一致するカードの ID。打鍵ごとに呼ぶ（§5）。 */
   filterCards(query: string, tagId: number | null): Promise<number[]>;
+  /** 取り消し・やり直し。**キーは webview が振り分けます**（`shell/keys.ts`）。 */
+  undo(): Promise<Snapshot>;
+  redo(): Promise<Snapshot>;
   setFilterState(filter: FilterState): Promise<void>;
   setSidebarCollapsed(collapsed: boolean): Promise<void>;
+  setThemePreference(theme: ThemePreference): Promise<void>;
+  /** 文言は `Snapshot.windowTitle` が組んだものをそのまま渡す。 */
+  setWindowTitle(title: string): Promise<void>;
+  /** メニューが押されたことを受ける（§7）。返るのは購読をやめる関数。 */
+  onAppAction(handler: (action: AppAction) => void): () => void;
   /** webview の未捕捉例外を Rust 側と同じログに落とす（§9）。 */
   logFrontendError(message: string): Promise<void>;
 }

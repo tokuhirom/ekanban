@@ -13,6 +13,8 @@ import type { Board } from "../ipc/types/Board";
 import type { DueStatus } from "../ipc/types/DueStatus";
 import type { Platform } from "../ipc/types/Platform";
 import type { Snapshot } from "../ipc/types/Snapshot";
+import type { ThemePreference } from "../ipc/types/ThemePreference";
+import { applyTheme } from "../shell/theme";
 
 /** カードの編集パネルが開いている対象。新しいカードはまだ ID を持たない。 */
 export type Editing = { kind: "new"; columnId: number } | { kind: "card"; cardId: number };
@@ -60,9 +62,17 @@ export interface BoardState {
   /** タグ整理パネルの開閉。扱うのはボード全体のタグなので、カードのパネルとは別。 */
   tagPanelOpen: boolean;
   toggleTagPanel: () => void;
+  /** メニューから開くときはこちら。開いているのにもう一度押して畳まない。 */
+  openTagPanel: () => void;
   /** 入力欄の中身。確定していないので Rust には渡していない。 */
   search: string;
   sidebarCollapsed: boolean;
+  /** 選ばれているテーマ。「システムに合わせる」の判定は CSS が持つ（`shell/theme.ts`）。 */
+  theme: ThemePreference;
+  setTheme: (theme: ThemePreference) => void;
+  /** 盤面の取り消し・やり直し。入力欄の中の取り消しとは別（`shell/keys.ts`）。 */
+  undo: () => void;
+  redo: () => void;
   /** 検索とタグに一致したカード。`null` は「絞り込んでいない」。 */
   matched: ReadonlySet<number> | null;
   dueStatuses: ReadonlyMap<number, DueStatus>;
@@ -77,6 +87,7 @@ export function useBoardState(): BoardState {
   const [failure, setFailure] = useState<string | null>(null);
   const [search, setSearchValue] = useState("");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [theme, setThemeValue] = useState<ThemePreference>("system");
   // どの検索語に対する答えかを一緒に持つ。前の検索語の結果で減光すると、
   // 打っている間だけ違うカードが暗くなる。
   const [result, setResult] = useState<{ query: string; ids: ReadonlySet<number> } | null>(null);
@@ -138,6 +149,8 @@ export function useBoardState(): BoardState {
         setSearchValue(startup.filter.search);
         setSidebarCollapsed(startup.sidebarCollapsed);
         setPlatform(startup.platform);
+        setThemeValue(startup.theme);
+        applyTheme(startup.theme);
       })
       .catch((error: unknown) => {
         if (!cancelled) report("ボードを読み込めませんでした", error);
@@ -190,6 +203,35 @@ export function useBoardState(): BoardState {
     },
     [ipc, report],
   );
+
+  // ウィンドウのタイトルは盤面から導く。**文言を組むのは Rust**で
+  // （`Snapshot.windowTitle`）、ここはそれを窓に渡すだけ。
+  const windowTitle = snapshot?.windowTitle ?? null;
+  useEffect(() => {
+    if (windowTitle === null) return;
+    void ipc.setWindowTitle(windowTitle).catch((error: unknown) => {
+      report("ウィンドウのタイトルを変えられませんでした", error);
+    });
+  }, [ipc, report, windowTitle]);
+
+  const setTheme = useCallback(
+    (next: ThemePreference) => {
+      setThemeValue(next);
+      applyTheme(next);
+      void ipc.setThemePreference(next).catch((error: unknown) => {
+        report("テーマを覚えられませんでした", error);
+      });
+    },
+    [ipc, report],
+  );
+
+  const undo = useCallback(() => {
+    void run(() => ipc.undo());
+  }, [ipc, run]);
+
+  const redo = useCallback(() => {
+    void run(() => ipc.redo());
+  }, [ipc, run]);
 
   const toggleSidebar = useCallback(() => {
     setSidebarCollapsed((collapsed) => {
@@ -295,6 +337,10 @@ export function useBoardState(): BoardState {
     setTagPanelOpen((open) => !open);
   }, []);
 
+  const openTagPanel = useCallback(() => {
+    setTagPanelOpen(true);
+  }, []);
+
   const dismissAlert = useCallback(() => {
     setAlert(null);
   }, []);
@@ -320,8 +366,13 @@ export function useBoardState(): BoardState {
     closePanel,
     tagPanelOpen,
     toggleTagPanel,
+    openTagPanel,
     search,
     sidebarCollapsed,
+    theme,
+    setTheme,
+    undo,
+    redo,
     matched,
     dueStatuses,
     setSearch,

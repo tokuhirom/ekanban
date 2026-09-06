@@ -16,6 +16,7 @@ import type { Board } from "../ipc/types/Board";
 import type { Card } from "../ipc/types/Card";
 import type { Field } from "../ipc/types/Field";
 import type { Snapshot } from "../ipc/types/Snapshot";
+import { useAppActions } from "../shell/actions";
 import type { Editing } from "../state/board";
 import {
   deleteChecklistItem,
@@ -64,6 +65,15 @@ export function CardPanel({
   const [menuOpen, setMenuOpen] = useState(false);
 
   const savable = draftIsSavable(draft);
+
+  // メニューの「保存」「編集をキャンセル」は、開いているパネルのものです。
+  // **下書きを持っているのはここ**なので、受けるのもここ（`shell/actions.ts`）。
+  useAppActions({
+    saveEdit: () => {
+      void save();
+    },
+    cancelEdit: onClose,
+  });
 
   async function save() {
     if (!savable) return;

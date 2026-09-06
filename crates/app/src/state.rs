@@ -10,7 +10,7 @@ use ekanban_core::db::{Database, DbError};
 use ekanban_core::model::{Board, BoardError};
 
 use crate::error::{AppError, ErrorKind};
-use crate::snapshot::{due_statuses_of, Snapshot};
+use crate::snapshot::{due_statuses_of, window_title, Snapshot};
 
 /// 開いているボードと、その裏のデータベース。
 ///
@@ -123,6 +123,7 @@ pub(crate) fn snapshot_of(board: &Board, database: &Database) -> Result<Snapshot
         can_redo: board.can_redo(),
         due_statuses: due_statuses_of(board, today),
         today,
+        window_title: window_title(&board.name),
     })
 }
 

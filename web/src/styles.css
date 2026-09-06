@@ -6,8 +6,10 @@
  * タグの色だけ、`*-foreground` は対応する背景の上でだけ、色だけに意味を
  * 持たせない。
  *
- * テーマの切り替え（system / light / dark）は段階 6 です。いまは OS の設定に
- * ついていきます。
+ * テーマは 3 つ（`shell/theme.ts`）。「ライト」「ダーク」は `<html>` の
+ * `data-theme` で決まり、「システムに合わせる」はその属性が無い状態です——
+ * **判定を JavaScript に持たせず**、`prefers-color-scheme` にそのまま任せます。
+ * OS の設定が変わったときも、こちらは何もしません。
  */
 :root {
   --color-background: #ffffff;
@@ -26,8 +28,12 @@
   color-scheme: light dark;
 }
 
+/* 暗い側の値。**下の 2 つのブロックは同じ中身**で、片方だけ直すと
+ * 「システムに合わせる」と「ダーク」で色が食い違います。CSS では、メディア
+ * クエリの中と外を 1 つのセレクタにまとめられません。 */
 @media (prefers-color-scheme: dark) {
-  :root {
+  /* 「ライト」を選んでいるときは、OS が暗くても明るいままにする。 */
+  :root:not([data-theme="light"]) {
     --color-background: #18181b;
     --color-foreground: #fafafa;
     --color-muted-foreground: #a1a1aa;
@@ -40,7 +46,30 @@
     --color-danger: #f87171;
     --color-warning: #fbbf24;
     --color-info: #60a5fa;
+
+    color-scheme: dark;
   }
+}
+
+:root[data-theme="dark"] {
+  --color-background: #18181b;
+  --color-foreground: #fafafa;
+  --color-muted-foreground: #a1a1aa;
+  --color-border: #3f3f46;
+  --color-accent: #27272a;
+  --color-sidebar: #1c1c1f;
+  --color-sidebar-accent: #3f3f46;
+  --color-popover: #27272a;
+  --color-input-background: #27272a;
+  --color-danger: #f87171;
+  --color-warning: #fbbf24;
+  --color-info: #60a5fa;
+
+  color-scheme: dark;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
 }
 
 *,
