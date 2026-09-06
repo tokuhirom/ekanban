@@ -108,8 +108,8 @@ export function moveChecklistItem(
 /// **今日が何日かは Rust から来ます**（`Snapshot.today`）。ブラウザの時計から
 /// 決めると、`due_statuses` を出した日と近道が入れる日が食い違います。
 ///
-/// 週の起点は月曜です（gpui 版の `num_days_from_monday` と同じ）。「今週末」は
-/// 次に来る土曜で、今日が土曜ならその日。「来週」は次の月曜。
+/// 週の起点は月曜です。「今週末」は次に来る土曜で、今日が土曜ならその日。
+/// 「来週」は次の月曜。
 export function quickDueDates(today: string): { label: string; date: string }[] {
   const base = parseIsoDate(today);
   if (base === null) return [];

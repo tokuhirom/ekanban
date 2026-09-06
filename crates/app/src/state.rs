@@ -68,7 +68,8 @@ impl AppState {
         T: Changed,
     {
         let mut board = self.lock();
-        // 失敗したときに戻す先。gpui 版と同じで、数百枚のカードを 1 回複製する。
+        // 失敗したときに戻す先。数百枚のカードを 1 回複製するだけなので、
+        // 操作ごとに差分を組み立てるより素直で速い。
         let before = board.clone();
 
         let value = match apply(&mut board) {
@@ -117,8 +118,8 @@ impl AppState {
 /// クイックキャプチャの入れ先が、このボードのどのカラムか。
 ///
 /// 設定が指しているカラムがこのボードにあればそれ、別のボードなら `None`、
-/// 設定が無い（または消えている）なら既定の先頭カラム。gpui 版の
-/// `resolve_capture_target` と同じ落とし方です。
+/// 設定が無い（または消えている）なら既定の先頭カラム。落とし方は
+/// `commands::capture_target` と揃えてあります。
 fn capture_column_of(board: &Board, database: &Database) -> Option<ColumnId> {
     let default = || board.columns.first().map(|column| column.id);
     match database.load_capture_target().unwrap_or(None) {

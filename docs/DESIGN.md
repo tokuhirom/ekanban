@@ -205,8 +205,12 @@ README が「いちばん大事にしています」と書いているところ�
 - **`web/src/ipc/types/` は手で書かない。** `ts-rs` が Rust の型から書き出し（`make types`）、生成物をコミットして CI で差分を見る
 - **大文字と小文字だけが違うファイル名を作らない。** macOS と Windows のファイルシステムは大文字小文字を区別しないので、`Foo.tsx` と `foo.ts` が同じ名前に潰れ、Linux では通ったビルドがそこだけ落ちる
 - **配るものは Tauri のバンドラが作る。** macOS は `.app` と `.dmg`、Linux は `.deb` と `.AppImage` に加えて `.tar.gz`（root を要求しない導線）、Windows は `.zip` と NSIS のインストーラ。ad-hoc 署名の指定は `tauri.conf.json` にあり、手元で組んだものと CI が組んだものが同じ署名になる（[ADR 0014](adr/0014-unsigned-apple-silicon-only-macos-builds.md)）
-- **`cargo run` はアプリを起動する。** ワークスペースの `default-members` を `crates/app` にしてある。移行前は単一クレートだったので `cargo run` がそのままアプリで、そこを戻した。**代わりに `--workspace` を省いた `cargo` のコマンドはそこだけを見る**ので、Makefile と CI は必ず `--workspace` を付ける
+- **`cargo run` はアプリを起動する。** ワークスペースの `default-members` を `crates/app` にしてある。**代わりに `--workspace` を省いた `cargo` のコマンドはそこだけを見る**ので、Makefile と CI は必ず `--workspace` を付ける
 - **Node の依存を増やさない。** `cargo` だけで完結していたところに増やしたものなので、ロックファイルを固定し、CI で監査する
+
+### 根拠の書き方
+
+- **根拠として、このリポジトリに無いものを挙げない。** コメントも文書も、いま開けるコード・この文書の決まりごと・ADR だけを指す。消えた実装との一致を理由にすると、読み手は挙げられたものを開けないので、その根拠が正しいかどうかも、いま守れているかどうかも確かめられない。**経緯は ADR にだけ残す**——ADR は書き換えない文書なので、消えたものの名前が出てよいのはそこだけ（[ADR 0026](adr/0026-gpui-stays-only-in-the-adrs.md)）
 
 ---
 

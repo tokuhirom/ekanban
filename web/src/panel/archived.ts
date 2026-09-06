@@ -40,7 +40,7 @@ export function archivedGroups(
 /// アーカイブした日の見出し。
 ///
 /// `archived_cards` に入っているのに `archivedAt` が無い行は、本来作られません。
-/// 出す場所が無くて消えるより、見出しを付けて出します（gpui 版と同じ）。
+/// 出す場所が無くて消えるより、見出しを付けて出します。
 export function archivedDayLabel(archivedAt: number | null): string {
   if (archivedAt === null) return "日付なし";
   const at = new Date(archivedAt);

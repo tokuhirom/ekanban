@@ -3,8 +3,8 @@
 //! [ADR 0016](../../../docs/adr/0016-where-the-app-says-things.md) の「アプリが
 //! 伝えることを行き先ごとに分ける」はそのまま生きます。**行き先を決める材料を、
 //! コマンドの側が付けて返します**——`Validation` は入力欄の脇に、それ以外は
-//! ダイアログに。文言は gpui 版の `board_error_detail` / `db_error_detail` /
-//! `field_error_for` からそのまま移しています。
+//! ダイアログに。**文言もここで決めます**。`rusqlite` や `BoardError` の
+//! 文字列をそのまま出すと、次に何をすればよいかが伝わりません。
 //!
 //! 拒否・キャンセル・変更なしは、いまと同じく**何も言いません**。だからこれらは
 //! `AppError` にならず、`Ok` のまま返ります。
@@ -98,8 +98,8 @@ impl AppError {
 
 /// 入力欄の脇に出す失敗。出さないものは `None`。
 ///
-/// gpui 版の `field_error_for` から移しています。入力の間違いは、押した場所の
-/// そばで直せるほうが速い。ダイアログに出すと、閉じてから打ち直すことになる。
+/// 入力の間違いは、押した場所のそばで直せるほうが速い。ダイアログに出すと、
+/// 閉じてから打ち直すことになる。
 fn field_for(error: &BoardError) -> Option<(Field, &'static str, Option<String>)> {
     let (field, message, value) = match error {
         BoardError::EmptyCardTitle => (Field::CardTitle, "タイトルを入力してください", None),
@@ -164,8 +164,8 @@ fn board_detail(error: &BoardError) -> String {
 
 /// SQLite の失敗を、使う人が手を打てる言葉にする。
 ///
-/// gpui 版の `db_error_detail` から移しています。エラーコードごとに「次に何を
-/// すればよいか」を書くのが要点で、`rusqlite` の文言をそのまま出さない。
+/// エラーコードごとに「次に何をすればよいか」を書くのが要点で、`rusqlite` の
+/// 文言をそのまま出さない。
 fn db_detail(error: &DbError) -> String {
     match error {
         DbError::Sqlite(error) => match error {

@@ -1,13 +1,13 @@
 //! クイックキャプチャの割り当て（`docs/DESIGN.md`「クイックキャプチャ」、[ADR 0012]）。
 //!
-//! **保存の形は gpui 版のままです**（`ctrl-alt-shift-cmd-n`）。中身は同じ
-//! `global-hotkey` のクレートを `tauri-plugin-global-shortcut` 越しに使うので、
-//! 登録できる組み合わせも変わりません。形を変えなければ、**旧いデータベースの
-//! 割り当てはそのまま使えます**——移行の必要が無いなら、作らないほうがよい。
+//! **`app_state` に入る形（`ctrl-alt-shift-cmd-n`）を変えません。** この形で
+//! 書かれたデータベースが既にあるので、変えれば移行が要り、読めなかった
+//! 割り当ては黙って消えます。移行が要らないなら、作らないほうがよい。
 //!
-//! 画面から届くのは `KeyboardEvent.code`（`"KeyN"`）です。ここで gpui と同じ
-//! キー名（`"n"`）に直してから組み立てるので、保存された文字列は前と同じ形に
-//! なります。
+//! そのため、ここが 3 つの表記の間に立ちます。画面から届くのは
+//! `KeyboardEvent.code`（`"KeyN"`）、登録に渡すのは `Code` と `Modifiers`、
+//! 保存するのは `"n"` のようなキー名です。変換を両方向ともここに閉じ込めるので、
+//! 外の 2 つは互いの表記を知りません。
 //!
 //! [ADR 0012]: ../../../docs/adr/0012-focus-after-quick-capture-on-linux.md
 
@@ -53,7 +53,7 @@ pub struct Shortcut {
     alt: bool,
     shift: bool,
     meta: bool,
-    /// gpui 版と同じキー名（`"n"`、`"f12"`、`"left"`）。保存の形がこれ。
+    /// 保存に使うキー名（`"n"`、`"f12"`、`"left"`）。`app_state` に入るのがこれ。
     key: String,
     code: Code,
 }
@@ -130,7 +130,7 @@ impl Shortcut {
             modifiers |= Modifiers::SHIFT;
         }
         if self.meta {
-            // macOS では Cmd、X11 では Mod4（Super）に落ちる。gpui の platform と同じ。
+            // macOS では Cmd、X11 では Mod4（Super）に落ちる。
             modifiers |= Modifiers::SUPER;
         }
         GlobalShortcut::new(Some(modifiers), self.code)
@@ -204,7 +204,8 @@ fn single_ascii(value: &str) -> Option<char> {
     }
 }
 
-/// 保存する側のキー名を W3C の `code` に移す。gpui 版の `key_code` と同じ表。
+/// 保存する側のキー名を W3C の `code` に直す。[`key_name`] の逆向きで、
+/// 2 つの表が食い違うと保存した割り当てを登録し直せなくなる。
 fn key_code(key: &str) -> Option<Code> {
     let name = match key {
         "space" => "Space".to_string(),
@@ -246,9 +247,9 @@ fn key_code(key: &str) -> Option<Code> {
 
 /// この環境でグローバルホットキーを使えるか。使えないときは理由を返す。
 ///
-/// gpui 版の `platform_support` をそのまま移しています。**登録の戻り値を信じずに
-/// 環境そのものを先に見ます**——X11 の実装は、使えない環境でも成功したように
-/// 見えるためです。
+/// **登録の戻り値を信じずに、環境そのものを先に見ます**——X11 の実装は、
+/// 使えない環境でも成功したように見えるためです（`docs/DESIGN.md`
+/// 「クイックキャプチャ」）。
 pub fn platform_support() -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
@@ -329,7 +330,7 @@ mod tests {
         }
     }
 
-    /// 保存の形が gpui 版と同じであること。**ここが変わると、旧いデータベースの
+    /// 保存の形が変わっていないこと。**ここが変わると、既にあるデータベースの
     /// 割り当てが読めなくなります。**
     #[test]
     fn round_trips_a_shortcut_through_its_stored_form() {

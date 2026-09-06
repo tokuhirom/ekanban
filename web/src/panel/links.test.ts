@@ -45,7 +45,7 @@ describe("linkAt", () => {
   const links = [span(4, 25, "https://example.com/a")];
 
   it("端も含めて当たる", () => {
-    // `https` の `h` の上と、末尾の 1 文字の後ろでも開ける（gpui 版と同じ）。
+    // `https` の `h` の上と、末尾の 1 文字の後ろでも開ける。
     expect(linkAt(links, 4)?.url).toBe("https://example.com/a");
     expect(linkAt(links, 25)?.url).toBe("https://example.com/a");
     expect(linkAt(links, 12)?.url).toBe("https://example.com/a");
