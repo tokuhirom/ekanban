@@ -35,6 +35,14 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      # **cargo を 1 度も呼ぶ前に置きます。** あとに置くと、それまでの手順が
+      # 組んだ target/ の上に、別の feature で組まれた target/ が展開され、
+      # 1 つのディレクトリに 2 世代の成果物が混ざります。そうなると最後の
+      # `cargo build` が食い違う組み合わせを掴んで E0460（"found possibly newer
+      # version of crate"）で落ちます。`cross` ジョブと同じ位置です。
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
       - name: Install Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -70,9 +78,6 @@ jobs:
           cargo build -p ekanban-harness --example manual_screenshot_seed
           cargo build -p ekanban-harness
           npm --prefix web run e2e
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
       - name: Check formatting
         run: cargo fmt --all -- --check

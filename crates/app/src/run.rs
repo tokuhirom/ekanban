@@ -22,6 +22,15 @@ pub(crate) const BOARD_WINDOW: &str = "board";
 pub fn run() {
     diagnostics::install_panic_hook();
 
+    // **データベースに触るより前に断ります。** 画面が出ないと分かっている起動で
+    // ロックを握り、控えを取り、盤面を読むのは、どれも無駄で、どれも副作用が
+    // あります。
+    let context = tauri::generate_context!();
+    if let Err(reason) = check_dev_server(context.config()) {
+        diagnostics::report_fatal(&reason);
+        return;
+    }
+
     let path = database_path();
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
@@ -177,7 +186,7 @@ pub fn run() {
             ipc::close_capture_window,
             ipc::log_frontend_error,
         ])
-        .build(tauri::generate_context!());
+        .build(context);
 
     let app = match app {
         Ok(app) => app,
@@ -195,6 +204,70 @@ pub fn run() {
         }
         handle_run_event(app, &event);
     });
+}
+
+/// デバッグビルドが繋ぎに行く開発サーバが、上がっているか。
+///
+/// **デバッグビルドには `devUrl` が焼き込まれています。** 開発サーバが無いまま
+/// 起動すると、ウィンドウは開いてメニューバーまで出るのに、中身が webview の
+/// 「Connection refused」になります。**動いているように見えて動いていない**ので、
+/// ここで先に断って、次に何をすればいいかを出します
+/// （`docs/DESIGN.md`「アプリが伝えること」）。
+///
+/// リリースビルドは画面を埋め込んでいるので、この関門は通りません。
+fn check_dev_server(config: &tauri::Config) -> Result<(), String> {
+    if !tauri::is_dev() {
+        return Ok(());
+    }
+    let Some(url) = config.build.dev_url.as_ref() else {
+        return Ok(());
+    };
+    if dev_server_is_up(url) {
+        return Ok(());
+    }
+
+    // 行ごとに書くのは、打ってもらうコマンドの字下げをそのまま残すためです。
+    // 文字列の行末に `\` を置くと、次の行の頭の空白まで消えます。
+    Err([
+        &format!("画面を読み込めませんでした（{url} に繋がりません）。"),
+        "",
+        "デバッグビルドは Vite の開発サーバから画面を読みます。",
+        "次のどちらかで起動してください。",
+        "",
+        "  make dev",
+        "      開発サーバごと起動する（ふだんはこちら）",
+        "",
+        "  cd crates/app && ../../web/node_modules/.bin/tauri build --debug --no-bundle",
+        "      画面を埋め込んだバイナリを作る（できたら target/debug/ekanban）",
+    ]
+    .join("\n"))
+}
+
+/// `url` の宛先に TCP で繋げるか。
+///
+/// HTTP は投げません。**知りたいのは「誰かが待ち受けているか」だけ**で、それは
+/// 接続できるかどうかで分かります。名前が引けない・宛先が無いときも「上がって
+/// いない」に倒します——起動を止める判断なので、迷ったら通さないほうではなく、
+/// 理由を出すほうに倒しています。
+fn dev_server_is_up(url: &tauri::Url) -> bool {
+    use std::net::{TcpStream, ToSocketAddrs as _};
+    use std::time::Duration;
+
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    let Some(port) = url.port_or_known_default() else {
+        return false;
+    };
+    let Ok(addresses) = (host, port).to_socket_addrs() else {
+        return false;
+    };
+    // 相手は自分の機械の中にいるので、待つのは一瞬でいい。ここで長く待つと、
+    // 開発サーバを上げ忘れたときに「固まった」ように見えます。
+    let timeout = Duration::from_millis(500);
+    addresses
+        .into_iter()
+        .any(|address| TcpStream::connect_timeout(&address, timeout).is_ok())
 }
 
 /// アプリそのものに届く出来事。
@@ -277,5 +350,42 @@ fn reopen<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
             Err(error) => diagnostics::log(&format!("failed to reopen the board: {error}")),
         },
         Err(error) => diagnostics::log(&format!("failed to reopen the board: {error}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::net::TcpListener;
+
+    /// 待ち受けていれば見つけ、閉じれば見失う。
+    ///
+    /// ポートを固定しないのは、走らせる機械で埋まっているかもしれないため。
+    /// 0 番を頼むと OS が空いているものを選びます。
+    ///
+    /// **上がっている側と落ちている側を、1 本のテストで順に見ます。** 2 本に
+    /// 分けると、片方が閉じたポートを、並行して走るもう片方が 0 番の要求で
+    /// 引き当てることがあります。手放したばかりの番号は、次に配られる番号
+    /// でもあるからです。Windows でこれを踏みました。
+    #[test]
+    fn sees_a_listener_come_and_go() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("空いているポートがある");
+        let port = listener.local_addr().expect("番地が読める").port();
+        let url = tauri::Url::parse(&format!("http://127.0.0.1:{port}")).expect("URL になる");
+
+        assert!(dev_server_is_up(&url), "待ち受けているのに見つからない");
+
+        drop(listener);
+
+        assert!(!dev_server_is_up(&url), "閉じたのに繋がっている");
+    }
+
+    /// 名前が引けないときも「上がっていない」に倒す。
+    #[test]
+    fn treats_an_unresolvable_host_as_down() {
+        let url = tauri::Url::parse("http://ekanban.invalid:1420").expect("URL になる");
+
+        assert!(!dev_server_is_up(&url));
     }
 }
