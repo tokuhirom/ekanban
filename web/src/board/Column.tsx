@@ -17,6 +17,9 @@ interface Props {
   tags: readonly Tag[];
   dueStatuses: ReadonlyMap<number, DueStatus>;
   matched: ReadonlySet<number> | null;
+  /** 絞り込んでいるタグ。カード上のチップに印を付ける。 */
+  activeTag: number | null;
+  onToggleTagFilter: (tagId: number) => void;
   selectedCard: number | null;
   /** 最後の 1 本は消せない。理由を言わずにコントロールを無効にする（`docs/DESIGN.md`）。 */
   lastColumn: boolean;
@@ -40,6 +43,8 @@ export function Column({
   tags,
   dueStatuses,
   matched,
+  activeTag,
+  onToggleTagFilter,
   selectedCard,
   lastColumn,
   captureTarget,
@@ -182,6 +187,9 @@ export function Column({
       {/* カードの下の余白も落とし先。空のカラムに入れられなくなるので、
           高さは残す。 */}
       <div className="column-cards">
+        {/* 空のカラムでも、そこが落とし先だと分かるようにする。カードが
+            1 枚も無いと、掴んだものをどこへ持っていけばよいかが読めない。 */}
+        {column.cards.length === 0 && <p className="column-empty">ここにドロップ</p>}
         <SortableContext items={cardIds} strategy={verticalListSortingStrategy}>
           {column.cards.map((card) => (
             <Card
@@ -189,6 +197,8 @@ export function Column({
               card={card}
               tags={tags}
               due={dueStatuses.get(card.id)}
+              activeTag={activeTag}
+              onToggleTagFilter={onToggleTagFilter}
               // 隠さず減光する。隠すと挿入位置が動いてしまう（条件 4）。
               dimmed={matched !== null && !matched.has(card.id)}
               selected={selectedCard === card.id}

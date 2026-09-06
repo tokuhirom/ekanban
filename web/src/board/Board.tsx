@@ -378,7 +378,34 @@ export function Board() {
             onChange={(event) => {
               state.setSearch(event.target.value);
             }}
+            // 1 行の欄なので `Escape` で取り消す（`docs/DESIGN.md`「画面の作り」）。
+            // 盤面の割り当ては入力欄では効かないので、ここで受ける。
+            onKeyDown={(event) => {
+              if (event.key !== "Escape") return;
+              event.preventDefault();
+              state.setSearch("");
+            }}
           />
+          {/* 絞り込み中のタグを 1 つだけ出す。ヘッダにタグを一覧はしないが、
+              **減光の理由は画面から読めなければならない**（`docs/DESIGN.md`
+              「絞り込みと検索」）。何も絞り込んでいなければ何も出さない。 */}
+          {state.activeTag !== null && (
+            <span className="filter-chip">
+              <span className="tag-chip" style={{ background: state.activeTag.color }}>
+                {state.activeTag.name}
+              </span>
+              で絞り込み中
+            </span>
+          )}
+          {state.filtering && (
+            <button
+              type="button"
+              className="secondary clear-filter"
+              onClick={state.clearFilter}
+            >
+              クリア
+            </button>
+          )}
           {/* タグの追加・編集・削除はここだけから（`docs/DESIGN.md`）。メニューの
               「タグを整理…」も同じパネルを開きます。 */}
           <button
@@ -440,6 +467,8 @@ export function Board() {
                   tags={board.tags}
                   dueStatuses={state.dueStatuses}
                   matched={state.matched}
+                  activeTag={state.tagId}
+                  onToggleTagFilter={state.toggleTag}
                   selectedCard={selectedCard}
                   lastColumn={board.columns.length <= 1}
                   captureTarget={state.snapshot?.captureColumn === column.id}

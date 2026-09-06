@@ -38,6 +38,10 @@ interface FaceProps {
   card: CardData;
   tags: readonly Tag[];
   due: DueStatus | undefined;
+  /** 絞り込んでいるタグ。押されているチップに印を付けるのに使う。 */
+  activeTag?: number | null | undefined;
+  /** タグのチップが押された。ゴースト（`DragOverlay`）では渡さない。 */
+  onToggleTagFilter?: ((tagId: number) => void) | undefined;
 }
 
 /// カードの表面。ゴースト（`DragOverlay`）も同じものを描くので、掴んだ瞬間に
@@ -45,7 +49,7 @@ interface FaceProps {
 ///
 /// **高さを中身で変えすぎない**規則は残します。落とす位置が見て分かること
 /// （`docs/DESIGN.md`「ドラッグ＆ドロップ」の受け入れ条件）は、掴んでいる間に周りの高さが動かないことで決まります。
-export function CardFace({ card, tags, due }: FaceProps) {
+export function CardFace({ card, tags, due, activeTag, onToggleTagFilter }: FaceProps) {
   const cardTags = card.tagIds
     .map((id) => tags.find((tag) => tag.id === id))
     .filter((tag): tag is Tag => tag !== undefined);
@@ -68,13 +72,50 @@ export function CardFace({ card, tags, due }: FaceProps) {
       )}
       {cardTags.length > 0 && (
         <div className="card-tags">
-          {cardTags.map((tag) => (
+          {cardTags.map((tag) => {
+            const active = activeTag === tag.id;
             // タグの色はユーザーが決めたもの。直書きの色が許されるのは
             // ここだけ（`docs/DESIGN.md`）。
-            <span key={tag.id} className="tag-chip" style={{ background: tag.color }}>
-              {tag.name}
-            </span>
-          ))}
+            const chip = (
+              <>
+                {/* 絞り込み中であることを、色だけでなく印でも出す
+                    （`docs/DESIGN.md`「画面の作り」）。 */}
+                {active ? "✓ " : ""}
+                {tag.name}
+              </>
+            );
+            if (onToggleTagFilter === undefined) {
+              return (
+                <span key={tag.id} className="tag-chip" style={{ background: tag.color }}>
+                  {chip}
+                </span>
+              );
+            }
+            return (
+              <button
+                key={tag.id}
+                type="button"
+                className="tag-chip"
+                style={{ background: tag.color }}
+                aria-pressed={active}
+                title={active ? `${tag.name} の絞り込みを解除` : `${tag.name} で絞り込む`}
+                // カードの選択とドラッグに取られないようにする。押した先は
+                // 絞り込みで、カードを掴む操作ではない。
+                onPointerDown={(event) => {
+                  event.stopPropagation();
+                }}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onToggleTagFilter(tag.id);
+                }}
+                onDoubleClick={(event) => {
+                  event.stopPropagation();
+                }}
+              >
+                {chip}
+              </button>
+            );
+          })}
         </div>
       )}
       {card.description.trim() !== "" && <div className="card-description">{card.description}</div>}
@@ -93,7 +134,18 @@ interface Props extends FaceProps {
   onContextMenu: (cardId: number, at: { x: number; y: number }) => void;
 }
 
-export function Card({ card, tags, due, dimmed, selected, onSelect, onOpen, onContextMenu }: Props) {
+export function Card({
+  card,
+  tags,
+  due,
+  activeTag,
+  onToggleTagFilter,
+  dimmed,
+  selected,
+  onSelect,
+  onOpen,
+  onContextMenu,
+}: Props) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: handleId({ kind: "card", id: card.id }),
   });
@@ -131,7 +183,13 @@ export function Card({ card, tags, due, dimmed, selected, onSelect, onOpen, onCo
         onContextMenu(card.id, { x: event.clientX, y: event.clientY });
       }}
     >
-      <CardFace card={card} tags={tags} due={due} />
+      <CardFace
+        card={card}
+        tags={tags}
+        due={due}
+        activeTag={activeTag}
+        onToggleTagFilter={onToggleTagFilter}
+      />
     </article>
   );
 }
