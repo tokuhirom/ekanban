@@ -359,31 +359,26 @@ mod tests {
 
     use std::net::TcpListener;
 
-    /// 待ち受けている相手には繋がる。
+    /// 待ち受けていれば見つけ、閉じれば見失う。
     ///
-    /// ポートを固定しないのは、走らせる機械で埋まっているかもしれないためです。
+    /// ポートを固定しないのは、走らせる機械で埋まっているかもしれないため。
     /// 0 番を頼むと OS が空いているものを選びます。
-    #[test]
-    fn finds_a_listener() {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("空いているポートがある");
-        let port = listener.local_addr().expect("番地が読める").port();
-        let url = tauri::Url::parse(&format!("http://127.0.0.1:{port}")).expect("URL になる");
-
-        assert!(dev_server_is_up(&url));
-    }
-
-    /// 誰も待ち受けていなければ、上がっていないと見る。
     ///
-    /// **繋いだ相手を閉じてから聞きます。** 開いたまま番号だけ変えると、たまたま
-    /// 別のものが使っている番号を引いて、通ってしまうことがあります。
+    /// **上がっている側と落ちている側を、1 本のテストで順に見ます。** 2 本に
+    /// 分けると、片方が閉じたポートを、並行して走るもう片方が 0 番の要求で
+    /// 引き当てることがあります。手放したばかりの番号は、次に配られる番号
+    /// でもあるからです。Windows でこれを踏みました。
     #[test]
-    fn misses_a_closed_port() {
+    fn sees_a_listener_come_and_go() {
         let listener = TcpListener::bind("127.0.0.1:0").expect("空いているポートがある");
         let port = listener.local_addr().expect("番地が読める").port();
-        drop(listener);
         let url = tauri::Url::parse(&format!("http://127.0.0.1:{port}")).expect("URL になる");
 
-        assert!(!dev_server_is_up(&url));
+        assert!(dev_server_is_up(&url), "待ち受けているのに見つからない");
+
+        drop(listener);
+
+        assert!(!dev_server_is_up(&url), "閉じたのに繋がっている");
     }
 
     /// 名前が引けないときも「上がっていない」に倒す。
