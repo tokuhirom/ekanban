@@ -97,3 +97,7 @@
 | [0015](0015-a-menu-bar-on-every-platform.md) | どのプラットフォームでもメニューバーを出す | 2026-09-06 | 有効 |
 | [0016](0016-where-the-app-says-things.md) | アプリが伝えることを、行き先ごとに分ける | 2026-09-06 | 有効 |
 | [0017](0017-moving-the-ui-to-tauri.md) | UI を gpui-kit から Tauri へ移す | 2026-09-06 | 有効 |
+| [0018](0018-rust-owns-the-board-state.md) | 盤面の状態は Rust が持ち、webview は投影にする | 2026-09-06 | 有効 |
+| [0019](0019-typescript-react-vite-for-the-webview.md) | 画面は TypeScript + React + Vite で作る | 2026-09-06 | 有効 |
+| [0020](0020-pointer-based-drag-and-drop.md) | D&D はポインタイベントで作り、HTML5 の drag events は使わない | 2026-09-06 | 有効 |
+| [0021](0021-two-layer-testing-for-the-webview.md) | 画面のテストは、ハーネス経由の Playwright と、殻の煙テストに分ける | 2026-09-06 | 有効 |
