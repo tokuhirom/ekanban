@@ -7,7 +7,7 @@
 #
 # 生成物はコミットします。CI は `cargo test` のあとに差分が無いことを見て、
 # Rust 側と TypeScript 側がずれていないことを確かめます
-# （`docs/TAURI-MIGRATION.md` §3）。
+# （`docs/DESIGN.md`「境界を越える値」）。
 [env]
 TS_RS_EXPORT_DIR = { value = "web/src/ipc/types", relative = true }
 
@@ -16,7 +16,7 @@ TS_RS_EXPORT_DIR = { value = "web/src/ipc/types", relative = true }
 # ts-rs の既定は `bigint` ですが、値を書くのは `serde_json` で、JSON の数値に
 # なります。受け取る `JSON.parse` が返すのも `number` です。型定義だけ `bigint`
 # にすると、**実行時の値と型が食い違ったまま通り**、`Map<bigint, Card>` の引きが
-# 黙って外れるような壊れ方をします（`docs/TAURI-MIGRATION.md` §3）。
+# 黙って外れるような壊れ方をします（`docs/DESIGN.md`「境界を越える値」）。
 #
 # `number` が嘘にならないこと——ID が 2^53 に届かないこと——は、
 # `crates/core/src/db/mod.rs` のテストが見ています。

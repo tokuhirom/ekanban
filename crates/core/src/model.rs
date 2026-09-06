@@ -627,7 +627,7 @@ impl Board {
     /// 初回のシード（[`Board::first_run`]）とは別物にしてある。1 つの関数が
     /// 両方を兼ねていたころは、初回の見た目を直すつもりで中身を変えると
     /// テストが壊れた。
-    // `crates/gpui` のテストもこれを使うので、feature で出す。
+    // ほかのクレートのテスト（`crates/harness` の example）も使うので、feature で出す。
     // 実行ファイルには入れない（`cargo build --release` では立たない）。
     #[cfg(any(test, feature = "test-fixtures"))]
     pub fn fixture() -> Self {

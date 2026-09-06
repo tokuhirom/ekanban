@@ -181,14 +181,16 @@ export function Board() {
     },
   });
 
-  // キーボードでの選択と移動（§6 の条件 6）。gpui 版と同じ 1 手の割り当て。
+  // キーボードでの選択と移動（`docs/DESIGN.md`「ドラッグ＆ドロップ」の受け入れ条件）。
+  // 1 手で 1 つ動く割り当て。
   const { undo, redo } = state;
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if (board === null) return;
 
       // 取り消しは入力欄の中でも打たれる。**入力欄では何もしません**——
-      // 既定の動きを止めなければ、webview が自分の履歴で取り消します（§7）。
+      // 既定の動きを止めなければ、webview が自分の履歴で取り消します
+      // （`docs/DESIGN.md`「メニューとキー割り当て」）。
       const intent = undoIntent(event, platform);
       if (intent !== null) {
         if (intent.target === "field") return;
@@ -321,7 +323,7 @@ export function Board() {
 
   /// ボードの名前を変える。
   ///
-  /// `rename_board` が名前を変えるのは**開いているボード**です（§3）。一覧の
+  /// `rename_board` が名前を変えるのは**開いているボード**です（`docs/DESIGN.md`「コマンドとイベント」）。一覧の
   /// ほかの行から呼ばれたときは、先にそのボードを開きます。
   function askRenameBoard(target: { id: number; name: string }) {
     setPrompt({

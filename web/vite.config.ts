@@ -20,10 +20,10 @@ export default defineConfig({
     emptyOutDir: true,
     // webview は 1 つのバージョンしか相手にしないので、古いブラウザ向けの
     // 変換は要りません。ネットワークに出ない約束があるので、外部の読み込みも
-    // 作りません (`docs/TAURI-MIGRATION.md` §9)。
+    // 作りません (`docs/DESIGN.md`「画面の作り」)。
     target: "es2022",
     assetsInlineLimit: 0,
-    // 窓ごとにエントリポイントを分けます (§4)。1 行を放り込むだけの
+    // 窓ごとにエントリポイントを分けます。1 行を放り込むだけの
     // クイックキャプチャに、盤面と D&D の一式を読ませる理由がありません。
     rollupOptions: {
       input: {

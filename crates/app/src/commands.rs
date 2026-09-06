@@ -1,10 +1,10 @@
-//! `docs/TAURI-MIGRATION.md` §3 のコマンド。
+//! `docs/DESIGN.md`「コマンドとイベント」のコマンド。
 //!
 //! **1 つのコマンドが 1 つのモデル操作を呼び、保存し、スナップショットを返す。**
 //! 名前は `model.rs` / `Database` のメソッドに揃えてあります。
 //!
-//! ここに `tauri` は出てきません。`#[tauri::command]` の包みは段階 3 で足し、
-//! §10 の開発用ハーネスは同じ関数を HTTP に出します。**偽物のバックエンドを
+//! ここに `tauri` は出てきません。`#[tauri::command]` の包みは `ipc.rs` にあり、
+//! 開発用のハーネスは同じ関数を HTTP に出します。**偽物のバックエンドを
 //! TypeScript で書かない**ための土台なので、この層が Tauri を知らないことは
 //! 都合ではなく設計です。
 
@@ -152,7 +152,7 @@ const TAG: &str = "タグを操作できませんでした";
 /// カードを 1 枚足す。**タイトルが決まってから 1 回だけ呼ばれます。**
 ///
 /// gpui 版は先にカードを足し、タイトルが入るまで保存を保留し、取り下げられたら
-/// 引っこめていました。下書きは webview のものになったので（§2）その経路は
+/// 引っこめていました。下書きは webview のものになったので（`docs/DESIGN.md`「状態の持ち主」）その経路は
 /// 消え、「無題のカードを作らない」は**ここで断ればよくなりました**。
 ///
 /// `Board::add_card` はタイトルを見ません（gpui 版が空文字で呼んでいたため）。
@@ -176,7 +176,7 @@ pub fn add_card(
 /// カードの中身をまとめて書き換える。チェックリストも項目ごと一括で受ける。
 ///
 /// 期限は `"YYYY-MM-DD"` の文字列か空文字で受けます。読めない値は入力欄に返る
-/// `Validation` になります（§3）。
+/// `Validation` になります（`docs/DESIGN.md`「コマンドとイベント」）。
 #[allow(clippy::too_many_arguments)]
 pub fn update_card(
     state: &AppState,
@@ -367,7 +367,7 @@ pub fn redo(state: &AppState) -> Result<Snapshot, AppError> {
 
 // ---------------------------------------------------------------- 絞り込み
 
-/// 検索語とタグに一致するカードの ID を返す（§5）。
+/// 検索語とタグに一致するカードの ID を返す（`docs/DESIGN.md`「絞り込みと検索」）。
 ///
 /// **判定は Rust に残します。** 全角半角と大文字小文字の正規化を TypeScript で
 /// もう一度書くと、2 つの正規化がずれた日にカードが見つからなくなります。
@@ -479,7 +479,7 @@ fn with_extension(destination: &Path, extension: &str) -> PathBuf {
 
 /// 開いているボードをファイルに書き出す。書けたパスを返す。
 ///
-/// 行き先を選ぶのは呼ぶ側（OS のネイティブな保存ダイアログ、§9）です。ここは
+/// 行き先を選ぶのは呼ぶ側（OS のネイティブな保存ダイアログ、`docs/DESIGN.md`「アプリが伝えること」）です。ここは
 /// 中身を作って書くだけにして、ダイアログの都合をコマンドの層に持ち込みません。
 pub fn export_board(
     state: &AppState,
@@ -536,7 +536,7 @@ pub fn database_location(state: &AppState) -> PathBuf {
     state.database_path().to_path_buf()
 }
 
-/// 「場所を開く」で開く先。実際に開くのは呼ぶ側（`tauri-plugin-opener`、§9）。
+/// 「場所を開く」で開く先。実際に開くのは呼ぶ側（`tauri-plugin-opener`、`docs/DESIGN.md`「アプリが伝えること」）。
 pub fn reveal_database(state: &AppState) -> PathBuf {
     state.database_path().to_path_buf()
 }
@@ -663,7 +663,7 @@ pub fn capture_target(state: &AppState) -> Result<Option<CaptureTarget>, AppErro
 
 /// クイックキャプチャからカードを 1 枚足す。
 ///
-/// **ボードと同じ保存経路に乗せます**（§9）——カラムの末尾に足し、Undo の対象に
+/// **ボードと同じ保存経路に乗せます**（`docs/DESIGN.md`「クイックキャプチャ」）——カラムの末尾に足し、Undo の対象に
 /// なり、`created` が 1 件積まれます。キャプチャ先が開いているボードと違うときは、
 /// そちらを読んで書き、開いている盤面はそのままにします。
 pub fn capture_card(state: &AppState, title: &str) -> Result<Snapshot, AppError> {
@@ -736,7 +736,7 @@ pub fn set_capture_column(
     state.snapshot()
 }
 
-/// 割り当てを覚える。**登録できなかった割り当ては保存しません**（§9）ので、
+/// 割り当てを覚える。**登録できなかった割り当ては保存しません**（`docs/DESIGN.md`「クイックキャプチャ」）ので、
 /// 呼ぶ側が登録に成功してからここを呼びます。読めない文字列はここで断ります。
 pub fn set_quick_capture_shortcut(
     state: &AppState,
@@ -751,7 +751,7 @@ pub fn set_quick_capture_shortcut(
 
 // ---------------------------------------------------------------- 記録
 
-/// webview の未捕捉例外を、Rust 側と同じログに落とす（§9）。
+/// webview の未捕捉例外を、Rust 側と同じログに落とす（`docs/DESIGN.md`「アプリが伝えること」）。
 ///
 /// webview の失敗が黙って消えると、原因を追う手段がなくなります。
 pub fn log_frontend_error(message: &str) {

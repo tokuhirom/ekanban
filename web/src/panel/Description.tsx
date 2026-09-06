@@ -1,4 +1,4 @@
-// 説明の入力欄と、その裏に重ねたリンクの表示層（§4、[ADR 0002]）。
+// 説明の入力欄と、その裏に重ねたリンクの表示層（`docs/DESIGN.md`「画面の作り」、[ADR 0002]）。
 //
 // 説明はプレーンテキストのままなので、`textarea` を捨てません。**同じ字送りの
 // 表示層を裏に敷き**、そこで URL に色と下線を付けます。入力欄の文字は透明に
@@ -10,7 +10,7 @@
 //
 // [ADR 0002]: ../../../docs/adr/0002-links-inside-the-description-field.md
 
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { useIpc } from "../ipc";
 import type { Platform } from "../ipc/types/Platform";
@@ -27,9 +27,22 @@ interface Props {
 export function Description({ id, value, platform, onChange }: Props) {
   const ipc = useIpc();
   const [links, setLinks] = useState<readonly UrlSpan[]>([]);
+  const input = useRef<HTMLTextAreaElement>(null);
+
+  // 打った分だけ枠が伸びます（#89）。**`scrollHeight` を読む前に高さを捨てます**
+  // ——縮めるときは、いまの高さのままでは `scrollHeight` がそれより小さくならず、
+  // 一度伸びた枠が戻らなくなります。
+  //
+  // 表示層は `inset: 0` でこの枠に付いてくるので、こちらだけを測れば足ります。
+  useLayoutEffect(() => {
+    const element = input.current;
+    if (element === null) return;
+    element.style.height = "auto";
+    element.style.height = `${String(element.scrollHeight)}px`;
+  }, [value]);
 
   // 打つたびに Rust に聞きます。**見つけ方を 2 か所に持たない**ためで、往復
-  // するのは位置の配列だけです（絞り込みと同じ考え方、§5）。返事が 1 打鍵ぶん
+  // するのは位置の配列だけです（絞り込みと同じ考え方、`docs/DESIGN.md`「絞り込みと検索」）。返事が 1 打鍵ぶん
   // 遅れても、遅れて色が付くだけです。
   useEffect(() => {
     let cancelled = false;
@@ -67,6 +80,7 @@ export function Description({ id, value, platform, onChange }: Props) {
       </div>
       <textarea
         id={id}
+        ref={input}
         className="field-input card-description-input"
         value={value}
         placeholder="任意。詳しいことがあれば"

@@ -1,5 +1,5 @@
-// 段階 6 の受け入れ条件——メニューの行き先、テーマ、取り消しの振り分け
-// （`docs/TAURI-MIGRATION.md` §7、§12）。
+// メニューの行き先、テーマ、取り消しの振り分け
+// （`docs/DESIGN.md`「メニューとキー割り当て」）。
 //
 // **メニューバーそのものはここに出ません。** 描くのは OS で、押されたことは
 // Rust が `app:action` で流します。ここで確かめるのは、その先——受け取った
@@ -7,7 +7,7 @@
 // 開いていて（`src/ipc/harness.ts`）、押されたことにできます。
 //
 // 本物のメニューが出て、押すとこの口に届くところは、殻の煙テストの担当です
-// （§10）。
+// （`docs/DESIGN.md`「テスト」）。
 
 import { expect, test, type Page } from "@playwright/test";
 
@@ -139,7 +139,7 @@ test("入力欄で Ctrl+Z を打っても、盤面は巻き戻らない", async 
   await expect.poll(storedTitles).toContain("残るカード");
 
   // 説明を打っている最中の取り消しは、その欄のもの。盤面まで戻ると、書いて
-  // いた行が消えたように見える（§7）。
+  // いた行が消えたように見える（`docs/DESIGN.md`「メニューとキー割り当て」）。
   await page.locator(".card", { hasText: "残るカード" }).dblclick();
   await page.locator(".card-description-input").fill("打ちかけの説明");
   await page.locator(".card-description-input").press("ControlOrMeta+z");

@@ -41,7 +41,7 @@ export interface BoardState {
   beginDrag: (activeId: string) => void;
   dragOver: (overId: string | null) => void;
   endDrag: (cancelled: boolean) => void;
-  /** キーボードでカードを動かす（§6 の条件 6）。 */
+  /** キーボードでカードを動かす（`docs/DESIGN.md`「ドラッグ＆ドロップ」の受け入れ条件）。 */
   moveCard: (cardId: number, toColumnId: number, toIndex: number) => void;
   /** 盤面を返さないもの（起動の読み込み、絞り込み、表示の状態）が失敗した理由。
    *
@@ -61,7 +61,7 @@ export interface BoardState {
   /** 開いているカードの編集パネル。 */
   editing: Editing | null;
   openCard: (cardId: number) => void;
-  /** そのカラムに新しいカードを足す下書きを開く。まだ何も保存しない（§2）。 */
+  /** そのカラムに新しいカードを足す下書きを開く。まだ何も保存しない（`docs/DESIGN.md`「状態の持ち主」）。 */
   newCard: (columnId: number) => void;
   closePanel: () => void;
   /** 保存されているクイックキャプチャの割り当て。無ければ `null`。 */
@@ -105,7 +105,7 @@ export function useBoardState(): BoardState {
   const [result, setResult] = useState<{ query: string; ids: ReadonlySet<number> } | null>(null);
   // ドラッグ中だけの盤面。**Rust には渡しません**——離した瞬間に 1 回だけ
   // `move_card` / `move_column` を呼び、返ったスナップショットで置き換えます
-  // （§6、ADR 0018）。
+  // （`docs/DESIGN.md`「ドラッグ＆ドロップ」、ADR 0018）。
   const [drag, setDrag] = useState<{ activeId: string; original: Board; preview: Board } | null>(
     null,
   );
@@ -175,11 +175,11 @@ export function useBoardState(): BoardState {
   }, [ipc, report]);
 
   // クイックキャプチャが書いたとき、盤面はこちらが呼んでいないところで変わる
-  // （§3）。**差し替えは `run` と同じ 1 本**で、届いた盤面をそのまま載せる。
+  // （`docs/DESIGN.md`「コマンドとイベント」）。**差し替えは `run` と同じ 1 本**で、届いた盤面をそのまま載せる。
   useEffect(() => ipc.onBoardChanged(setSnapshot), [ipc]);
 
   // 検索語が変わるたびに一致する ID を Rust に聞く。**同じ判定を
-  // TypeScript にもう 1 つ持たない**（§5）。返るのは ID の配列だけなので、
+  // TypeScript にもう 1 つ持たない**（`docs/DESIGN.md`「絞り込みと検索」）。返るのは ID の配列だけなので、
   // 打鍵ごとに呼んでも往復するのはそれだけ。
   //
   // 順番の入れ替わりに備えて、いちばん新しい問い合わせの答えだけを採る。

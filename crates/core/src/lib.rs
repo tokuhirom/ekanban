@@ -1,8 +1,8 @@
 //! ekanban の中核。盤面のモデル、SQLite、控え、置き場所、多重起動の防止。
 //!
-//! ここには UI が入らない。gpui にも tauri にも依存しないので、テストは GUI の
+//! ここには UI が入らない。`tauri` に依存しないので、テストは GUI の
 //! ランタイム無しで走り、Tauri のアプリと開発用のハーネスが同じコードを使える
-//! （`docs/TAURI-MIGRATION.md` §1）。
+//! （`docs/DESIGN.md`「層の分け方」）。
 
 pub mod backup;
 pub mod db;
@@ -16,8 +16,8 @@ use std::path::PathBuf;
 
 /// JavaScript が誤差なく扱える整数の上限（2^53 - 1）。
 ///
-/// ID も時刻も JSON の数値として webview に渡ります（`docs/TAURI-MIGRATION.md`
-/// §3）。ここを超えた値は JavaScript 側で丸められ、**落ちずに別のものを指します**。
+/// ID も時刻も JSON の数値として webview に渡ります（`docs/DESIGN.md`
+/// 「境界を越える値」）。ここを超えた値は JavaScript 側で丸められ、**落ちずに別のものを指します**。
 /// 上限に当たっていないことは `db` のテストが見ています。
 pub const MAX_SAFE_JS_INTEGER: i64 = 9_007_199_254_740_991;
 

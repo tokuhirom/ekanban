@@ -2238,7 +2238,7 @@ mod tests {
             )
             .unwrap()
     }
-    /// ID は JSON の数値として webview に渡る（`docs/TAURI-MIGRATION.md` §3）。
+    /// ID は JSON の数値として webview に渡る（`docs/DESIGN.md`「境界を越える値」）。
     ///
     /// ボードごとに `board_id << 32` で ID の名前空間を切っているので、ボードの
     /// 番号が伸びるほど ID の桁が上がる。2^53 を超えると JavaScript 側で丸められ、
@@ -2292,7 +2292,7 @@ mod tests {
         }
     }
 
-    /// webview に渡る JSON の形（`docs/TAURI-MIGRATION.md` §3）。
+    /// webview に渡る JSON の形（`docs/DESIGN.md`「境界を越える値」）。
     ///
     /// 鍵は camelCase、期限は `"YYYY-MM-DD"` の文字列、時刻は数値。**時刻の単位は
     /// ミリ秒**で、秒ではない（`now()` が `as_millis`）。ここを取り違えると

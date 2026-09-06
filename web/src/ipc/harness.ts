@@ -1,4 +1,4 @@
-// 開発用ハーネス越しの実装（`docs/TAURI-MIGRATION.md` §10）。
+// 開発用ハーネス越しの実装（`docs/DESIGN.md`「テスト」）。
 //
 // `ekanban-harness` が `crates/app` のコマンドをそのまま HTTP に出しているので、
 // **通っているのは本物の `ekanban-core`** です。偽物のバックエンドを
@@ -105,7 +105,7 @@ export function harnessIpc(base: string): Ipc {
       // ハーネスにメニューはありません。**押されたことにする口**だけ開けて、
       // メニューの行き先（`shell/actions.ts` の配り先）を Playwright から
       // 確かめられるようにします。本物のメニューバーが出ることは、殻の煙
-      // テストが見ます（§10）。
+      // テストが見ます（`docs/DESIGN.md`「テスト」）。
       window.ekanbanMenu = handler;
       return () => {
         delete window.ekanbanMenu;

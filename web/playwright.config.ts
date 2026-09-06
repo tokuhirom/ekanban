@@ -1,6 +1,6 @@
 import { defineConfig, devices } from "@playwright/test";
 
-// §6 の受け入れ条件を、2 つのエンジンで確かめます。
+// `docs/DESIGN.md`「ドラッグ＆ドロップ」の受け入れ条件を、2 つのエンジンで確かめます。
 //
 // **ここで動かすのは本物の webview ではありません。** Playwright が繋がるのは
 // Chromium と WebKit であって、WebView2・WKWebView・WebKitGTK ではない

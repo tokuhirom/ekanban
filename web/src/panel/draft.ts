@@ -1,11 +1,11 @@
 // カードの編集パネルが持つ下書きと、その上の純粋な操作。
 //
-// **下書きは webview のものです**（`docs/TAURI-MIGRATION.md` §2）。打っている
+// **下書きは webview のものです**（`docs/DESIGN.md`「状態の持ち主」）。打っている
 // 途中の値を Rust に渡さないので、確定するまでここに溜まります。確定は
-// `update_card` の 1 回で、チェックリストも項目ごと一括で渡します（§3）。
+// `update_card` の 1 回で、チェックリストも項目ごと一括で渡します（`docs/DESIGN.md`「コマンドとイベント」）。
 //
 // ここに盤面の論理は入りません。入るのは「配列の何番目を入れ替える」までで、
-// 期限の書式が正しいかどうかのような判定は Rust に残します（§5）——同じ判定を
+// 期限の書式が正しいかどうかのような判定は Rust に残します（`docs/DESIGN.md`「絞り込みと検索」）——同じ判定を
 // TypeScript にもう 1 つ持つと、2 つがずれた日に画面と保存が食い違います。
 
 import type { Card } from "../ipc/types/Card";
@@ -126,7 +126,7 @@ export function quickDueDates(today: string): { label: string; date: string }[] 
 /// `"YYYY-MM-DD"` を UTC の正午として読む。
 ///
 /// **UTC で持ちます。** 地方時で作ると、`Date` の日付が実行している機械の
-/// タイムゾーンで 1 日ずれます（§3 が期限を文字列で運んでいるのと同じ理由）。
+/// タイムゾーンで 1 日ずれます（`docs/DESIGN.md`「コマンドとイベント」が期限を文字列で運んでいるのと同じ理由）。
 function parseIsoDate(value: string): Date | null {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
   if (match === null) return null;

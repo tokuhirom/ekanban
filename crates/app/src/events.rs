@@ -1,11 +1,11 @@
-//! Rust から webview への一方向のイベント（`docs/TAURI-MIGRATION.md` §3）。
+//! Rust から webview への一方向のイベント（`docs/DESIGN.md`「コマンドとイベント」）。
 //!
 //! **3 つだけです。** 増やすほど「いつ何が届くか」を webview 側で数えることに
-//! なるので、増やすときは §3 の表を先に直してください。
+//! なるので、増やすときは `docs/DESIGN.md` の規則を先に直してください。
 //!
-//! 名前と積荷だけをここに置き、実際に投げるのはウィンドウが出る段階 3 です
-//! （`tauri::Emitter`）。先に決めておくのは、コマンドの側が「これは自分の
-//! 戻り値で返るのか、イベントで届くのか」を迷わないためです。
+//! 名前と積荷だけがここにあり、実際に投げるのは `run.rs` と `ipc.rs`
+//! （`tauri::Emitter`）です。1 か所に集めておくのは、コマンドの側が「これは
+//! 自分の戻り値で返るのか、イベントで届くのか」を迷わないためです。
 
 use ekanban_core::model::CardId;
 use serde::Serialize;
@@ -16,7 +16,7 @@ use ts_rs::TS;
 /// 受け取った webview はスナップショットを差し替えます。
 pub const BOARD_CHANGED: &str = "board:changed";
 
-/// メニューが押されたとき。webview の dispatcher に流します（§7）。
+/// メニューが押されたとき。webview の dispatcher に流します（`docs/DESIGN.md`「メニューとキー割り当て」）。
 pub const APP_ACTION: &str = "app:action";
 
 /// キャプチャの保存が終わったとき。ウィンドウを閉じる / 失敗を出す。

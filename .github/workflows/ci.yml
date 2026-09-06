@@ -85,7 +85,7 @@ jobs:
 
       # Rust の型と、そこから生成した TypeScript の型がずれていないこと。
       # 上の `cargo test` が web/src/ipc/types/ に書き出すので、コミットして
-      # あるものと突き合わせる (`docs/TAURI-MIGRATION.md` §3)。
+      # あるものと突き合わせる (`docs/DESIGN.md`「境界を越える値」)。
       - name: Check the generated TypeScript types are up to date
         run: git diff --exit-code -- web/src/ipc/types
 
@@ -94,7 +94,7 @@ jobs:
 
       # 中核が UI ツールキットを引きずり込んでいないことを見る。
       # 依存の依存から入るほうがありがちなので、解決した依存グラフで確かめる
-      # (`docs/TAURI-MIGRATION.md` §1)。
+      # (`docs/DESIGN.md`「層の分け方」)。
       - name: Check that the core crate stays free of UI toolkits
         run: script/check-core-independence
 

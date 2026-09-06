@@ -2,7 +2,7 @@
 //
 // TypeScript には「安全でない操作」という 1 つの入口が無いので、型検査
 // (`tsc --strict`) と、型を無かったことにする書き方をここで止めるのとで
-// 代えます（`docs/TAURI-MIGRATION.md` §9）。
+// 代えます（`docs/DESIGN.md`「テスト」）。
 
 import js from "@eslint/js";
 import reactHooks from "eslint-plugin-react-hooks";

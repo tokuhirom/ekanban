@@ -3,7 +3,7 @@
 //! **中身はありません。** `commands` の関数をそのまま呼び、`AppState` を
 //! `tauri::State` から取り出すだけです。判断がここに入りはじめたら、それは
 //! `commands` に置き場所がなかったということなので、向こうに移してください。
-//! §10 の開発用ハーネスは `commands` の側を HTTP に出すので、ここに書いたものは
+//! `docs/DESIGN.md`「テスト」の開発用ハーネスは `commands` の側を HTTP に出すので、ここに書いたものは
 //! ブラウザからは通りません。
 
 use std::path::{Path, PathBuf};
@@ -293,7 +293,7 @@ pub fn database_location(state: State<'_, AppState>) -> PathBuf {
 
 /// 保存先を選ばせる。閉じられたら `None`。
 ///
-/// OS のネイティブな保存ダイアログです（§9）。**非同期のコマンドにしてあります**
+/// OS のネイティブな保存ダイアログです（`docs/DESIGN.md`「アプリが伝えること」）。**非同期のコマンドにしてあります**
 /// ——同期のコマンドは main スレッドで動き、そこでダイアログの返事を待つと
 /// ウィンドウごと固まります。
 #[tauri::command]
@@ -424,7 +424,7 @@ pub fn close_capture_window(app: AppHandle, focus_board: bool) {
 #[tauri::command]
 pub fn capture_card(app: AppHandle, state: State<'_, AppState>, title: String) -> Reply<Snapshot> {
     let snapshot = commands::capture_card(&state, &title)?;
-    // ボードの窓は、自分が呼んでいないこの変更を知らない（§3）。
+    // ボードの窓は、自分が呼んでいないこの変更を知らない（`docs/DESIGN.md`「コマンドとイベント」）。
     if let Err(error) = app.emit_to(crate::run::BOARD_WINDOW, events::BOARD_CHANGED, &snapshot) {
         ekanban_core::diagnostics::log(&format!(
             "failed to tell the board about a capture: {error}"

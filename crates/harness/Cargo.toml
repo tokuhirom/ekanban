@@ -1,7 +1,7 @@
 # 開発とテスト専用。**配りません。**
 #
 # `crates/app` のコマンドを、同じ名前で HTTP に出すだけのものです
-# （`docs/TAURI-MIGRATION.md` §10）。webview は `web/src/ipc/` の口を通して
+# （`docs/DESIGN.md`「テスト」）。webview は `web/src/ipc/` の口を通して
 # コマンドを呼ぶので、口の実装を差し替えるだけで、同じ画面がふつうのブラウザ
 # でも動きます。
 #

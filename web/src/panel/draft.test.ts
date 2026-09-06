@@ -1,4 +1,4 @@
-// 下書きの上の純粋な操作のテスト（`docs/TAURI-MIGRATION.md` §10 の「部品」）。
+// 下書きの上の純粋な操作のテスト（`docs/DESIGN.md`「テスト」の「部品」）。
 //
 // 操作から SQLite までを通した振る舞いは Playwright ＋ ハーネスの担当です。
 
@@ -31,7 +31,7 @@ describe("draftIsSavable", () => {
     expect(draftIsSavable(draft)).toBe(false);
   });
 
-  /// 期限の書式は Rust が読む（§5）。ここで判定を持つと 2 つがずれる。
+  /// 期限の書式は Rust が読む（`docs/DESIGN.md`「絞り込みと検索」）。ここで判定を持つと 2 つがずれる。
   it("読めない期限では止めない。断るのは Rust の仕事", () => {
     expect(draftIsSavable({ ...emptyDraft(), title: "書く", dueDate: "きのう" })).toBe(true);
   });

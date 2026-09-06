@@ -14,7 +14,7 @@ boards: Array<BoardSummary>, canUndo: boolean, canRedo: boolean,
 /**
  * 期限を持つカードの、いま時点での状態。
  *
- * `due_status` は `model.rs` の純粋関数で、判定は Rust に残します（§5）。
+ * `due_status` は `model.rs` の純粋関数で、判定は Rust に残します（`docs/DESIGN.md`「絞り込みと検索」）。
  * カードそのものには載せられません——`Card` はデータベースから来るもので、
  * 「今日が何日か」を知らないからです。
  *
