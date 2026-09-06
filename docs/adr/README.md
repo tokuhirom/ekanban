@@ -96,3 +96,4 @@
 | [0014](0014-unsigned-apple-silicon-only-macos-builds.md) | macOS は Apple Silicon 向けの未公証ビルドだけを配る | 2026-09-05 | 有効 |
 | [0015](0015-a-menu-bar-on-every-platform.md) | どのプラットフォームでもメニューバーを出す | 2026-09-06 | 有効 |
 | [0016](0016-where-the-app-says-things.md) | アプリが伝えることを、行き先ごとに分ける | 2026-09-06 | 有効 |
+| [0017](0017-moving-the-ui-to-tauri.md) | UI を gpui-kit から Tauri へ移す | 2026-09-06 | 有効 |
