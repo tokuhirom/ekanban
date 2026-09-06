@@ -1,5 +1,11 @@
 # Changelog
 
+## [v0.1.3](https://github.com/tokuhirom/ekanban/compare/v0.1.2...v0.1.3) - 2026-09-06
+
+### 変更
+- Say things where they will be read, or not at all by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/87
+- Draw the card panel menu above the fields it covers by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/94
+
 ## [v0.1.2](https://github.com/tokuhirom/ekanban/compare/v0.1.1...v0.1.2) - 2026-09-05
 
 ### 変更
