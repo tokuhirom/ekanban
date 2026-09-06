@@ -103,11 +103,10 @@ export function Board() {
     addBoard: () => {
       askCreateBoard();
     },
-    // 選んでいるカードのカラムへ。選んでいなければ先頭のカラムへ（gpui 版と
-    // 同じ決め方）。
+    // 選んでいるカードのカラムへ。選んでいなければ先頭のカラムへ。
     addCard: () => {
-      // アーカイブ表示にカードを足す場所は無い。理由を言う相手がいないので
-      // 黙って何もしない（gpui 版と同じ）。
+      // アーカイブ表示にカードを足す場所は無い。メニューとキーからしか来ない
+      // 拒否なので、黙って何もしない（`docs/DESIGN.md`「アプリが伝えること」）。
       if (board === null || state.showArchived) return;
       const column =
         board.columns.find((each) => each.cards.some((card) => card.id === selectedCard)) ??
@@ -159,8 +158,8 @@ export function Board() {
     revealDatabase: files.revealDatabase,
     revealBackups: files.revealBackups,
     // メニューからの取り消しも、入力欄にフォーカスがあるときは盤面を巻き戻し
-    // ません（gpui 版と同じ）。打っている途中の欄が、下の盤面ごと戻るのを
-    // 避けるためです。
+    // ません。打っている途中の欄が、下の盤面ごと戻るのを避けるためです
+    // （`shell/keys.ts` と同じ判定）。
     undo: () => {
       if (targetOf(document.activeElement) === "board") state.undo();
     },
@@ -417,7 +416,7 @@ export function Board() {
             タグ整理
           </button>
           {/* アーカイブの出入り口。件数を出すのは、溜まっていることに気づける
-              ようにするため（gpui 版と同じ）。 */}
+              ようにするため。 */}
           <button
             type="button"
             className="secondary archive-view"

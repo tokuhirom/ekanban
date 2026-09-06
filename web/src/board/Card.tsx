@@ -6,7 +6,7 @@ import type { DueStatus } from "../ipc/types/DueStatus";
 import type { Tag } from "../ipc/types/Tag";
 import { handleId } from "./dnd";
 
-/// 「9/4」。年をまたぐものだけ年を出す（gpui 版の `short_date` / `display_date`）。
+/// 「9/4」。年をまたぐものだけ年を出す。カードの面は狭いので、いまの年は落とす。
 export function shortDate(due: string): string {
   const [year = "", month = "", day = ""] = due.split("-");
   const thisYear = String(new Date().getFullYear());
@@ -14,7 +14,8 @@ export function shortDate(due: string): string {
   return year === thisYear ? short : `${year}/${month}/${day}`;
 }
 
-/// 期限の見出し。gpui 版の `render_due_badge` と同じ文言・同じ色の選び方。
+/// 期限の見出し。色も文言も `DueStatus` から作る。今日を基準にした判定は
+/// Rust の `due_statuses` が済ませてあるので、ここでは時計を見ない。
 ///
 /// **`*-foreground` を素の面の文字色に使わない。** あれは対応する背景の上に
 /// 載せるための色で、カードの面では背景と同化して読めない（`docs/DESIGN.md`）。
@@ -173,7 +174,7 @@ export function Card({
       // **1 回のクリックでは開きません。** クリックは選ぶ操作で、そこから
       // ドラッグも始まります（`activationConstraint` の 4px）。開くたびに
       // パネルが出ると、掴もうとしただけで画面が動きます。開くのは
-      // ダブルクリックか、選んだうえでの Enter（gpui 版の割り当てと同じ）。
+      // ダブルクリックか、選んだうえでの Enter。
       onDoubleClick={() => {
         onOpen(card.id);
       }}

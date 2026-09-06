@@ -2,8 +2,8 @@
 //!
 //! 見るのは 2 つです。**返ってきたスナップショット**と、**SQLite に何が入ったか**。
 //! 保存はコマンドの中で終わるので（`docs/DESIGN.md`「状態の持ち主」）、待ち合わせも巻き戻しも要りません。
-//! 開き直したデータベースから読むのは、gpui 版の `Harness::stored_board` と
-//! 同じやり方です。
+//! SQLite は毎回**開き直して**読みます。メモリ上の盤面を覗くと、保存を
+//! 忘れたコマンドがテストの中でだけ通ってしまいます。
 
 use std::path::PathBuf;
 
@@ -299,8 +299,8 @@ fn a_refused_operation_leaves_the_board_exactly_as_it_was() {
 
 /// 無題のカードは作らない（`docs/DESIGN.md`）。
 ///
-/// gpui 版は先にカードを足して取り下げる経路でこれを守っていた。下書きが
-/// webview のものになった以上、断る場所はコマンドの入口しかない（`docs/DESIGN.md`「状態の持ち主」）。
+/// 下書きは webview のものなので（`docs/DESIGN.md`「状態の持ち主」）、断る場所は
+/// コマンドの入口しかない。
 #[test]
 fn an_untitled_card_never_reaches_the_board_or_the_database() {
     let harness = Harness::open();
@@ -661,7 +661,7 @@ fn quick_capture_writes_to_a_board_that_is_not_open() {
 fn quick_capture_falls_back_to_the_first_column_when_no_target_has_been_chosen() {
     let harness = Harness::open();
     // 決まっていないから足せない、にはしない。キャプチャは 1 行を放り込む
-    // ためのもので、そこで設定を求めると用が足りない（gpui 版と同じ既定）。
+    // ためのもので、そこで設定を求めると用が足りない。
     commands::capture_card(&harness.state, "行き先を決めていない").expect("the card is added");
 
     let stored = harness.stored();
@@ -691,8 +691,9 @@ fn a_capture_target_that_no_longer_exists_falls_back_to_none() {
 #[test]
 fn the_quick_capture_shortcut_is_remembered_as_it_was_given() {
     let harness = Harness::open();
-    // 保存の形は gpui 版のまま。**旧いデータベースの割り当てをそのまま読める
-    // ことが、この形を変えない理由**（`shortcut.rs`）。
+    // 押された組み合わせが、そのままの形で `app_state` に入る。**既にある
+    // データベースの割り当てを読み続けられることが、この形を変えない理由**
+    // （`shortcut.rs`）。
     commands::set_quick_capture_shortcut(&harness.state, Some("ctrl-shift-n")).expect("stored");
 
     let (_, startup) = commands::load_startup_state(&harness.path).expect("the state is read");

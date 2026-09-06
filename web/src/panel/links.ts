@@ -38,7 +38,7 @@ export function segments(text: string, links: readonly UrlSpan[]): Segment[] {
 /// その位置にリンクがあるなら、それ。
 ///
 /// 端も含めます。`https` の `h` の上や、末尾の 1 文字の後ろで押しても開ける
-/// ようにするためで、gpui 版の `link_at` と同じです。
+/// ようにするため。
 export function linkAt(links: readonly UrlSpan[], offset: number): UrlSpan | null {
   return links.find((link) => offset >= link.start && offset <= link.end) ?? null;
 }

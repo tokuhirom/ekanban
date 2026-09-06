@@ -109,7 +109,7 @@ test("割り当てを記録して、解除できる", async ({ page }) => {
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
 
-  // 押された組み合わせがそのまま割り当てになる。保存の形は gpui 版と同じ。
+  // 押された組み合わせが、そのままの形で `app_state` に入る。
   await page.keyboard.press("Control+Alt+KeyK");
   await expect.poll(async () => (await storedStartup()).quickCaptureShortcut).toBe("ctrl-alt-k");
 

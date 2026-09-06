@@ -34,8 +34,7 @@ pub(crate) struct Display {
 /// 覚えていた矩形が、いまつながっている画面に丸ごと載るか。
 ///
 /// 載らないなら使いません。外付けの画面を外したあとに、そこにあった位置で
-/// 開くと、**ウィンドウが見えないまま起動します**。gpui 版の
-/// `restored_window_bounds` と同じ判定です。
+/// 開くと、**ウィンドウが見えないまま起動します**。
 pub(crate) fn fits_on_a_display(bounds: &WindowBoundsState, displays: &[Display]) -> bool {
     let left = f64::from(bounds.x);
     let top = f64::from(bounds.y);

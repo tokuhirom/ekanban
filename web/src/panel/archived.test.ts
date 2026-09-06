@@ -36,8 +36,8 @@ describe("archivedGroups", () => {
     ];
     const groups = archivedGroups(cards, null);
     expect(groups.map((group) => group.label)).toEqual(["2026/09/03", "2026/09/01"]);
-    // 同じ日のカードは ID の順。並びが揺れないようにするためで、gpui 版の
-    // `archived_groups` と同じ決め方。
+    // 同じ日のカードは ID の順。アーカイブした時刻が同じでも並びが揺れない
+    // ようにするため。
     expect(groups[0]?.cards.map((each) => each.id)).toEqual([2, 3]);
   });
 
