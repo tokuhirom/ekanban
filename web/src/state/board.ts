@@ -13,6 +13,7 @@ import type { AppError } from "../ipc/types/AppError";
 import type { Board } from "../ipc/types/Board";
 import type { DueStatus } from "../ipc/types/DueStatus";
 import type { Platform } from "../ipc/types/Platform";
+import type { Tag } from "../ipc/types/Tag";
 import type { Snapshot } from "../ipc/types/Snapshot";
 import type { ThemePreference } from "../ipc/types/ThemePreference";
 import { applyTheme } from "../shell/theme";
@@ -78,6 +79,16 @@ export interface BoardState {
   openTagPanel: () => void;
   /** 入力欄の中身。確定していないので Rust には渡していない。 */
   search: string;
+  /** 絞り込んでいるタグの ID。無ければ `null`。 */
+  tagId: number | null;
+  /** そのタグ本体。盤面から引き直したもので、消えていれば `null`。 */
+  activeTag: Tag | null;
+  /** カード上のタグチップから絞り込む。同じタグをもう一度で解除。 */
+  toggleTag: (tagId: number) => void;
+  /** 検索語とタグの両方を解除する。 */
+  clearFilter: () => void;
+  /** どちらかの条件が効いている。 */
+  filtering: boolean;
   sidebarCollapsed: boolean;
   /** 選ばれているテーマ。「システムに合わせる」の判定は CSS が持つ（`shell/theme.ts`）。 */
   theme: ThemePreference;
@@ -98,6 +109,9 @@ export function useBoardState(): BoardState {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const [search, setSearchValue] = useState("");
+  // 絞り込んでいるタグ。**検索語と並ぶもう 1 つの条件**で、条件はこの 2 つに
+  // 保ちます（`docs/DESIGN.md`「絞り込みと検索」）。
+  const [tagId, setTagIdValue] = useState<number | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [theme, setThemeValue] = useState<ThemePreference>("system");
   // どの検索語に対する答えかを一緒に持つ。前の検索語の結果で減光すると、
@@ -160,6 +174,7 @@ export function useBoardState(): BoardState {
         if (cancelled) return;
         setSnapshot(startup.snapshot);
         setSearchValue(startup.filter.search);
+        setTagIdValue(startup.filter.tagId);
         setSidebarCollapsed(startup.sidebarCollapsed);
         setPlatform(startup.platform);
         setThemeValue(startup.theme);
@@ -184,23 +199,31 @@ export function useBoardState(): BoardState {
   //
   // 順番の入れ替わりに備えて、いちばん新しい問い合わせの答えだけを採る。
   const pending = useRef(0);
+  const filtering = search.trim() !== "" || tagId !== null;
   useEffect(() => {
-    if (snapshot === null || search.trim() === "") return;
+    if (snapshot === null || !filtering) return;
     const ticket = ++pending.current;
     ipc
-      .filterCards(search, null)
+      .filterCards(search, tagId)
       .then((ids) => {
-        if (pending.current === ticket) setResult({ query: search, ids: new Set(ids) });
+        if (pending.current === ticket) setResult({ query: key(search, tagId), ids: new Set(ids) });
       })
       .catch((error: unknown) => {
         report("絞り込めませんでした", error);
       });
-  }, [ipc, report, search, snapshot]);
+  }, [filtering, ipc, report, search, snapshot, tagId]);
 
   // 答えがまだ返っていない間は絞り込まない。古い答えで減光するより、
   // 一瞬なにも暗くならないほうがよい。
-  const matched =
-    search.trim() === "" ? null : result?.query === search ? result.ids : null;
+  const matched = !filtering
+    ? null
+    : result?.query === key(search, tagId)
+      ? result.ids
+      : null;
+
+  // いま絞り込んでいるタグ。**盤面から引き直します**——タグを消したり名前を
+  // 変えたりしても、ヘッダの表示が古いままにならないように。
+  const activeTag = snapshot?.board.tags.find((tag) => tag.id === tagId) ?? null;
 
   const dueStatuses = useMemo(() => {
     const map = new Map<number, DueStatus>();
@@ -210,17 +233,47 @@ export function useBoardState(): BoardState {
     return map;
   }, [snapshot]);
 
-  const setSearch = useCallback(
-    (value: string) => {
-      setSearchValue(value);
-      // 覚えるのは確定した値。打鍵ごとに書いてもよいのは、これが
-      // `app_state` の 1 行の更新だからで、盤面の保存とは別の経路。
-      void ipc.setFilterState({ search: value, tagId: null }).catch((error: unknown) => {
+  // 絞り込みを覚える。打鍵ごとに書いてもよいのは、これが `app_state` の
+  // 1 行の更新だからで、盤面の保存とは別の経路。
+  //
+  // **2 つの条件をいつも一緒に書きます。** 片方だけ書くと、もう片方が
+  // 消えたことになって、次の起動で片肺の絞り込みが戻ります。
+  const remember = useCallback(
+    (next: { search: string; tagId: number | null }) => {
+      void ipc.setFilterState(next).catch((error: unknown) => {
         report("絞り込みを覚えられませんでした", error);
       });
     },
     [ipc, report],
   );
+
+  const setSearch = useCallback(
+    (value: string) => {
+      setSearchValue(value);
+      remember({ search: value, tagId });
+    },
+    [remember, tagId],
+  );
+
+  /// タグでの絞り込みを入れ替える。同じタグをもう一度渡すと解除。
+  ///
+  /// 押す場所はカードの上のタグチップです（`docs/DESIGN.md`「絞り込みと検索」）。
+  /// ヘッダにタグを一覧しないので、**ここが唯一の入口**になります。
+  const toggleTag = useCallback(
+    (id: number) => {
+      const next = tagId === id ? null : id;
+      setTagIdValue(next);
+      remember({ search, tagId: next });
+    },
+    [remember, search, tagId],
+  );
+
+  /// 絞り込みを両方とも解除する。
+  const clearFilter = useCallback(() => {
+    setSearchValue("");
+    setTagIdValue(null);
+    remember({ search: "", tagId: null });
+  }, [remember]);
 
   // ウィンドウのタイトルは盤面から導く。**文言を組むのは Rust**で
   // （`Snapshot.windowTitle`）、ここはそれを窓に渡すだけ。
@@ -407,6 +460,11 @@ export function useBoardState(): BoardState {
     toggleTagPanel,
     openTagPanel,
     search,
+    tagId,
+    activeTag,
+    toggleTag,
+    clearFilter,
+    filtering,
     sidebarCollapsed,
     theme,
     setTheme,
@@ -418,6 +476,14 @@ export function useBoardState(): BoardState {
     toggleSidebar,
     switchBoard,
   };
+}
+
+/// 「どの絞り込みに対する答えか」を表す鍵。
+///
+/// 検索語だけでは足りません。語をそのままにタグだけ替えたとき、前の答えで
+/// 減光したままになります。
+function key(search: string, tagId: number | null): string {
+  return `${String(tagId)}\u0000${search}`;
 }
 
 /// コマンドが返した `AppError` から、人が読む一行を取り出す。

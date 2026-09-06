@@ -12,6 +12,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { invoke, openBoard, startHarness, stopHarness } from "./harness";
 
 import type { Snapshot } from "../src/ipc/types/Snapshot";
+import type { StartupState } from "../src/ipc/types/StartupState";
 
 test.beforeEach(startHarness);
 test.afterEach(stopHarness);
@@ -21,6 +22,12 @@ async function storedBoard(): Promise<Snapshot["board"]> {
   const response = await invoke("snapshot");
   const snapshot = (await response.json()) as Snapshot;
   return snapshot.board;
+}
+
+/// 保存された絞り込みを読み直す。覚えているかどうかは `app_state` の側で見る。
+async function storedFilter(): Promise<StartupState["filter"]> {
+  const response = await invoke("startup_state");
+  return ((await response.json()) as StartupState).filter;
 }
 
 async function storedTitles(): Promise<string[]> {
@@ -278,6 +285,87 @@ test("タグを作り、カードに付け、名前を変えて消せる", async
     .poll(async () => (await storedBoard()).tags.map((tag) => tag.name))
     .not.toContain("名前を変えたタグ");
   await expect.poll(storedTitles).not.toHaveLength(0);
+});
+
+test("カードのタグを押すと、そのタグで絞り込む", async ({ page }) => {
+  await openBoard(page);
+
+  // タグを 1 つ作り、1 枚目のカードにだけ付ける。
+  await page.locator(".open-tag-panel").click();
+  await page.getByLabel("新しいタグの名前").fill("絞り込み用");
+  await page.locator(".add-tag").click();
+  await page.locator(".open-tag-panel").click();
+
+  await openFirstCard(page);
+  await page.locator(".card-tag-picker").getByRole("button", { name: "絞り込み用" }).click();
+  await page.locator(".save-card").click();
+  await expect(page.locator(".card-panel")).toBeHidden();
+
+  const cards = page.locator(".column .card");
+  const tagged = cards.first();
+  // **印はカードそのものに付きます**（子孫ではない）。`.card[data-dimmed]` で見る。
+  const dimmed = page.locator(".column .card[data-dimmed]");
+  await expect(dimmed).toHaveCount(0);
+
+  // カードの上のチップを押す。**ここが絞り込みの唯一の入口**（ヘッダには
+  // タグを一覧しない）。カードには元から別のタグも付いているので、名前で選ぶ。
+  const chip = tagged.locator("button.tag-chip", { hasText: "絞り込み用" });
+  await chip.click();
+
+  // 付いていないカードが暗くなり、理由がヘッダに出る。
+  await expect(page.locator(".filter-chip")).toContainText("絞り込み用");
+  await expect.poll(async () => await dimmed.count()).toBeGreaterThan(0);
+  await expect(tagged).not.toHaveAttribute("data-dimmed", /.*/);
+
+  // 次の起動でも覚えている。
+  await expect
+    .poll(async () => (await storedFilter()).tagId)
+    .toBe((await storedBoard()).tags.find((tag) => tag.name === "絞り込み用")?.id);
+
+  // 同じチップをもう一度で解除。
+  await chip.click();
+  await expect(page.locator(".filter-chip")).toBeHidden();
+  await expect.poll(async () => await dimmed.count()).toBe(0);
+  await expect.poll(async () => (await storedFilter()).tagId).toBeNull();
+});
+
+test("「クリア」は検索語とタグを両方とも解いて、覚え直す", async ({ page }) => {
+  await openBoard(page);
+  await page.locator(".search").fill("SQLite");
+  await expect.poll(async () => await page.locator(".column .card[data-dimmed]").count())
+    .toBeGreaterThan(0);
+
+  await page.locator(".clear-filter").click();
+
+  await expect(page.locator(".search")).toHaveValue("");
+  await expect.poll(async () => await page.locator(".column .card[data-dimmed]").count()).toBe(0);
+  await expect.poll(async () => (await storedFilter()).search).toBe("");
+});
+
+test("検索欄の Escape でも解ける", async ({ page }) => {
+  await openBoard(page);
+  await page.locator(".search").fill("SQLite");
+  await expect.poll(async () => await page.locator(".column .card[data-dimmed]").count())
+    .toBeGreaterThan(0);
+
+  await page.locator(".search").press("Escape");
+
+  await expect(page.locator(".search")).toHaveValue("");
+  await expect.poll(async () => (await storedFilter()).search).toBe("");
+});
+
+test("空のカラムには、落とし先だと分かる目印が出る", async ({ page }) => {
+  await openBoard(page);
+  // 出来合いの盤面はどのカラムにもカードが入っているので、空のものを 1 本作る。
+  await page.locator(".add-column").click();
+  await page.locator(".new-column-name").fill("からっぽ");
+  await page.locator(".new-column-name").press("Enter");
+
+  const empty = page.locator(".column", { hasText: "からっぽ" });
+  await expect(empty.locator(".column-empty")).toHaveText("ここにドロップ");
+
+  // カードのあるカラムには出さない。
+  await expect(page.locator(".column").first().locator(".column-empty")).toHaveCount(0);
 });
 
 // ---------------------------------------------------------------- カラム

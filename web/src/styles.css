@@ -410,6 +410,19 @@ textarea {
   min-height: 48px;
 }
 
+/* 空のカラムに、そこが落とし先だと出す。掴んだものをどこへ持っていけるかは、
+ * カードが 1 枚も無いと読めない（`docs/DESIGN.md`「ドラッグ＆ドロップ」の
+ * 受け入れ条件 2）。 */
+.column-empty {
+  margin: 0;
+  padding: 12px 0;
+  border: 1px dashed var(--color-border);
+  border-radius: 6px;
+  color: var(--color-muted-foreground);
+  font-size: 12px;
+  text-align: center;
+}
+
 .card-title {
   overflow-wrap: anywhere;
 }
@@ -440,11 +453,35 @@ textarea {
 }
 
 /* タグのチップだけは、背景がユーザーの指定した色になる（直書きの色が許される
- * 唯一の場所、`docs/DESIGN.md`）。文字色は gpui 版と同じく素の `foreground`。 */
+ * 唯一の場所、`docs/DESIGN.md`）。文字色は素の `foreground`。 */
 .tag-chip {
   padding: 0 4px;
   border-radius: 4px;
   color: var(--color-foreground);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* カードの上のチップは押せる（絞り込みの唯一の入口、`docs/DESIGN.md`）。
+ * ボタンの既定の枠と余白を消して、見た目は押せないチップと揃える。 */
+button.tag-chip {
+  border: none;
+  font-family: inherit;
+  line-height: inherit;
+  cursor: pointer;
+}
+
+button.tag-chip:hover {
+  outline: 1px solid var(--color-foreground);
+}
+
+/* ヘッダの「〇〇 で絞り込み中」。**減光の理由を画面から読めるようにする**
+ * ためのもので、タグの一覧ではない（出るのは絞り込んでいる 1 つだけ）。 */
+.filter-chip {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  color: var(--color-muted-foreground);
   font-size: 12px;
   white-space: nowrap;
 }
