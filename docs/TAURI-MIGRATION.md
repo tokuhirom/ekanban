@@ -348,7 +348,7 @@ make bundle   tauri build（3 OS のバンドラ）
 | 1 ✅ | ワークスペースへ再編。`crates/core` を切り出す | `cargo test` が通り、`crates/core` が gpui にも tauri にも依存していない |
 | 2 ✅ | `serde` 化、`ts-rs` の生成、コマンドとイベントの実装（画面なし） | コマンドの一覧（§3）が全部あり、Rust のテストから叩ける |
 | 3 ✅ | 読むだけの盤面（サイドバー・ヘッダ・カラム・カード・減光） | 手元のデータベースを開いて、いまのアプリと同じ盤面が出る |
-| 4 ⚠ | **D&D の spike** | §6 の 1〜8 を 3 OS で満たす。**満たさなければここで止めて判断し直す**（1〜7 は WebKitGTK で確認済み。条件 8 が残っている） |
+| 4 ✅ | **D&D の spike** | §6 の 1〜8 を 3 OS で満たす。**満たさなければここで止めて判断し直す**（1〜7 は本物の WebKitGTK で、1〜6 は Chromium と WebKit でも確認。残るのは Apple の platform 層だけ） |
 | 5 | 編集（カードパネル、チェックリスト、タグ、期限、カラム、ボード） | いまの `view_tests.rs` の項目が Playwright で通る |
 | 6 | メニュー、キー割り当て、テーマ、ウィンドウの状態 | §7 の表のとおりに効き、入力中の `Cmd+Z` が盤面を巻き戻さない |
 | 7 | アーカイブ、書き出し、バックアップ、場所を開く | 書き出したファイルが読め、控えが `backups/` に増える |
@@ -405,17 +405,37 @@ make bundle   tauri build（3 OS のバンドラ）
 | 5 | カラムそのものの並べ替えも同じ操作感 | ✅ **ただし衝突判定を絞ってから**（下記） |
 | 6 | キーボードでも動かせる | ✅ `Ctrl/Cmd+Alt+矢印`。gpui 版の `next_card_id` / `move_selected_card_between_columns` をそのまま移した |
 | 7 | 落としてから画面が確定するまでに間が空かない | ✅ 実測 3〜24 ms（IPC ＋ SQLite の書き込み込み）。楽観更新は要らなかった |
-| 8 | 3 つの webview で 1〜7 が同じ | ❌ **未確認。** WebKitGTK しか手元に無い |
+| 8 | 3 つの webview で 1〜7 が同じ | ⚠ **エンジンの系統までは確認。** 下記 |
 
-**条件 8 が残っています。** [ADR 0020](adr/0020-pointer-based-drag-and-drop.md) の関門は、macOS（WKWebView）と Windows（WebView2）で 1〜7 を確かめるまで閉じません。`tauri-driver` は macOS に無いので（§10）、ここは手での確認です。
+### 条件 8 をどう確かめたか（[ADR 0023](adr/0023-verifying-the-webview-engines.md)）
 
-spike が見つけた、こちら側の不備が 2 つあります。
+「3 つの webview」と書いてありますが、**エンジンは 2 系統しかありません。**
+
+| 実際の webview | エンジン | 確かめ方 |
+| --- | --- | --- |
+| WebKitGTK（Linux） | WebKit | ✅ 本物の Tauri のウィンドウで条件 1〜7 |
+| WebView2（Windows） | Chromium／Edge | ✅ ハーネス越しに Chromium で条件 1〜6（CI で毎回） |
+| WKWebView（macOS） | WebKit ＋ Apple の platform 層 | ✅ ハーネス越しに WebKit で条件 1〜6（CI で毎回）。**platform 層は未確認** |
+
+`crates/harness`（§10）が `crates/app` のコマンドをそのまま HTTP に出すので、同じ画面をふつうのブラウザで動かせます。通っているのは本物の `ekanban-core` なので、**偽物のバックエンドを TypeScript で書く**ことにはなっていません（[ADR 0021](adr/0021-two-layer-testing-for-the-webview.md)）。この確かめ方は [ADR 0023](adr/0023-verifying-the-webview-engines.md) に書いてあります。
+
+**残っているのは Apple の platform 層です**——慣性スクロール、ゴムのような跳ね返り、trackpad の 2 本指。これは macOS の実機で人が触るしかありません。逆に言うと、**エンジンの系統ごとの差はもう CI が毎回見ています**。
+
+**そしてこれは実際に 1 つ見つけました。** キーの割り当てを `navigator.userAgent` から決めていたところ、Playwright の Safari 模擬が Linux 上で `Macintosh` を名乗り、`secondary` が Cmd と読まれて割り当てが丸ごと効かなくなりました。UA は webview が書き換えられる文字列なので、**いま動いている OS は Rust から渡す**ことにしました（`StartupState.platform`）。WebKitGTK だけで見ていたら、これは見つかっていません。
+
+spike が見つけた、こちら側の不備が 3 つあります。**ライブラリのせいで落ちた条件は 1 つもありません。**
 
 **`.board-content` に `overflow-y: hidden` を書いていませんでした。** CSS は片方の軸を `visible` 以外にすると、もう片方を `auto` に計算します。`overflow-x: auto` だけ書いてあったので、カラムが縦に伸びたときに**盤面全体が縦スクロールし、カラムの中は永久にスクロールしません**でした。条件 3 が落ちていたのはこれで、窓を高くしている間は表に出ません。#43 と同じ形の間違いです。
 
 **入れ子の並べ替えには、衝突判定を掴んだものの種類で絞る必要がありました。** カラムの中にカードの並べ替えが入っているので、素のままだと**カラムを掴んでいるのにカードが落とし先に選ばれ**、掴んでも何も起きません。`web/src/board/Board.tsx` の `collisionDetection` がそこを絞っています。dnd-kit を外して自前に書く日が来ても、この絞り込みは要ります。
 
+**どの OS で動いているかを `navigator.userAgent` から決めていました。** `secondary` が Cmd か Ctrl かを取り違えると割り当てが丸ごと効きません。UA は webview が書き換えられる文字列で、実際に Playwright の Safari 模擬に引っかかりました。いまは Rust が `StartupState.platform` で渡します。
+
 **キーボードは dnd-kit の `KeyboardSensor` を使いません。** いまの割り当ては修飾キーを押しながら矢印を叩く 1 手で、押している間に何枚でも動かせます。`KeyboardSensor` は掴む → 動かす → 離すの 3 手になり、手触りが下がります。
+
+### ハーネスを先に作りました
+
+§10 の `crates/harness` は段階 5 の道具として書いてありますが、**条件 8 を確かめるのに要る**ので先に作りました。`crates/app` のコマンドをそのまま HTTP に出すだけのもので、段階 2 でコマンド層を Tauri 非依存にしておいたのがここで効いています。`web/src/ipc/harness.ts` が口を差し替え、`?harness=http://127.0.0.1:1421` を付けて開くとブラウザで同じ画面が動きます。
 
 ---
 
@@ -426,7 +446,7 @@ spike が見つけた、こちら側の不備が 2 つあります。
 | 関門 | いつ | 判定 |
 | --- | --- | --- |
 | メモリ | 段階 0（着手前） | いまの ekanban と、同じ盤面を出した Tauri の試作を 3 OS で測る。[ADR 0017](adr/0017-moving-the-ui-to-tauri.md) の想定は 1.5〜2 倍。**大きく超えたら移行そのものを見直す** |
-| D&D | 段階 4 | §6 の 1〜8。**届かなければ、既製のライブラリを外して自前に書くか、移行を止めるかを、そこで決める**。→ 1〜7 は `@dnd-kit/core` 6 系で満たした（[ADR 0022](adr/0022-dnd-kit-core-for-drag-and-drop.md)）。**条件 8 は未確認**——macOS と Windows の実機が要る |
+| D&D | 段階 4 | §6 の 1〜8。**届かなければ、既製のライブラリを外して自前に書くか、移行を止めるかを、そこで決める**。→ `@dnd-kit/core` 6 系で満たした（[ADR 0022](adr/0022-dnd-kit-core-for-drag-and-drop.md)）。**通す。** 残るのは macOS の platform 層（慣性スクロール・跳ね返り・trackpad）だけで、そこは実機で触って確かめる |
 
 測り方を決めておきます。**「起動直後」ではなく「実際の盤面を開いて 5 分触ったあと」**を測ります。webview は遅れてメモリを確保するので、起動直後の値は当てになりません。Linux の WebKitGTK は**プロセスが複数に分かれる**（UI / Web / Network）ので、**合算しないと 3 分の 1 の値を見て安心する**ことになります。macOS は `footprint`、Linux は PSS の合算、Windows は作業セットで揃えます。
 

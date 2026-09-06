@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 import type { Board } from "../ipc/types/Board";
 import type { Card } from "../ipc/types/Card";
 import type { Column } from "../ipc/types/Column";
-import { keyboardMove, nextSelection } from "./keyboard";
+import { keyboardMove, movesSelectedCard, nextSelection } from "./keyboard";
 
 function card(id: number): Card {
   return {
@@ -97,5 +97,34 @@ describe("keyboardMove", () => {
 
   it("盤面にないカードは動かさない", () => {
     expect(keyboardMove(b, 999, "down")).toBeNull();
+  });
+});
+
+describe("movesSelectedCard", () => {
+  /// どの修飾キーが `secondary` かは、Rust が返す platform で決める。
+  /// UA を見ていたころ、Playwright の Safari 模擬（Linux 上で `Macintosh` を
+  /// 名乗る）で割り当てが丸ごと効かなくなった。
+  function press(init: Partial<KeyboardEvent>): KeyboardEvent {
+    return { ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, ...init } as KeyboardEvent;
+  }
+
+  it("macOS は Cmd + Alt", () => {
+    expect(movesSelectedCard(press({ metaKey: true, altKey: true }), "macos")).toBe(true);
+    expect(movesSelectedCard(press({ ctrlKey: true, altKey: true }), "macos")).toBe(false);
+  });
+
+  it("ほかの OS は Ctrl + Alt", () => {
+    expect(movesSelectedCard(press({ ctrlKey: true, altKey: true }), "linux")).toBe(true);
+    expect(movesSelectedCard(press({ ctrlKey: true, altKey: true }), "windows")).toBe(true);
+    expect(movesSelectedCard(press({ metaKey: true, altKey: true }), "linux")).toBe(false);
+  });
+
+  it("ほかの修飾キーが混ざっていたら、別の割り当てに譲る", () => {
+    expect(
+      movesSelectedCard(press({ ctrlKey: true, altKey: true, shiftKey: true }), "linux"),
+    ).toBe(false);
+    expect(
+      movesSelectedCard(press({ ctrlKey: true, altKey: true, metaKey: true }), "linux"),
+    ).toBe(false);
   });
 });

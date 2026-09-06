@@ -2,7 +2,7 @@ APP_NAME := Ekanban
 RELEASE_APP := target/release/bundle/$(APP_NAME).app
 DEBUG_APP := target/debug/bundle/$(APP_NAME).app
 
-.PHONY: help build release run dev web-install web-check test types types-check fmt fmt-check lint deps-check check screenshots icon bundle bundle-debug open install install-linux uninstall-linux clean
+.PHONY: help build release run dev web-install web-check e2e test types types-check fmt fmt-check lint deps-check check screenshots icon bundle bundle-debug open install install-linux uninstall-linux clean
 
 help: ## このヘルプを表示する
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -27,6 +27,11 @@ web-check: web-install ## 画面側の型検査・lint・単体テスト
 	npm --prefix web run typecheck
 	npm --prefix web run lint
 	npm --prefix web run test
+
+e2e: web-install ## ハーネスを上げて Playwright を走らせる (Chromium と WebKit)
+	cargo build -p ekanban-harness
+	cargo build -p ekanban --example manual_screenshot_seed
+	npm --prefix web run e2e
 
 test: ## テストを実行する
 	cargo test --workspace --all-features

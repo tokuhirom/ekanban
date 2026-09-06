@@ -90,6 +90,36 @@ impl ThemePreference {
     }
 }
 
+/// 動いている OS。
+///
+/// **webview に自分で当てさせません。** キーの割り当ては OS ごとに違い
+/// （§7、[ADR 0009]）、`secondary` が Cmd か Ctrl かを取り違えると割り当てが
+/// 丸ごと効かなくなります。`navigator.userAgent` は webview が書き換えられる
+/// 文字列で、実際 Playwright の Safari 模擬は Linux 上で `Macintosh` を名乗り
+/// ます。ここは Rust がコンパイル時に知っていることなので、そちらから渡します。
+///
+/// [ADR 0009]: ../../../docs/adr/0009-per-platform-key-bindings.md
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum Platform {
+    Macos,
+    Windows,
+    Linux,
+}
+
+impl Platform {
+    pub fn current() -> Self {
+        if cfg!(target_os = "macos") {
+            Self::Macos
+        } else if cfg!(windows) {
+            Self::Windows
+        } else {
+            Self::Linux
+        }
+    }
+}
+
 /// クイックキャプチャが書き込む先。アプリ全体で 1 つ（`docs/DESIGN.md`）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -114,6 +144,8 @@ pub struct StartupState {
     /// 盤面そのもの。`board:changed` で届くのと同じ形なので、webview は
     /// 起動でもイベントでも同じ 1 本の経路で差し替えられます（§4）。
     pub snapshot: Snapshot,
+    /// 動いている OS。キーの割り当てを決めるのに使います。
+    pub platform: Platform,
     pub filter: ekanban_core::db::FilterState,
     pub window_bounds: Option<WindowBoundsState>,
     pub theme: ThemePreference,

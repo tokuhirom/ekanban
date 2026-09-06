@@ -19,7 +19,7 @@ use ekanban_core::model::{
 use ekanban_core::{backup, diagnostics, export};
 
 use crate::error::{AppError, ErrorKind};
-use crate::snapshot::{CaptureTarget, Snapshot, StartupState, ThemePreference};
+use crate::snapshot::{CaptureTarget, Platform, Snapshot, StartupState, ThemePreference};
 use crate::state::{snapshot_of, AppState};
 
 // ---------------------------------------------------------------- 起動
@@ -66,6 +66,7 @@ pub fn startup_state(state: &AppState) -> Result<StartupState, AppError> {
 
     Ok(StartupState {
         snapshot: state.snapshot()?,
+        platform: Platform::current(),
         filter,
         window_bounds: database.load_window_bounds().ok().flatten(),
         theme: ThemePreference::parse(database.load_theme_preference().ok().flatten().as_deref()),

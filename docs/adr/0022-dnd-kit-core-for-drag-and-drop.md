@@ -1,7 +1,7 @@
 # 0022. D&D は `@dnd-kit/core` 6 系に載せる
 
 - 日付: 2026-09-06
-- 状態: 有効
+- 状態: 有効（条件 8 の確かめ方は [0023](0023-verifying-the-webview-engines.md) が置き換えた）
 - 関連: [0020](0020-pointer-based-drag-and-drop.md)、[0017](0017-moving-the-ui-to-tauri.md)
 
 ## 状況

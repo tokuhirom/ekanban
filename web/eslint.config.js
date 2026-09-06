@@ -21,11 +21,21 @@ export default [
 
   {
     // 型を見るルールは、型検査の対象にしているものにだけ掛ける。
-    // この設定ファイル自身は `tsconfig.json` の外にある。
-    files: ["src/**/*.ts", "src/**/*.tsx", "vite.config.ts", "vitest.config.ts"],
+    // この設定ファイル自身は tsconfig の外にある。
+    //
+    // 画面側（DOM）と、テストを走らせる側（Node）で tsconfig が 2 つある
+    // ので、両方を渡す。`projectService` は 1 つしか見ないため。
+    files: [
+      "src/**/*.ts",
+      "src/**/*.tsx",
+      "e2e/**/*.ts",
+      "vite.config.ts",
+      "vitest.config.ts",
+      "playwright.config.ts",
+    ],
     languageOptions: {
       parserOptions: {
-        projectService: true,
+        project: ["./tsconfig.json", "./tsconfig.node.json"],
         tsconfigRootDir: import.meta.dirname,
       },
     },

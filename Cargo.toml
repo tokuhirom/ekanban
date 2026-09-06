@@ -1,12 +1,12 @@
 # ワークスペースのルート。ここにはパッケージを置かない。
 #
 # `crates/core` が盤面のモデル・SQLite・控え・置き場所を持ち、UI ツールキットに
-# 依存しない。`crates/app` が Tauri のアプリ（いまはコマンドの層だけ）。
-# `crates/gpui` は gpui-kit で描く今のアプリで、Tauri へ移り終えたら消える
-# （`docs/TAURI-MIGRATION.md` の段階 10）。
+# 依存しない。`crates/app` が Tauri のアプリ。`crates/harness` は開発とテスト
+# 専用で、そのコマンドを HTTP に出す（§10）。`crates/gpui` は gpui-kit で描く
+# 今のアプリで、Tauri へ移り終えたら消える（`docs/TAURI-MIGRATION.md` の段階 10）。
 [workspace]
 resolver = "2"
-members = ["crates/app", "crates/core", "crates/gpui"]
+members = ["crates/app", "crates/core", "crates/gpui", "crates/harness"]
 
 [workspace.package]
 # tagpr がここを書き換え、`script/bundle-mac` がここから .app のバージョンを作る
@@ -16,6 +16,7 @@ edition = "2021"
 license = "MIT"
 
 [workspace.dependencies]
+ekanban-app = { path = "crates/app" }
 ekanban-core = { path = "crates/core" }
 # `serde` は期限 (`NaiveDate`) のためです。chrono の実装が "YYYY-MM-DD" の
 # 文字列に落とすので、`docs/TAURI-MIGRATION.md` §3 の決めごとがそのまま出ます。
@@ -33,6 +34,8 @@ thiserror = "2.0"
 ts-rs = { version = "12.0.1", features = ["chrono-impl"] }
 tauri = { version = "2.11.5", features = ["devtools"] }
 tauri-build = { version = "2.6.3", features = [] }
+# 開発用ハーネスの HTTP。非同期ランタイムを持ち込まない小さいものを選ぶ。
+tiny_http = "0.12.0"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
