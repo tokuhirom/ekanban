@@ -1,0 +1,23 @@
+# 生成した TypeScript の型の書き出し先。
+#
+# `ts-rs` は `#[ts(export)]` の付いた型を `cargo test` のときに書き出します。
+# 既定の書き出し先はクレートごとの `bindings/` で、走らせる人によって場所が
+# 変わってしまうので、ここで 1 か所に固定します。`relative = true` はこの
+# 設定ファイルの親（ワークスペースのルート）からの相対です。
+#
+# 生成物はコミットします。CI は `cargo test` のあとに差分が無いことを見て、
+# Rust 側と TypeScript 側がずれていないことを確かめます
+# （`docs/TAURI-MIGRATION.md` §3）。
+[env]
+TS_RS_EXPORT_DIR = { value = "web/src/ipc/types", relative = true }
+
+# `i64` を TypeScript の `number` にする。
+#
+# ts-rs の既定は `bigint` ですが、値を書くのは `serde_json` で、JSON の数値に
+# なります。受け取る `JSON.parse` が返すのも `number` です。型定義だけ `bigint`
+# にすると、**実行時の値と型が食い違ったまま通り**、`Map<bigint, Card>` の引きが
+# 黙って外れるような壊れ方をします（`docs/TAURI-MIGRATION.md` §3）。
+#
+# `number` が嘘にならないこと——ID が 2^53 に届かないこと——は、
+# `crates/core/src/db/mod.rs` のテストが見ています。
+TS_RS_LARGE_INT = "number"

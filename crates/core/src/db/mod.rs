@@ -2,8 +2,10 @@ use std::path::Path;
 
 use chrono::{Local, NaiveDate};
 use rusqlite::{params, Connection, OptionalExtension};
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use thiserror::Error;
+use ts_rs::TS;
 
 use crate::model::{
     Board, BoardId, BoardSummary, Card, ChecklistItem, Column, ColumnId, DueCounts, Tag,
@@ -43,7 +45,9 @@ pub struct Database {
     connection: Connection,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub struct WindowBoundsState {
     pub x: f32,
     pub y: f32,
@@ -51,7 +55,9 @@ pub struct WindowBoundsState {
     pub height: f32,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub struct FilterState {
     pub search: String,
     pub tag_id: Option<i64>,
@@ -1336,9 +1342,11 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{
-        save_board_snapshot, Database, FilterState, WindowBoundsState, CURRENT_SCHEMA_VERSION,
+        board_scoped_id, save_board_snapshot, Database, FilterState, WindowBoundsState,
+        BOARD_ID_NAMESPACE_SHIFT, CURRENT_SCHEMA_VERSION,
     };
     use crate::model::{Board, ChecklistItemDraft, DueCounts};
+    use crate::MAX_SAFE_JS_INTEGER;
 
     /// カードの入ったボードを持つデータベースを開く。
     ///
@@ -2229,5 +2237,93 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap()
+    }
+    /// ID は JSON の数値として webview に渡る（`docs/TAURI-MIGRATION.md` §3）。
+    ///
+    /// ボードごとに `board_id << 32` で ID の名前空間を切っているので、ボードの
+    /// 番号が伸びるほど ID の桁が上がる。2^53 を超えると JavaScript 側で丸められ、
+    /// **例外も出ないまま別のカードを指す**。ここが上限との距離を書き留めておく
+    /// 唯一の場所なので、`BOARD_ID_NAMESPACE_SHIFT` を触るときはここを見ること。
+    #[test]
+    fn board_id_namespaces_stay_inside_the_javascript_safe_integer_range() {
+        let last_safe_board_id = MAX_SAFE_JS_INTEGER >> BOARD_ID_NAMESPACE_SHIFT;
+        assert_eq!(
+            last_safe_board_id, 2_097_151,
+            "2^21 - 1 のボードまでは安全に扱える"
+        );
+        assert!(board_scoped_id(last_safe_board_id) <= MAX_SAFE_JS_INTEGER);
+        assert!(
+            board_scoped_id(last_safe_board_id + 1) > MAX_SAFE_JS_INTEGER,
+            "この 1 つ先から JavaScript が丸めはじめる"
+        );
+    }
+
+    /// 実際に作ったボードの ID が上限の内側にあること。
+    ///
+    /// 上の計算だけだと、`create_board` が別の採番に変わったときに気づけない。
+    #[test]
+    fn ids_handed_out_by_the_database_are_safe_javascript_integers() {
+        let directory = tempdir().expect("a temporary directory is available");
+        let path = directory.path().join("board.sqlite3");
+        let mut database = open_with_cards(&path);
+        database
+            .create_board("2 つ目")
+            .expect("a second board is created");
+
+        for summary in database.load_boards().expect("the board list loads") {
+            let board = database
+                .load_board_by_id(summary.id)
+                .expect("the board loads");
+            let mut ids = vec![board.id];
+            ids.extend(board.tags.iter().map(|tag| tag.id));
+            for column in &board.columns {
+                ids.push(column.id);
+                for card in &column.cards {
+                    ids.push(card.id);
+                    ids.extend(card.checklist_items.iter().map(|item| item.id));
+                }
+            }
+            for id in ids {
+                assert!(
+                    id > 0 && id <= MAX_SAFE_JS_INTEGER,
+                    "{id} は JavaScript が誤差なく扱える範囲の外"
+                );
+            }
+        }
+    }
+
+    /// webview に渡る JSON の形（`docs/TAURI-MIGRATION.md` §3）。
+    ///
+    /// 鍵は camelCase、期限は `"YYYY-MM-DD"` の文字列、時刻は数値。**時刻の単位は
+    /// ミリ秒**で、秒ではない（`now()` が `as_millis`）。ここを取り違えると
+    /// webview は 1970 年を描く。
+    #[test]
+    fn the_board_crosses_the_boundary_in_the_shape_the_webview_expects() {
+        let mut board = Board::fixture();
+        let card_id = board.columns[0].cards[0].id;
+        board
+            .set_card_due_date(card_id, Some(NaiveDate::from_ymd_opt(2026, 3, 4).unwrap()))
+            .expect("the due date is set");
+
+        let value: Value = serde_json::to_value(&board).expect("the board serializes");
+        let card = &value["columns"][0]["cards"][0];
+
+        assert_eq!(card["dueDate"], Value::from("2026-03-04"));
+        assert!(card["columnId"].is_number(), "ID は JSON の数値");
+        assert!(card["tagIds"].is_array());
+        assert!(card["checklistItems"].is_array());
+        assert!(value["archivedCards"].is_array());
+
+        let created_at = card["createdAt"].as_i64().expect("epoch の数値");
+        assert!(
+            created_at > 1_600_000_000_000,
+            "時刻はエポックからのミリ秒。秒だと {created_at} はこの桁にならない"
+        );
+
+        assert!(
+            value.get("nextCardId").is_none(),
+            "採番のカウンタは渡さない。ID を割り当てるのは Rust だけ（ADR 0018）"
+        );
+        assert!(value.get("pendingEvents").is_none());
     }
 }

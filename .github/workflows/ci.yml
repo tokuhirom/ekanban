@@ -53,6 +53,12 @@ jobs:
       - name: Run tests
         run: cargo test --workspace --all-features
 
+      # Rust の型と、そこから生成した TypeScript の型がずれていないこと。
+      # 上の `cargo test` が web/src/ipc/types/ に書き出すので、コミットして
+      # あるものと突き合わせる (`docs/TAURI-MIGRATION.md` §3)。
+      - name: Check the generated TypeScript types are up to date
+        run: git diff --exit-code -- web/src/ipc/types
+
       - name: Build
         run: cargo build --workspace --all-features
 

@@ -13,6 +13,13 @@ pub mod paths;
 
 use std::path::PathBuf;
 
+/// JavaScript が誤差なく扱える整数の上限（2^53 - 1）。
+///
+/// ID も時刻も JSON の数値として webview に渡ります（`docs/TAURI-MIGRATION.md`
+/// §3）。ここを超えた値は JavaScript 側で丸められ、**落ちずに別のものを指します**。
+/// 上限に当たっていないことは `db` のテストが見ています。
+pub const MAX_SAFE_JS_INTEGER: i64 = 9_007_199_254_740_991;
+
 /// ウィンドウタイトルやバンドルに使うアプリ名。`script/bundle-mac` の `APP_NAME` と揃える。
 pub const APP_NAME: &str = "Ekanban";
 
@@ -34,6 +41,45 @@ pub fn database_path() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use ts_rs::TS;
+
+    /// 生成した TypeScript の型に `bigint` が出てこないこと。
+    ///
+    /// ts-rs は `i64` を既定で `bigint` に落とす。ところが値は `serde_json` が
+    /// JSON の数値として書き、`JSON.parse` は `number` を返す。型定義だけ
+    /// `bigint` になっていると、**実行時の値と型が食い違ったまま通る**——
+    /// `Map<bigint, Card>` の引きが黙って外れる類の壊れ方をする。
+    ///
+    /// なので `.cargo/config.toml` で `TS_RS_LARGE_INT = "number"` にしてある。
+    /// その設定が外れたことをここで捕まえる。番号が `number` に収まるかどうか
+    /// ——2^53 に届かないかどうか——は `db` のテストが見ている。
+    #[test]
+    fn the_generated_types_never_say_bigint() {
+        let config = ts_rs::Config::from_env();
+        let declarations = [
+            ("Board", model::Board::inline(&config)),
+            ("BoardSummary", model::BoardSummary::inline(&config)),
+            ("Card", model::Card::inline(&config)),
+            ("ChecklistItem", model::ChecklistItem::inline(&config)),
+            (
+                "ChecklistItemDraft",
+                model::ChecklistItemDraft::inline(&config),
+            ),
+            ("Column", model::Column::inline(&config)),
+            ("DueCounts", model::DueCounts::inline(&config)),
+            ("DueStatus", model::DueStatus::inline(&config)),
+            ("FilterState", db::FilterState::inline(&config)),
+            ("Tag", model::Tag::inline(&config)),
+            ("WindowBoundsState", db::WindowBoundsState::inline(&config)),
+        ];
+        for (name, declaration) in declarations {
+            assert!(
+                !declaration.contains("bigint"),
+                "{name} に bigint が残っている。`#[ts(type = \"number\")]` を付けること:\n{declaration}"
+            );
+        }
+    }
 
     /// Linux のデスクトップエントリと `APP_ID` の対応（#50）。
     ///

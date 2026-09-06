@@ -16,14 +16,20 @@ license = "MIT"
 
 [workspace.dependencies]
 ekanban-core = { path = "crates/core" }
-chrono = { version = "0.4.45", features = ["clock"] }
+# `serde` は期限 (`NaiveDate`) のためです。chrono の実装が "YYYY-MM-DD" の
+# 文字列に落とすので、`docs/TAURI-MIGRATION.md` §3 の決めごとがそのまま出ます。
+chrono = { version = "0.4.45", features = ["clock", "serde"] }
 global-hotkey = "0.8.0"
 gpui-kit = "0.6.0"
 lsp-types = "0.97"
 rusqlite = { version = "0.40.2", features = ["bundled"] }
+serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0"
 tempfile = "3.23"
 thiserror = "2.0"
+# 型定義を Rust から生成する。手で 2 か所に書くと必ずずれる
+# (`docs/TAURI-MIGRATION.md` §3)。書き出し先は `.cargo/config.toml`。
+ts-rs = { version = "12.0.1", features = ["chrono-impl"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

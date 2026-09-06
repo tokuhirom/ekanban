@@ -10,6 +10,7 @@ This is a local-first Rust desktop Kanban app built with GPUI Kit and SQLite. It
   - `crates/core/src/paths.rs`, `backup.rs`, `instance.rs`, `diagnostics.rs` hold the per-OS file locations, the daily generational backup, the one-process-per-database lock, and the crash log.
 - `crates/gpui/` is the `ekanban` binary drawn with GPUI Kit. `src/main.rs` is the entry point; `src/lib.rs` opens the database and the window; `src/views/` contains rendering, input handling, and drag-and-drop.
   - **It is frozen** while the move to Tauri is under way (ADR 0017): fix only what stops it from being usable. It re-exports `ekanban_core`'s modules under their old names so the frozen code keeps reading `crate::db::…`, and it goes away when the migration lands.
+- `web/src/ipc/types/` holds the TypeScript types **generated from the Rust ones** by `ts-rs`. Never edit them by hand: `cargo test -p ekanban-core` (or `make types`) rewrites them, and CI fails if the committed files differ from what the Rust types produce.
 - Tests are colocated with implementation modules under `#[cfg(test)]`; CI configuration is in `.github/workflows/ci.yml`.
 
 Keep SQL inside `crates/core/src/db/` and keep UI code independent of direct database queries.
@@ -25,8 +26,9 @@ Run the application with `cargo run -p ekanban` (the workspace root has no packa
 - `cargo test --workspace --all-features` runs the unit and database round-trip tests.
 - `cargo build --workspace --all-features` verifies a complete build.
 - `script/check-core-independence` verifies `ekanban-core` pulls in no UI toolkit.
+- `make types-check` regenerates the TypeScript types and fails if they differ from what is committed.
 
-`make check` runs all five.
+`make check` runs all six.
 
 These are the same checks enforced by GitHub Actions. The bundled SQLite dependency means no database server is required.
 

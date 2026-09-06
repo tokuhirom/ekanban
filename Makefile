@@ -2,7 +2,7 @@ APP_NAME := Ekanban
 RELEASE_APP := target/release/bundle/$(APP_NAME).app
 DEBUG_APP := target/debug/bundle/$(APP_NAME).app
 
-.PHONY: help build release run test fmt fmt-check lint deps-check check screenshots icon bundle bundle-debug open install install-linux uninstall-linux clean
+.PHONY: help build release run test types types-check fmt fmt-check lint deps-check check screenshots icon bundle bundle-debug open install install-linux uninstall-linux clean
 
 help: ## このヘルプを表示する
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -32,7 +32,13 @@ lint: ## clippy を実行する
 deps-check: ## ekanban-core が UI ツールキットに依存していないことを確かめる
 	script/check-core-independence
 
-check: fmt-check lint test deps-check ## CI と同じチェックを一通り走らせる
+types: ## Rust の型から TypeScript の型を書き出す (web/src/ipc/types/)
+	cargo test -p ekanban-core
+
+types-check: types ## 書き出した型がコミットしてあるものと同じか確かめる
+	git diff --exit-code -- web/src/ipc/types
+
+check: fmt-check lint test types-check deps-check ## CI と同じチェックを一通り走らせる
 
 screenshots: ## マニュアルのスクリーンショットを撮り直す (Linux/X11 のみ)
 	script/manual-screenshots

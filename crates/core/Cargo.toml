@@ -12,8 +12,10 @@ license.workspace = true
 [dependencies]
 chrono.workspace = true
 rusqlite.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+ts-rs.workspace = true
 
 [features]
 # テスト用のボード (`Board::fixture`)。`crates/gpui` のテストも使うので、
