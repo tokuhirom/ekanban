@@ -566,10 +566,45 @@ fn the_places_the_app_can_open_point_at_real_paths() {
     let harness = Harness::open();
     assert_eq!(commands::database_location(&harness.state), harness.path);
     assert_eq!(commands::reveal_database(&harness.state), harness.path);
-    assert_eq!(
-        commands::reveal_backups(&harness.state),
-        harness.path.parent().unwrap().join("backups")
-    );
+
+    // 控えの置き場所は、1 つも取れていないうちは「開く先が無い」。
+    let backups = harness
+        .path
+        .parent()
+        .expect("the database has a parent")
+        .join("backups");
+    assert_eq!(commands::reveal_backups(&harness.state), None);
+    std::fs::create_dir_all(&backups).expect("the backup directory is created");
+    assert_eq!(commands::reveal_backups(&harness.state), Some(backups));
+}
+
+/// 控えの保存先に、いま開いているデータベースそのものは選べない。
+///
+/// `backup_to` は上書きで開くので、通してしまうと控えのつもりで元のファイルを
+/// 触ることになる。
+#[test]
+fn a_backup_refuses_to_overwrite_the_database_it_copies() {
+    let harness = Harness::open();
+    let failure = commands::backup_database(&harness.state, &harness.path)
+        .expect_err("the database itself is refused");
+    assert_eq!(failure.kind, ErrorKind::Export);
+}
+
+/// 拡張子を落として保存されたファイルは、次に開くときに何か分からない。
+#[test]
+fn an_export_gets_the_extension_of_its_format() {
+    let harness = Harness::open();
+    let directory = tempfile::tempdir().expect("a temporary directory");
+
+    let written = commands::export_board(
+        &harness.state,
+        commands::ExportFormat::Markdown,
+        &directory.path().join("board"),
+    )
+    .expect("the board is written");
+
+    assert_eq!(written.extension().and_then(|it| it.to_str()), Some("md"));
+    assert!(written.is_file(), "the file is written where it says");
 }
 
 // ---------------------------------------------------------------- キャプチャ

@@ -6,11 +6,13 @@
 //! §10 の開発用ハーネスは `commands` の側を HTTP に出すので、ここに書いたものは
 //! ブラウザからは通りません。
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use ekanban_core::db::{FilterState, WindowBoundsState};
 use ekanban_core::model::{BoardId, CardId, ChecklistItemDraft, ColumnId, TagId};
-use tauri::{State, WebviewWindow};
+use tauri::{AppHandle, State, WebviewWindow};
+use tauri_plugin_dialog::DialogExt as _;
+use tauri_plugin_opener::OpenerExt as _;
 
 use crate::commands::{self, ExportFormat};
 use crate::error::AppError;
@@ -287,14 +289,93 @@ pub fn database_location(state: State<'_, AppState>) -> PathBuf {
     commands::database_location(&state)
 }
 
+/// 保存先を選ばせる。閉じられたら `None`。
+///
+/// OS のネイティブな保存ダイアログです（§9）。**非同期のコマンドにしてあります**
+/// ——同期のコマンドは main スレッドで動き、そこでダイアログの返事を待つと
+/// ウィンドウごと固まります。
 #[tauri::command]
-pub fn reveal_database(state: State<'_, AppState>) -> PathBuf {
-    commands::reveal_database(&state)
+pub async fn choose_save_path(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    file_name: String,
+) -> Reply<Option<PathBuf>> {
+    // 最初に見せる場所はデータベースの隣。gpui 版と同じで、いちばん近い
+    // 「自分のファイルがあるところ」。
+    let directory = commands::database_location(&state)
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."));
+
+    let (sender, receiver) = tauri::async_runtime::channel(1);
+    app.dialog()
+        .file()
+        .set_directory(directory)
+        .set_file_name(file_name)
+        .save_file(move |chosen| {
+            // 受け取り手が居なくなっていても、こちらから言うことは無い。
+            let _ = sender.blocking_send(chosen);
+        });
+
+    let mut receiver = receiver;
+    Ok(receiver
+        .recv()
+        .await
+        .flatten()
+        .and_then(|path| path.into_path().ok()))
 }
 
+/// 選んだパスの場所を開く。書き出しの知らせの「場所を開く」がこれ。
 #[tauri::command]
-pub fn reveal_backups(state: State<'_, AppState>) -> PathBuf {
-    commands::reveal_backups(&state)
+pub fn reveal_path(app: AppHandle, path: PathBuf) {
+    reveal(&app, &path);
+}
+
+/// データベースの場所を、OS のファイル管理で開く。
+#[tauri::command]
+pub fn reveal_database(app: AppHandle, state: State<'_, AppState>) {
+    reveal(&app, &commands::reveal_database(&state));
+}
+
+/// 自動バックアップの置き場所を開く。
+///
+/// まだ 1 つも取れていなければ、開く先がありません。拒否は何も言いません
+/// （`docs/DESIGN.md`）。
+#[tauri::command]
+pub fn reveal_backups(app: AppHandle, state: State<'_, AppState>) {
+    if let Some(directory) = commands::reveal_backups(&state) {
+        reveal(&app, &directory);
+    }
+}
+
+fn reveal(app: &AppHandle, path: &Path) {
+    if let Err(error) = app.opener().reveal_item_in_dir(path) {
+        ekanban_core::diagnostics::log(&format!("failed to reveal {}: {error}", path.display()));
+    }
+}
+
+// ---------------------------------------------------------------- 説明のリンク
+
+#[tauri::command]
+pub fn description_links(text: String) -> Vec<commands::UrlSpan> {
+    commands::description_links(&text)
+}
+
+/// 説明の中のリンクをブラウザで開く（[ADR 0002]）。
+///
+/// 開いてよい形かどうかは `commands` が決めます。説明はユーザーが打った文字列
+/// なので、`file://` や `javascript:` を混ぜられる場所です。
+///
+/// [ADR 0002]: ../../../docs/adr/0002-links-inside-the-description-field.md
+#[tauri::command]
+pub fn open_url(app: AppHandle, url: String) {
+    let Some(url) = commands::openable_url(&url) else {
+        ekanban_core::diagnostics::log(&format!("refused to open {url}"));
+        return;
+    };
+    if let Err(error) = app.opener().open_url(url, None::<&str>) {
+        ekanban_core::diagnostics::log(&format!("failed to open {url}: {error}"));
+    }
 }
 
 // ---------------------------------------------------------------- キャプチャ

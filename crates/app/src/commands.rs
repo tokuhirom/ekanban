@@ -463,6 +463,20 @@ pub fn suggested_export_name(state: &AppState, format: ExportFormat) -> String {
     export::suggested_export_name(&state.lock().name, format.extension())
 }
 
+/// 選ばれたパスに拡張子を補う。
+///
+/// 保存ダイアログで名前を打ち替えると、拡張子ごと消えることがあります。
+/// 拡張子の無いファイルを書くと、次に開くときに何のファイルか分かりません。
+/// **すでに何か付いているものは触りません**——`board.json.txt` を選んだ人の
+/// 意図を、こちらで書き換えないためです。
+fn with_extension(destination: &Path, extension: &str) -> PathBuf {
+    if destination.extension().is_none() {
+        destination.with_extension(extension)
+    } else {
+        destination.to_path_buf()
+    }
+}
+
 /// 開いているボードをファイルに書き出す。書けたパスを返す。
 ///
 /// 行き先を選ぶのは呼ぶ側（OS のネイティブな保存ダイアログ、§9）です。ここは
@@ -472,6 +486,7 @@ pub fn export_board(
     format: ExportFormat,
     destination: &Path,
 ) -> Result<PathBuf, AppError> {
+    let destination = &with_extension(destination, format.extension());
     let contents = match format {
         ExportFormat::Json => {
             let database = state.database().map_err(|error| {
@@ -495,7 +510,18 @@ pub fn export_board(
 }
 
 /// データベースの控えを、選んだ場所に取る。書けたパスを返す。
+///
+/// **いま使っているファイルそのものは断ります。** `backup_to` は上書きで開くので、
+/// 同じパスを渡すと控えを取ったつもりで元のファイルを触ることになります。
 pub fn backup_database(state: &AppState, destination: &Path) -> Result<PathBuf, AppError> {
+    let destination = &with_extension(destination, "sqlite3");
+    if destination == state.database_path() {
+        return Err(AppError::new(
+            ErrorKind::Export,
+            "控えを保存できませんでした",
+            "控えの保存先には、いま使っているデータベースとは別のファイルを指定してください",
+        ));
+    }
     let database = state.database().map_err(|error| {
         AppError::from_db(ErrorKind::Export, "控えを保存できませんでした", &error)
     })?;
@@ -516,8 +542,66 @@ pub fn reveal_database(state: &AppState) -> PathBuf {
 }
 
 /// 日ごとの控えが溜まるディレクトリ。
-pub fn reveal_backups(state: &AppState) -> PathBuf {
-    backup::directory(state.database_path())
+///
+/// まだ 1 つも取れていないうちに押されることがあります。開く先が無いだけなので
+/// `None` を返し、呼ぶ側は黙って何もしません（拒否は何も言わない、`docs/DESIGN.md`）。
+pub fn reveal_backups(state: &AppState) -> Option<PathBuf> {
+    let directory = backup::directory(state.database_path());
+    directory.is_dir().then_some(directory)
+}
+
+// ---------------------------------------------------------------- 説明のリンク
+
+/// 説明の中の URL の位置（[ADR 0002]）。
+///
+/// 位置は **UTF-16 の符号単位**で数えます。JavaScript の文字列がその単位なので、
+/// Rust の byte 位置をそのまま渡すと、日本語の説明で 1 文字ぶんずつずれます。
+///
+/// [ADR 0002]: ../../../docs/adr/0002-links-inside-the-description-field.md
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct UrlSpan {
+    pub start: usize,
+    pub end: usize,
+    pub url: String,
+}
+
+/// 説明の中の URL を見つける。
+///
+/// 見つけ方は `ekanban_core::model::find_urls` のままです。**同じ判定を
+/// TypeScript にもう 1 つ持ちません**——拾う範囲（`http(s)://` だけ）も、末尾の
+/// 句読点を落とす規則も、2 か所に置いたら必ずずれます。
+pub fn description_links(text: &str) -> Vec<UrlSpan> {
+    let mut spans = Vec::new();
+    // byte 位置から UTF-16 の位置へ数え直すために、先頭から一度だけなぞる。
+    let mut cursor = 0usize;
+    let mut utf16 = 0usize;
+    for url in ekanban_core::model::find_urls(text) {
+        let start_byte = url.as_ptr() as usize - text.as_ptr() as usize;
+        utf16 += text[cursor..start_byte].encode_utf16().count();
+        let start = utf16;
+        let end = start + url.encode_utf16().count();
+        spans.push(UrlSpan {
+            start,
+            end,
+            url: url.to_string(),
+        });
+        utf16 = end;
+        cursor = start_byte + url.len();
+    }
+    spans
+}
+
+/// 開いてよい URL か。開けるなら、そのまま返す。
+///
+/// 拾うのは `http(s)://` だけという [ADR 0002] の決めごとを、**開く側でも
+/// 確かめます**。説明はユーザーが打った文字列なので、`file://` や
+/// `javascript:` を混ぜられる場所です。
+///
+/// [ADR 0002]: ../../../docs/adr/0002-links-inside-the-description-field.md
+pub fn openable_url(url: &str) -> Option<&str> {
+    (url.starts_with("https://") || url.starts_with("http://")).then_some(url)
 }
 
 // ---------------------------------------------------------------- キャプチャ
@@ -636,5 +720,78 @@ pub fn run_daily_backup(database_path: &Path) {
             "failed to back up {}: {error}",
             database_path.display()
         ));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 拡張子を落として保存されたファイルは、次に開くときに何か分からない。
+    #[test]
+    fn adds_the_extension_when_the_chosen_name_has_none() {
+        assert_eq!(
+            with_extension(Path::new("/tmp/board"), "json"),
+            PathBuf::from("/tmp/board.json")
+        );
+    }
+
+    /// すでに付いているものは触らない。`board.json.txt` を選んだ意図を書き換えない。
+    #[test]
+    fn keeps_the_extension_the_person_chose() {
+        assert_eq!(
+            with_extension(Path::new("/tmp/board.txt"), "json"),
+            PathBuf::from("/tmp/board.txt")
+        );
+    }
+
+    /// 日本語の説明でも、位置が JavaScript の数え方と揃うこと。
+    ///
+    /// byte 位置をそのまま渡すと、1 文字あたり 2 つぶんずれてリンクが本文の
+    /// 途中から色づく。
+    #[test]
+    fn counts_link_positions_the_way_javascript_does() {
+        let text = "詳しくは https://example.com/a を見てください";
+        let spans = description_links(text);
+        assert_eq!(spans.len(), 1);
+        let span = &spans[0];
+        assert_eq!(span.url, "https://example.com/a");
+        let utf16: Vec<u16> = text.encode_utf16().collect();
+        let sliced = String::from_utf16(&utf16[span.start..span.end]).expect("a valid slice");
+        assert_eq!(sliced, span.url, "the span points at the URL itself");
+    }
+
+    #[test]
+    fn finds_every_link_in_order() {
+        let spans = description_links("http://a.example と https://b.example");
+        assert_eq!(
+            spans
+                .iter()
+                .map(|span| span.url.as_str())
+                .collect::<Vec<_>>(),
+            vec!["http://a.example", "https://b.example"]
+        );
+        assert!(spans[0].end <= spans[1].start, "the spans do not overlap");
+    }
+
+    #[test]
+    fn finds_no_link_in_plain_text() {
+        assert!(description_links("example.com は URL ではない").is_empty());
+    }
+
+    /// 説明はユーザーが打った文字列なので、開く前に確かめる（ADR 0002）。
+    #[test]
+    fn opens_only_http_and_https() {
+        assert_eq!(
+            openable_url("https://example.com"),
+            Some("https://example.com")
+        );
+        assert_eq!(
+            openable_url("http://example.com"),
+            Some("http://example.com")
+        );
+        assert_eq!(openable_url("file:///etc/passwd"), None);
+        assert_eq!(openable_url("javascript:alert(1)"), None);
+        assert_eq!(openable_url("example.com"), None);
     }
 }
