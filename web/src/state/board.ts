@@ -10,6 +10,7 @@ import { moveCardArgs, moveColumnArgs, parseHandle, previewMove } from "../board
 import { useIpc } from "../ipc";
 import type { Board } from "../ipc/types/Board";
 import type { DueStatus } from "../ipc/types/DueStatus";
+import type { Platform } from "../ipc/types/Platform";
 import type { Snapshot } from "../ipc/types/Snapshot";
 
 export interface BoardState {
@@ -19,6 +20,8 @@ export interface BoardState {
   /** 掴んでいるものの dnd-kit の ID。ゴーストを描くのに使う。 */
   dragging: string | null;
   selectedCard: number | null;
+  /// 動いている OS。Rust から受け取る（UA を見ない）。
+  platform: Platform;
   selectCard: (cardId: number | null) => void;
   beginDrag: (activeId: string) => void;
   dragOver: (overId: string | null) => void;
@@ -54,6 +57,7 @@ export function useBoardState(): BoardState {
     null,
   );
   const [selectedCard, setSelectedCard] = useState<number | null>(null);
+  const [platform, setPlatform] = useState<Platform>("linux");
 
   const report = useCallback(
     (what: string, error: unknown) => {
@@ -73,6 +77,7 @@ export function useBoardState(): BoardState {
         setSnapshot(startup.snapshot);
         setSearchValue(startup.filter.search);
         setSidebarCollapsed(startup.sidebarCollapsed);
+        setPlatform(startup.platform);
       })
       .catch((error: unknown) => {
         if (!cancelled) report("ボードを読み込めませんでした", error);
@@ -218,6 +223,7 @@ export function useBoardState(): BoardState {
     board: drag?.preview ?? snapshot?.board ?? null,
     dragging: drag?.activeId ?? null,
     selectedCard,
+    platform,
     selectCard: setSelectedCard,
     beginDrag,
     dragOver,

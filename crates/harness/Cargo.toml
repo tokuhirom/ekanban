@@ -1,0 +1,27 @@
+# 開発とテスト専用。**配りません。**
+#
+# `crates/app` のコマンドを、同じ名前で HTTP に出すだけのものです
+# （`docs/TAURI-MIGRATION.md` §10）。webview は `web/src/ipc/` の口を通して
+# コマンドを呼ぶので、口の実装を差し替えるだけで、同じ画面がふつうのブラウザ
+# でも動きます。
+#
+# **偽物のバックエンドを TypeScript で書かないため**にあります（ADR 0021）。
+# ここが本物の `ekanban-core` を通すので、モデルの挙動がテストの中でだけ違う、
+# が起きません。
+[package]
+name = "ekanban-harness"
+description = "ekanban のコマンドを HTTP に出す、開発とテスト専用のバイナリ"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+ekanban-app.workspace = true
+ekanban-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tiny_http.workspace = true
+
+[lints]
+workspace = true

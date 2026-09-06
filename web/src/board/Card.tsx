@@ -104,11 +104,15 @@ export function Card({ card, tags, due, dimmed, selected, onSelect }: Props) {
       // どこに戻るのかが読めなくなる（条件 2）。
       data-placeholder={isDragging || undefined}
       style={{ transform: CSS.Translate.toString(transform), transition: transition ?? undefined }}
-      onPointerDown={() => {
-        onSelect(card.id);
-      }}
       {...attributes}
       {...listeners}
+      // dnd-kit の `listeners` にも `onPointerDown` がある。React は**あとに
+      // 置いたほうを採る**ので、選択を先に書くと掴む処理に上書きされ、逆に
+      // 書くと掴めなくなる。両方いるので、ここで順に呼ぶ。
+      onPointerDown={(event) => {
+        onSelect(card.id);
+        listeners?.onPointerDown?.(event);
+      }}
     >
       <CardFace card={card} tags={tags} due={due} />
     </article>

@@ -50,7 +50,7 @@ const collisionDetection: CollisionDetection = (args) => {
 
 export function Board() {
   const state = useBoardState();
-  const { board, selectedCard, selectCard, moveCard } = state;
+  const { board, selectedCard, selectCard, moveCard, platform } = state;
 
   // キーボードでの選択と移動（§6 の条件 6）。gpui 版と同じ 1 手の割り当て。
   useEffect(() => {
@@ -62,7 +62,7 @@ export function Board() {
         return;
       }
 
-      if (movesSelectedCard(event)) {
+      if (movesSelectedCard(event, platform)) {
         if (selectedCard === null) return;
         const args = keyboardMove(board, selectedCard, direction);
         if (args === null) return;
@@ -83,7 +83,7 @@ export function Board() {
     return () => {
       document.removeEventListener("keydown", onKeyDown);
     };
-  }, [board, moveCard, selectCard, selectedCard]);
+  }, [board, moveCard, platform, selectCard, selectedCard]);
 
   // 掴んだと判定するまでに少し動かす。押しただけでドラッグが始まると、
   // カードを選ぶだけのつもりが動いてしまう。

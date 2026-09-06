@@ -20,7 +20,9 @@ pub mod state;
 
 pub use error::{AppError, ErrorKind, Field};
 pub use run::run;
-pub use snapshot::{CaptureTarget, CardDueStatus, Snapshot, StartupState, ThemePreference};
+pub use snapshot::{
+    CaptureTarget, CardDueStatus, Platform, Snapshot, StartupState, ThemePreference,
+};
 pub use state::AppState;
 
 #[cfg(test)]

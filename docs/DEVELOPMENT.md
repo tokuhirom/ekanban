@@ -25,6 +25,7 @@ crates/
       diagnostics.rs  起動失敗とパニックのログ記録、ダイアログ表示
       db/
         mod.rs        SQLite のスキーマ移行、読み書き、トランザクション
+  harness/        ekanban-harness: コマンドを HTTP に出す。開発とテスト専用
   app/            ekanban-app: Tauri のアプリ（実行ファイルは ekanban-tauri）
     tauri.conf.json ウィンドウ、CSP、バンドルの設定
     capabilities/   webview に許すもの。使うものだけを並べる
@@ -58,18 +59,21 @@ crates/
       manual_screenshot_seed.rs  マニュアルのスクリーンショット用のデータベースを作る
 web/             画面。TypeScript + React + Vite（ADR 0019）
   src/
-    ipc/          Rust を呼ぶ唯一の口。`types/` は ts-rs の生成物（手で書かない）
+    ipc/          Rust を呼ぶ唯一の口。tauri と harness の 2 実装。
+                  `types/` は ts-rs の生成物（手で書かない）
     state/        スナップショットの保持と、コマンドを呼んで差し替える 1 本の経路
     board/        サイドバー、ヘッダ、カラム、カード、D&D
       dnd.ts        どこに落ちるかの計算。**ライブラリの外に置く**（ADR 0022）
       keyboard.ts   矢印での選択と、修飾キー＋矢印での移動
     shell/        webview だから自分で切るもの（右クリック、拡大縮小、スワイプ）
     styles.css    色のトークンと骨組み
+  e2e/            Playwright。ハーネス越しに Chromium と WebKit で動かす
 ```
 
 - **`ekanban-core` に UI ツールキットを足しません。** gpui にも tauri にも依存しないことが、テストを GUI のランタイム無しで走らせ続ける条件であり、Tauri のアプリと開発用のハーネスが同じコードを使える条件でもあります（[Tauri 移行の設計](TAURI-MIGRATION.md) §1）。依存の依存から入り込むほうがありがちなので、解決した依存グラフを `script/check-core-independence` が CI で見ています
 - **`crates/app/src/commands.rs` に `tauri` は出てきません。** `ipc.rs` の `#[tauri::command]` は、その関数を呼ぶだけの包みです。開発用のハーネス（[Tauri 移行の設計](TAURI-MIGRATION.md) §10）が同じ関数を HTTP に出すので、**判断を包みの側に置かないことは設計そのもの**です
 - **D&D の挿入位置と、キーボードの割り当ては `web/src/board/dnd.ts` と `keyboard.ts` に置きます。** dnd-kit に渡すのは掴む・運ぶ・オートスクロールだけです（[ADR 0022](adr/0022-dnd-kit-core-for-drag-and-drop.md)）。盤面の意味を決めるところをライブラリに預けると、外せなくなります
+- **どの OS で動いているかを `navigator.userAgent` から決めません。** あれは webview が書き換えられる文字列です（Playwright の Safari 模擬は Linux 上で `Macintosh` を名乗ります）。`secondary` が Cmd か Ctrl かを取り違えると割り当てが丸ごと効かないので、Rust が `StartupState.platform` で渡します（[ADR 0009](adr/0009-per-platform-key-bindings.md)、[ADR 0023](adr/0023-verifying-the-webview-engines.md)）
 - **`crates/app` のコンパイルには `web/dist` が要ります。** `tauri::generate_context!` が画面を実行ファイルに埋め込むためです。checkout したてなら `npm --prefix web ci && npm --prefix web run build` を先に走らせてください（`make dev` と CI はそうしています）
 - **Tauri のアプリは `make dev` で起動します。** デバッグビルドには Vite の開発サーバの URL が焼き込まれているので、`cargo run -p ekanban-app` だけでは白い画面になります
 - **`crates/gpui` は凍結してあります。** 直すのは使えなくなる不具合だけです（[ADR 0017](adr/0017-moving-the-ui-to-tauri.md)）。中核のモジュールを `ekanban_core` から同じ名前で出し直しているので、`crate::db::…` と書いてある行はそのままです。移行が着地したらこのクレートごと消えます
@@ -238,6 +242,7 @@ fn adding_a_card_and_saving_it_writes_the_title_to_the_database(cx: &mut TestApp
 | `make check` | CI と同じ fmt / clippy / test / 型 / 依存 / 画面側の確認を走らせる |
 | `make types` | Rust の型から TypeScript の型を書き出す |
 | `make web-check` | 画面側の `tsc --noEmit` / ESLint / Vitest |
+| `make e2e` | ハーネス越しに Chromium と WebKit で画面を動かす |
 | `make screenshots` | マニュアルのスクリーンショットを撮り直す（Linux/X11 のみ） |
 | `make icon` | macOS 用の `assets/icon.icns` を `assets/icon.png` から生成する |
 | `make bundle` | リリースビルドから `target/release/bundle/Ekanban.app` を作る |

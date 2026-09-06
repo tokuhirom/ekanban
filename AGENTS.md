@@ -9,6 +9,7 @@ This is a local-first Rust desktop Kanban app built with GPUI Kit and SQLite. It
   - `crates/core/src/db/mod.rs` owns SQLite schema migration, loading, seeding, and transactional saves.
   - `crates/core/src/paths.rs`, `backup.rs`, `instance.rs`, `diagnostics.rs` hold the per-OS file locations, the daily generational backup, the one-process-per-database lock, and the crash log.
 - `crates/app/` is `ekanban-app`, the Tauri binary (`ekanban-tauri`). `commands.rs` holds the commands from `docs/TAURI-MIGRATION.md` §3 — one command per model operation, each applying, saving, and returning the whole new snapshot — and **knows nothing about `tauri`**, so the HTTP harness of §10 can reuse it. `ipc.rs` is nothing but `#[tauri::command]` wrappers over those functions; put no judgement there. `crates/app/tests/commands.rs` calls every command and checks both the snapshot and what reached SQLite.
+- `crates/harness/` is `ekanban-harness`, **development and test only, never shipped**: it puts `crates/app`'s commands on HTTP under the same names so the same screen runs in an ordinary browser (`docs/TAURI-MIGRATION.md` §10). What answers is the real `ekanban-core`, which is the point — ADR 0021 forbids a fake backend written in TypeScript.
 - `web/` is the webview: TypeScript + React + Vite (ADR 0019). `src/ipc/` is the one door to Rust, `src/state/` holds the snapshot and the single path that replaces it, `src/board/` draws the board, `src/shell/` holds the things a webview must switch off by hand (§4). Drag-and-drop rides on `@dnd-kit/core` (ADR 0022), but **where a card lands is decided by our own `board/dnd.ts` and `board/keyboard.ts`** — the library carries, it does not decide, so it can be dropped. **Compiling `crates/app` needs `web/dist`**, so run `npm --prefix web ci && npm --prefix web run build` before `cargo build`/`cargo test` on a fresh checkout.
 - `crates/gpui/` is the `ekanban` binary drawn with GPUI Kit. `src/main.rs` is the entry point; `src/lib.rs` opens the database and the window; `src/views/` contains rendering, input handling, and drag-and-drop.
   - **It is frozen** while the move to Tauri is under way (ADR 0017): fix only what stops it from being usable. It re-exports `ekanban_core`'s modules under their old names so the frozen code keeps reading `crate::db::…`, and it goes away when the migration lands.
@@ -30,8 +31,11 @@ Run the Tauri app with `make dev` — a debug build has Tauri's `devUrl` baked i
 - `script/check-core-independence` verifies `ekanban-core` pulls in no UI toolkit.
 - `make types-check` regenerates the TypeScript types and fails if they differ from what is committed.
 - `make web-check` runs the webview's `tsc --noEmit`, ESLint and Vitest. ESLint stands in for `unsafe_code = "forbid"` on the TypeScript side (§9), so a rule is not disabled to make a file pass.
+- `make e2e` drives the board through the harness in **Chromium and WebKit**. Those are not the real webviews, but the three real ones only use two engines — WebView2 is Chromium, WKWebView and WebKitGTK are WebKit — so engine-family differences show up here. What cannot show up is Apple's platform layer (momentum scrolling, rubber-banding, trackpad).
 
-`make check` runs all seven.
+`make check` runs all seven; `make e2e` is separate because it builds browsers.
+
+**Never decide platform behaviour from `navigator.userAgent`.** It is a string a webview can change — Playwright's Safari emulation calls itself `Macintosh` on Linux — and getting `secondary` wrong disables a whole key binding. Rust knows the platform at compile time and sends it in `StartupState.platform`.
 
 These are the same checks enforced by GitHub Actions. The bundled SQLite dependency means no database server is required.
 

@@ -9,6 +9,7 @@
 // 何枚でも動かせます。3 手に増やすのは手触りを下げることです。
 
 import type { Board } from "../ipc/types/Board";
+import type { Platform } from "../ipc/types/Platform";
 import { locateCard, type MoveCardArgs } from "./dnd";
 
 export type Direction = "up" | "down" | "left" | "right";
@@ -89,20 +90,19 @@ export function boardShortcutsDisabled(event: KeyboardEvent): boolean {
   return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement;
 }
 
-/// macOS で動いているか。
-///
-/// `navigator.platform` は非推奨なので UA を見ます。WKWebView の UA には
-/// `Macintosh` が入り、WebView2 と WebKitGTK には入りません。ここを間違えると
-/// `secondary` が別のキーになり、割り当てが丸ごと効かなくなります。
-const IS_MAC = navigator.userAgent.includes("Mac");
-
 /// 「カードを動かす」修飾キーの組み合わせか。
 ///
 /// macOS は Cmd、ほかは Ctrl（`secondary`）に Alt を足したもの。ほかの修飾キーが
 /// 混ざっていたら別の割り当てなので、取りません。
-export function movesSelectedCard(event: KeyboardEvent): boolean {
-  const secondary = IS_MAC ? event.metaKey : event.ctrlKey;
-  const other = IS_MAC ? event.ctrlKey : event.metaKey;
+///
+/// **どの OS かは Rust から受け取ります**（`StartupState.platform`）。
+/// `navigator.userAgent` を見ないのは、あれが webview の書き換えられる文字列
+/// だからです——Playwright の Safari 模擬は Linux 上で `Macintosh` を名乗り、
+/// それを信じると割り当てが丸ごと効かなくなります。
+export function movesSelectedCard(event: KeyboardEvent, platform: Platform): boolean {
+  const isMac = platform === "macos";
+  const secondary = isMac ? event.metaKey : event.ctrlKey;
+  const other = isMac ? event.ctrlKey : event.metaKey;
   return secondary && event.altKey && !event.shiftKey && !other;
 }
 

@@ -68,6 +68,22 @@ jobs:
           npm --prefix web run lint
           npm --prefix web run test
 
+      # 画面の振る舞いを、2 つのエンジンで確かめます。ここで動くのは本物の
+      # webview ではありませんが（ADR 0021）、エンジンの系統は 2 つしか
+      # ないので、系統ごとの差はここで出ます——Chromium は WebView2 と、
+      # WebKit は WKWebView / WebKitGTK と同じ系統です。
+      # 通っているバックエンドは `ekanban-harness` 越しの本物の core です。
+      - name: Install browser engines
+        run: npm --prefix web exec -- playwright install --with-deps chromium webkit
+
+      # テストが盤面ごとにハーネスを上げ下げするので、先に組んでおきます
+      # （テストの中で `cargo run` を待つと、1 本目だけ長くかかります）。
+      - name: Run the webview end-to-end tests
+        run: |
+          cargo build -p ekanban-harness
+          cargo build -p ekanban --example manual_screenshot_seed
+          npm --prefix web run e2e
+
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
