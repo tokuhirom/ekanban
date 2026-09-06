@@ -8,10 +8,20 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { moveCardArgs, moveColumnArgs, parseHandle, previewMove } from "../board/dnd";
 import { useIpc } from "../ipc";
+import type { AppError } from "../ipc/types/AppError";
 import type { Board } from "../ipc/types/Board";
 import type { DueStatus } from "../ipc/types/DueStatus";
 import type { Platform } from "../ipc/types/Platform";
 import type { Snapshot } from "../ipc/types/Snapshot";
+
+/** カードの編集パネルが開いている対象。新しいカードはまだ ID を持たない。 */
+export type Editing = { kind: "new"; columnId: number } | { kind: "card"; cardId: number };
+
+/** ダイアログに出す失敗。使う人が手を打たないと直らないものだけ（ADR 0016）。 */
+export interface Alert {
+  title: string;
+  detail: string;
+}
 
 export interface BoardState {
   snapshot: Snapshot | null;
@@ -28,8 +38,28 @@ export interface BoardState {
   endDrag: (cancelled: boolean) => void;
   /** キーボードでカードを動かす（§6 の条件 6）。 */
   moveCard: (cardId: number, toColumnId: number, toIndex: number) => void;
-  /** 読み込みや操作が失敗した理由。出す場所は呼ぶ側が決める（ADR 0016）。 */
+  /** 盤面を返さないもの（起動の読み込み、絞り込み、表示の状態）が失敗した理由。
+   *
+   * 盤面を変えるコマンドの失敗はここに来ません——`run` がダイアログに出します。 */
   failure: string | null;
+  /** コマンドを呼び、返った盤面で差し替える 1 本の経路。
+   *
+   * 返るのは `Validation` の失敗だけです——それは呼んだ入力欄の脇に出すもの
+   * なので、呼び元しか置き場所を知りません。それ以外はここでダイアログに
+   * 積むので、呼び元は返り値を捨ててかまいません（ADR 0016）。 */
+  run: (call: () => Promise<Snapshot>) => Promise<AppError | null>;
+  /** ダイアログに出す失敗。読んだら `dismissAlert` で消す。 */
+  alert: Alert | null;
+  dismissAlert: () => void;
+  /** 開いているカードの編集パネル。 */
+  editing: Editing | null;
+  openCard: (cardId: number) => void;
+  /** そのカラムに新しいカードを足す下書きを開く。まだ何も保存しない（§2）。 */
+  newCard: (columnId: number) => void;
+  closePanel: () => void;
+  /** タグ整理パネルの開閉。扱うのはボード全体のタグなので、カードのパネルとは別。 */
+  tagPanelOpen: boolean;
+  toggleTagPanel: () => void;
   /** 入力欄の中身。確定していないので Rust には渡していない。 */
   search: string;
   sidebarCollapsed: boolean;
@@ -58,12 +88,42 @@ export function useBoardState(): BoardState {
   );
   const [selectedCard, setSelectedCard] = useState<number | null>(null);
   const [platform, setPlatform] = useState<Platform>("linux");
+  const [alert, setAlert] = useState<Alert | null>(null);
+  const [requested, setRequested] = useState<Editing | null>(null);
+  const [tagPanelOpen, setTagPanelOpen] = useState(false);
 
   const report = useCallback(
     (what: string, error: unknown) => {
       const detail = describe(error);
       setFailure(`${what}: ${detail}`);
       void ipc.logFrontendError(`${what}: ${detail}`);
+    },
+    [ipc],
+  );
+
+  // コマンドを呼んで盤面を差し替える 1 本の経路。**盤面を返すコマンドは全部
+  // ここを通します**——起動の読み込みだけが例外で、それは差し替えではなく
+  // 最初の 1 回だからです。ここを迂回すると、失敗の行き先も一緒に散ります。
+  const run = useCallback(
+    async (call: () => Promise<Snapshot>): Promise<AppError | null> => {
+      try {
+        setSnapshot(await call());
+        return null;
+      } catch (error: unknown) {
+        const failure = asAppError(error);
+        if (failure !== null && failure.kind === "validation") {
+          // 入力欄に返すものは、呼び元しか置き場所を知らない。ここでダイアログに
+          // 出すと、打ち直す先から離れたところに理由が出る。
+          return failure;
+        }
+        const alert: Alert =
+          failure === null
+            ? { title: "操作できませんでした", detail: String(error) }
+            : { title: failure.title, detail: failure.detail };
+        setAlert(alert);
+        void ipc.logFrontendError(`${alert.title}: ${alert.detail}`);
+        return failure;
+      }
     },
     [ipc],
   );
@@ -143,14 +203,9 @@ export function useBoardState(): BoardState {
 
   const switchBoard = useCallback(
     (boardId: number) => {
-      ipc
-        .switchBoard(boardId)
-        .then(setSnapshot)
-        .catch((error: unknown) => {
-        report("ボードを開けませんでした", error);
-      });
+      void run(() => ipc.switchBoard(boardId));
     },
-    [ipc, report],
+    [ipc, run],
   );
 
   const beginDrag = useCallback(
@@ -179,44 +234,70 @@ export function useBoardState(): BoardState {
         const handle = parseHandle(current.activeId);
         if (handle === null) return null;
 
-        let move: Promise<Snapshot>;
+        let move: () => Promise<Snapshot>;
         if (handle.kind === "card") {
           const args = moveCardArgs(current.original, current.preview, handle.id);
           if (args === null) return null;
-          move = ipc.moveCard(handle.id, args.toColumnId, args.toIndex);
+          move = () => ipc.moveCard(handle.id, args.toColumnId, args.toIndex);
         } else {
           const args = moveColumnArgs(current.original, current.preview, handle.id);
           if (args === null) return null;
-          move = ipc.moveColumn(handle.id, args.toIndex);
+          move = () => ipc.moveColumn(handle.id, args.toIndex);
         }
-        move
-          .then((next) => {
-            setSnapshot(next);
-            // 保存が通ってから外す。先に外すと、確定した並びが出るまでの
-            // 一瞬だけ元の位置に戻って見える（条件 7）。
-            setDrag(null);
-          })
-          .catch((error: unknown) => {
-            report("カードを移動できませんでした", error);
-            setDrag(null);
-          });
+        // 保存が通ってから外す。先に外すと、確定した並びが出るまでの一瞬だけ
+        // 元の位置に戻って見える（条件 7）。失敗しても外す——動かせなかった
+        // ことは、カードが元の位置に戻ることで分かる。
+        void run(move).finally(() => {
+          setDrag(null);
+        });
         return current;
       });
     },
-    [ipc, report],
+    [ipc, run],
   );
 
   const moveCard = useCallback(
     (cardId: number, toColumnId: number, toIndex: number) => {
-      ipc
-        .moveCard(cardId, toColumnId, toIndex)
-        .then(setSnapshot)
-        .catch((error: unknown) => {
-          report("カードを移動できませんでした", error);
-        });
+      void run(() => ipc.moveCard(cardId, toColumnId, toIndex));
     },
-    [ipc, report],
+    [ipc, run],
   );
+
+  // 開いていたカードが消えたら（削除・アーカイブ・別のボードへ切り替え）
+  // パネルを畳む。**消えたカードの編集画面を残さない**——保存を押しても
+  // 行き先が無い。
+  //
+  // 状態を書き換えるのではなく、盤面から**導きます**。書き換えると、消えた
+  // ことに気づくまでの 1 回ぶん、無い行き先を指したパネルが描かれます。
+  const editing =
+    requested?.kind === "card" &&
+    snapshot !== null &&
+    !snapshot.board.columns.some((column) =>
+      column.cards.some((card) => card.id === requested.cardId),
+    )
+      ? null
+      : requested;
+
+  const openCard = useCallback((cardId: number) => {
+    setSelectedCard(cardId);
+    setRequested({ kind: "card", cardId });
+  }, []);
+
+  const newCard = useCallback((columnId: number) => {
+    setRequested({ kind: "new", columnId });
+  }, []);
+
+  const closePanel = useCallback(() => {
+    setRequested(null);
+  }, []);
+
+  const toggleTagPanel = useCallback(() => {
+    setTagPanelOpen((open) => !open);
+  }, []);
+
+  const dismissAlert = useCallback(() => {
+    setAlert(null);
+  }, []);
 
   return {
     snapshot,
@@ -230,6 +311,15 @@ export function useBoardState(): BoardState {
     endDrag,
     moveCard,
     failure,
+    run,
+    alert,
+    dismissAlert,
+    editing,
+    openCard,
+    newCard,
+    closePanel,
+    tagPanelOpen,
+    toggleTagPanel,
     search,
     sidebarCollapsed,
     matched,
@@ -242,9 +332,19 @@ export function useBoardState(): BoardState {
 
 /// コマンドが返した `AppError` から、人が読む一行を取り出す。
 function describe(error: unknown): string {
-  if (error !== null && typeof error === "object" && "detail" in error) {
-    const { detail } = error;
-    if (typeof detail === "string") return detail;
-  }
-  return String(error);
+  return asAppError(error)?.detail ?? String(error);
+}
+
+/// 投げられたものが `AppError` かどうか。
+///
+/// Tauri の `invoke` もハーネスも、コマンドの `Err` をそのままの形で投げます。
+/// ネットワークが切れたときのように、そうでないものも来るので見分けます。
+function asAppError(error: unknown): AppError | null {
+  if (error === null || typeof error !== "object") return null;
+  const candidate = error as Partial<AppError>;
+  return typeof candidate.kind === "string" &&
+    typeof candidate.title === "string" &&
+    typeof candidate.detail === "string"
+    ? (error as AppError)
+    : null;
 }

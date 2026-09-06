@@ -139,6 +139,79 @@ fn invoke(command: &str, args: Value, state: &AppState) -> Result<Value, AppErro
     }
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
+    struct Name {
+        name: String,
+    }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct AddCard {
+        column_id: i64,
+        title: String,
+        description: String,
+    }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct UpdateCard {
+        card_id: i64,
+        title: String,
+        description: String,
+        due_date: String,
+        tag_ids: Vec<i64>,
+        checklist: Vec<ekanban_core::model::ChecklistItemDraft>,
+    }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct CardId {
+        card_id: i64,
+    }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct CardTags {
+        card_id: i64,
+        tag_ids: Vec<i64>,
+    }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct ColumnId {
+        column_id: i64,
+    }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct ColumnName {
+        column_id: i64,
+        name: String,
+    }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct WipLimit {
+        column_id: i64,
+        wip_limit: String,
+    }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct AddTag {
+        name: String,
+        color: String,
+    }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct TagName {
+        tag_id: i64,
+        name: String,
+    }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct TagColor {
+        tag_id: i64,
+        color: String,
+    }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct TagId {
+        tag_id: i64,
+    }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
     struct MoveCard {
         card_id: i64,
         to_column_id: i64,
@@ -179,6 +252,81 @@ fn invoke(command: &str, args: Value, state: &AppState) -> Result<Value, AppErro
             state,
             read::<BoardId>(args)?.board_id,
         )?),
+        "create_board" => ok(commands::create_board(state, &read::<Name>(args)?.name)?),
+        "rename_board" => ok(commands::rename_board(state, &read::<Name>(args)?.name)?),
+        "delete_board" => ok(commands::delete_board(
+            state,
+            read::<BoardId>(args)?.board_id,
+        )?),
+        "add_card" => {
+            let a: AddCard = read(args)?;
+            ok(commands::add_card(
+                state,
+                a.column_id,
+                &a.title,
+                &a.description,
+            )?)
+        }
+        "update_card" => {
+            let a: UpdateCard = read(args)?;
+            ok(commands::update_card(
+                state,
+                a.card_id,
+                &a.title,
+                &a.description,
+                &a.due_date,
+                a.tag_ids,
+                a.checklist,
+            )?)
+        }
+        "copy_card" => ok(commands::copy_card(state, read::<CardId>(args)?.card_id)?),
+        "delete_card" => ok(commands::delete_card(state, read::<CardId>(args)?.card_id)?),
+        "archive_card" => ok(commands::archive_card(
+            state,
+            read::<CardId>(args)?.card_id,
+        )?),
+        "set_card_tags" => {
+            let a: CardTags = read(args)?;
+            ok(commands::set_card_tags(state, a.card_id, a.tag_ids)?)
+        }
+        "add_column" => ok(commands::add_column(state, &read::<Name>(args)?.name)?),
+        "rename_column" => {
+            let a: ColumnName = read(args)?;
+            ok(commands::rename_column(state, a.column_id, &a.name)?)
+        }
+        "remove_column" => ok(commands::remove_column(
+            state,
+            read::<ColumnId>(args)?.column_id,
+        )?),
+        "set_column_wip_limit" => {
+            let a: WipLimit = read(args)?;
+            ok(commands::set_column_wip_limit(
+                state,
+                a.column_id,
+                &a.wip_limit,
+            )?)
+        }
+        "sort_column_by_due_date" => ok(commands::sort_column_by_due_date(
+            state,
+            read::<ColumnId>(args)?.column_id,
+        )?),
+        "archive_column" => ok(commands::archive_column(
+            state,
+            read::<ColumnId>(args)?.column_id,
+        )?),
+        "add_tag" => {
+            let a: AddTag = read(args)?;
+            ok(commands::add_tag(state, &a.name, &a.color)?)
+        }
+        "rename_tag" => {
+            let a: TagName = read(args)?;
+            ok(commands::rename_tag(state, a.tag_id, &a.name)?)
+        }
+        "set_tag_color" => {
+            let a: TagColor = read(args)?;
+            ok(commands::set_tag_color(state, a.tag_id, &a.color)?)
+        }
+        "remove_tag" => ok(commands::remove_tag(state, read::<TagId>(args)?.tag_id)?),
         "move_card" => {
             let a: MoveCard = read(args)?;
             ok(commands::move_card(

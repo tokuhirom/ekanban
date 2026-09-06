@@ -419,3 +419,394 @@ textarea {
 [data-tone="info"] {
   color: var(--color-info);
 }
+
+/* ---------------------------------------------------------------- 入力とボタン
+ *
+ * 見た目は 1 か所で決めます。`primary` / `secondary` / `ghost` / `danger` は
+ * gpui-kit の `Button` の系統と同じ名前にして、移したものが 1 対 1 で追える
+ * ようにしてあります。
+ *
+ * `danger`（赤）を使ってよいのは、**ダイアログの確定ボタンとメニュー内の削除
+ * 項目だけ**です（`docs/DESIGN.md`）。それ以外に赤を配ると、本当に戻せない
+ * 操作が埋もれます。
+ */
+button {
+  border-radius: 6px;
+  font: inherit;
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+button.primary {
+  padding: 5px 12px;
+  border: 1px solid var(--color-foreground);
+  background: var(--color-foreground);
+  color: var(--color-background);
+}
+
+button.secondary {
+  padding: 5px 10px;
+  border: 1px solid var(--color-border);
+  background: var(--color-background);
+  color: inherit;
+}
+
+button.ghost {
+  padding: 4px 8px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+}
+
+button.ghost:hover:not(:disabled),
+button.secondary:hover:not(:disabled) {
+  background: var(--color-accent);
+}
+
+/* メニューの中の削除項目。`danger` は背景用の色なので、素の面では文字色に
+ * 使う（`*-foreground` を素の面に使わない、`docs/DESIGN.md`）。 */
+button.danger-item {
+  padding: 4px 8px;
+  border: 0;
+  background: transparent;
+  color: var(--color-danger);
+  text-align: left;
+}
+
+button.danger-item:hover:not(:disabled) {
+  background: var(--color-accent);
+}
+
+button.danger {
+  padding: 5px 12px;
+  border: 1px solid var(--color-danger);
+  background: var(--color-danger);
+  color: var(--color-background);
+}
+
+.field-input {
+  width: 100%;
+  padding: 5px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-input-background);
+  color: inherit;
+  font: inherit;
+}
+
+.field-label {
+  font-size: 12px;
+  color: var(--color-muted-foreground);
+}
+
+.field-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-muted-foreground);
+}
+
+/* 入力欄に返す理由は、その欄の脇に出す（§3）。ダイアログには上げない。 */
+.field-error {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-danger);
+}
+
+/* 縦並びの直下に置いた要素は幅いっぱいに伸びる。ボタンのように内容の幅で
+ * 置きたいものは、横並びの行で包む（`docs/DESIGN.md`）。 */
+.button-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+/* ---------------------------------------------------------------- メニュー */
+.menu {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 180px;
+  padding: 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-popover);
+  box-shadow: 0 8px 20px rgb(0 0 0 / 25%);
+  z-index: 20;
+}
+
+.menu button {
+  text-align: left;
+}
+
+.menu-label {
+  padding: 2px 8px;
+  font-size: 12px;
+  color: var(--color-muted-foreground);
+}
+
+/* 外を押したらメニューを畳む。透明でよいが、押せる必要はある。 */
+.menu-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 19;
+}
+
+/* カラムのメニューはヘッダの真下に出す。`top: 100%` にすると、基準はカラム
+ * 全体なので**カラムの下端**に出る（カラムは窓の高さまで伸びている）。 */
+.column-menu {
+  position: absolute;
+  top: 40px;
+  right: 8px;
+}
+
+.board-menu {
+  position: absolute;
+  top: 100%;
+  right: 4px;
+}
+
+/* 右クリックメニューはポインタの位置に置く。カードの中に描くと dnd-kit の
+ * `transform` が基準になってずれるので、盤面の外で描いている（`Card.tsx`）。 */
+.card-menu {
+  position: fixed;
+}
+
+.card-panel-menu {
+  position: absolute;
+  top: 100%;
+  right: 8px;
+}
+
+/* ---------------------------------------------------------------- パネル
+ *
+ * ボードに重ねず、右端に押し出して置く。重ねると右端のカラムが隠れ、
+ * ドロップ先が見えなくなる。
+ */
+.panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  width: 340px;
+  flex: 0 0 auto;
+  border-left: 1px solid var(--color-border);
+  background: var(--color-sidebar);
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--color-border);
+  /* メニューはここに絶対配置する。#78（入力欄の下に潜る）と同じ壊れ方を
+   * しないよう、積み重ね文脈をこの帯に作って前に出す。 */
+  position: relative;
+  z-index: 10;
+}
+
+.panel-heading {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.panel-context {
+  font-size: 12px;
+  color: var(--color-muted-foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1 1 auto;
+  /* `overflow-y` を効かせるには、高さの決まった箱までの間にある flex アイテム
+   * すべてに `min-height: 0` が要る（#43、`docs/DESIGN.md`）。 */
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px;
+}
+
+.panel-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding: 10px 12px;
+  border-top: 1px solid var(--color-border);
+}
+
+.card-description-input {
+  resize: vertical;
+}
+
+.checklist-row,
+.tag-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.checklist-text,
+.tag-name-input {
+  flex: 1 1 120px;
+  width: auto;
+  min-width: 0;
+}
+
+.checklist-toggle {
+  flex: 0 0 auto;
+}
+
+.tag-color-input {
+  flex: 0 0 auto;
+  width: 32px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-input-background);
+}
+
+/* ---------------------------------------------------------------- ダイアログ */
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgb(0 0 0 / 40%);
+  z-index: 30;
+}
+
+.dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 360px;
+  max-width: 100%;
+  padding: 16px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-popover);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 35%);
+}
+
+.dialog-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.dialog-detail {
+  margin: 0;
+  color: var(--color-muted-foreground);
+  overflow-wrap: anywhere;
+}
+
+.dialog-input {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-input-background);
+  color: inherit;
+  font: inherit;
+}
+
+.dialog-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+/* ---------------------------------------------------------------- 編集の置き場所 */
+/* カラムのメニューをこの中に絶対配置する。 */
+.column {
+  position: relative;
+}
+
+.column-header {
+  /* `…` を右端に置く。枚数の表示が `margin-left: auto` で押しているので、
+   * ボタンはそのあとに並ぶ。 */
+  align-items: center;
+}
+
+.column-menu-button {
+  flex: 0 0 auto;
+  /* ヘッダはカラムを掴む取っ手でもある。ボタンの上では掴ませない。 */
+  cursor: pointer;
+}
+
+.column-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 0 0 auto;
+  padding: 8px 12px;
+}
+
+.column-footer {
+  flex: 0 0 auto;
+  padding: 0 8px 8px;
+}
+
+.add-card {
+  width: 100%;
+  text-align: left;
+  color: var(--color-muted-foreground);
+}
+
+.add-column-placeholder {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  width: 280px;
+  flex: 0 0 auto;
+  align-self: flex-start;
+  padding: 12px;
+  border: 1px dashed var(--color-border);
+  border-radius: 8px;
+}
+
+.board-row-line {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  position: relative;
+}
+
+.board-row-line .board-row {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.board-menu-button,
+.add-board {
+  flex: 0 0 auto;
+  color: var(--color-muted-foreground);
+}
+
+.rename-board {
+  color: var(--color-muted-foreground);
+}

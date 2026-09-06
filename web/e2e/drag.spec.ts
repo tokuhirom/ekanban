@@ -7,68 +7,12 @@
 // 動かしているのは本物の webview ではありません（ADR 0021）。platform 層の差
 // ——macOS の慣性スクロールや跳ね返り——は、ここでは出ません。
 
-import { execFileSync, spawn, type ChildProcess } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
-const ROOT = join(import.meta.dirname, "..", "..");
-const HARNESS_PORT = 1421;
+import { openBoard, startHarness, stopHarness } from "./harness";
 
-let harness: ChildProcess | undefined;
-let workspace: string;
-
-/// テストごとに新しい盤面から始める。
-///
-/// 1 つのデータベースを使い回すと、前のテストが動かしたカードの位置に次の
-/// テストが引きずられます。**盤面の形が前提になっているテストは、順番に
-/// 依存する**ので、そこは分けます（Rust 側の `Harness::open()` と同じ考え）。
-test.beforeEach(async () => {
-  workspace = mkdtempSync(join(tmpdir(), "ekanban-e2e-"));
-  const database = join(workspace, "board.sqlite3");
-  // 盤面は SQL ではなくアプリ自身の API で組み立てる。テストが見ている状態が、
-  // アプリが本当に復元できる状態であることを、作り方の側で保証するため。
-  execFileSync(
-    "cargo",
-    ["run", "-q", "-p", "ekanban", "--example", "manual_screenshot_seed", "board"],
-    { cwd: ROOT, env: { ...process.env, EKANBAN_DATABASE: database }, stdio: "ignore" },
-  );
-
-  harness = spawn(
-    "cargo",
-    ["run", "-q", "-p", "ekanban-harness", "--", database, String(HARNESS_PORT)],
-    { cwd: ROOT, stdio: "ignore" },
-  );
-  for (let i = 0; i < 120; i += 1) {
-    try {
-      const probe = await fetch(`http://127.0.0.1:${HARNESS_PORT}/invoke/snapshot`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: "{}",
-      });
-      if (probe.ok) return;
-    } catch {
-      // まだ立ち上がっていない。
-    }
-    await new Promise((resolve) => setTimeout(resolve, 250));
-  }
-  throw new Error("ekanban-harness が立ち上がりませんでした");
-});
-
-test.afterEach(async () => {
-  harness?.kill();
-  harness = undefined;
-  // 次のテストが同じポートを取れるまで待つ。
-  await new Promise((resolve) => setTimeout(resolve, 250));
-  rmSync(workspace, { recursive: true, force: true });
-});
-
-async function openBoard(page: Page) {
-  await page.goto(`/?harness=http://127.0.0.1:${HARNESS_PORT}`);
-  await expect(page.locator(".column").first()).toBeVisible();
-}
+test.beforeEach(startHarness);
+test.afterEach(stopHarness);
 
 /// 掴んで運ぶ。**HTML5 の drag events は使わない**ので、ポインタを自分で動かす
 /// （ADR 0020）。1 回で飛ばすと掴んだと判定されないため、刻んで動かす。
