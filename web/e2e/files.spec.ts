@@ -137,6 +137,22 @@ test("説明の中の URL に色が付き、修飾キー＋クリックで開け
   await expect(page.locator(".description-layer")).toContainText("詳しくは");
 });
 
+// 説明の文字は入力欄ではなく裏の表示層が描いています（ADR 0002）。入力欄は
+// 表示層より手前に描かれるので、そこに下地を塗ると層ごと覆って**説明が丸ごと
+// 消えます**。見えているかどうかはスクリーンショットを撮らないと分からないので、
+// ここでは「入力欄は塗らない、下地は枠が持つ」という置き方のほうを見ます。
+test("説明の入力欄は下地を塗らず、裏の表示層を覆わない", async ({ page }) => {
+  await openBoard(page);
+  await page.locator(".column").first().locator(".card").first().dblclick();
+  await page.locator(".card-description-input").fill("見えていてほしい説明");
+
+  const background = (selector: string) =>
+    page.locator(selector).evaluate((element) => getComputedStyle(element).backgroundColor);
+
+  await expect.poll(() => background(".card-description-input")).toBe("rgba(0, 0, 0, 0)");
+  await expect.poll(() => background(".description-field")).not.toBe("rgba(0, 0, 0, 0)");
+});
+
 test("URL でない文字列はリンクにしない", async ({ page }) => {
   await openBoard(page);
   await page.locator(".column").first().locator(".card").first().dblclick();

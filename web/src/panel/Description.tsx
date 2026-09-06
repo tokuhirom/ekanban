@@ -27,6 +27,9 @@ interface Props {
 export function Description({ id, value, platform, onChange }: Props) {
   const ipc = useIpc();
   const [links, setLinks] = useState<readonly UrlSpan[]>([]);
+  // IME の変換中かどうか。変換中の文字は入力欄の中にしかなく、表示層には
+  // 出てこないので、その間だけ見せる層を入れ替えます（`styles.css`）。
+  const [composing, setComposing] = useState(false);
   const input = useRef<HTMLTextAreaElement>(null);
 
   // 打った分だけ枠が伸びます（#89）。**`scrollHeight` を読む前に高さを捨てます**
@@ -63,7 +66,7 @@ export function Description({ id, value, platform, onChange }: Props) {
   const modifier = platform === "macos" ? "Cmd" : "Ctrl";
 
   return (
-    <div className="description-field">
+    <div className={composing ? "description-field composing" : "description-field"}>
       <div className="description-layer" aria-hidden="true">
         {segments(value, links).map((piece, index) => (
           <span
@@ -88,6 +91,12 @@ export function Description({ id, value, platform, onChange }: Props) {
         title={`${modifier} を押しながらクリックすると、リンクを開きます`}
         onChange={(event) => {
           onChange(event.target.value);
+        }}
+        onCompositionStart={() => {
+          setComposing(true);
+        }}
+        onCompositionEnd={() => {
+          setComposing(false);
         }}
         onClick={(event) => {
           if (!opensLink(event.nativeEvent, platform)) return;
