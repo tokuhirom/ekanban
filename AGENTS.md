@@ -25,7 +25,7 @@ Keep SQL inside `crates/core/src/db/` and keep UI code independent of direct dat
 
 ## Build, Test, and Development Commands
 
-Run the app with `make dev` — a debug build has Tauri's `devUrl` baked in, so `cargo run -p ekanban-app` on its own shows a blank window with "Connection refused"; a build that embeds the screen instead is `tauri build --debug --no-bundle`. It stores its database under the OS data directory resolved by `crates/core/src/paths.rs`; set `EKANBAN_DATABASE=/absolute/path/board.sqlite3` to use another file.
+Run the app with `make dev`. A debug build has Tauri's `devUrl` baked in, so it needs the Vite dev server; started without one it prints what to run and exits rather than opening a window the webview cannot fill (`check_dev_server` in `run.rs`). A build that embeds the screen instead is `tauri build --debug --no-bundle`. `cargo run` picks the app because the workspace sets `default-members` — which also means a bare `cargo test` covers only `crates/app`, so run `make check`. It stores its database under the OS data directory resolved by `crates/core/src/paths.rs`; set `EKANBAN_DATABASE=/absolute/path/board.sqlite3` to use another file.
 
 - `cargo fmt --all -- --check` checks formatting.
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings` runs lint checks as errors.

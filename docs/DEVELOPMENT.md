@@ -64,7 +64,8 @@ harness/         ekanban-harness: コマンドを HTTP に出す開発・テス�
 - **D&D の挿入位置と、キーボードの割り当ては `web/src/board/dnd.ts` と `keyboard.ts` に置きます。** dnd-kit に渡すのは掴む・運ぶ・オートスクロールだけです（[ADR 0022](adr/0022-dnd-kit-core-for-drag-and-drop.md)）。盤面の意味を決めるところをライブラリに預けると、外せなくなります
 - **どの OS で動いているかを `navigator.userAgent` から決めません。** あれは webview が書き換えられる文字列です（Playwright の Safari 模擬は Linux 上で `Macintosh` を名乗ります）。`secondary` が Cmd か Ctrl かを取り違えると割り当てが丸ごと効かないので、Rust が `StartupState.platform` で渡します（[ADR 0009](adr/0009-per-platform-key-bindings.md)、[ADR 0023](adr/0023-verifying-the-webview-engines.md)）
 - **`crates/app` のコンパイルには `web/dist` が要ります。** `tauri::generate_context!` が画面を実行ファイルに埋め込むためです。checkout したてなら `npm --prefix web ci && npm --prefix web run build` を先に走らせてください（`make dev` と CI はそうしています）
-- **Tauri のアプリは `make dev` で起動します。** デバッグビルドには Vite の開発サーバの URL が焼き込まれているので、`cargo run -p ekanban-app` だけでは白い画面になります
+- **Tauri のアプリは `make dev` で起動します。** デバッグビルドには Vite の開発サーバの URL が焼き込まれているので、開発サーバごと上げる必要があります。うっかり `cargo run` だけで起動したときは、**ウィンドウを開かずに、何を打てばいいかを出して終わります**（`run.rs` の `check_dev_server`）。画面を埋め込んだデバッグビルドが要るなら `tauri build --debug --no-bundle` です
+- **`cargo test` だけを打つと `ekanban-core` のテストが走りません。** `cargo run` にアプリを選ばせるため、ワークスペースの `default-members` を `crates/app` にしてあります。`--workspace` を省いた `cargo` のコマンドは、そこだけを見ます。`make check` は全部に `--workspace` を付けてあります
 - **UI から SQL を直接実行しません。** SQL は `crates/core/src/db/` に閉じます
 - **`web/src/ipc/types/` は手で書きません。** `ts-rs` が Rust の型から書き出します（`cargo test -p ekanban-core`、`make types`）。同じ型を 2 か所に書くと必ずずれるので、生成物をコミットして CI で差分を見ています（[設計の記録](DESIGN.md)「境界を越える値」）。境界を越える値の決まり——**ID も時刻も JSON の数値**（`i64` を `bigint` にしない。`.cargo/config.toml` の `TS_RS_LARGE_INT`）、**期限は `"YYYY-MM-DD"` の文字列**、**時刻はエポックからのミリ秒**、鍵は camelCase——は `crates/core` のテストが見ています
 - テストは実装と同じモジュールの `#[cfg(test)]` に置きます。データベースのテストは `tempfile` を使い、実物のデータベースを触りません。ビューのテストについては [テスト](#テスト) を見てください
