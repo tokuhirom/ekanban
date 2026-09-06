@@ -24,6 +24,7 @@
   --color-danger: #dc2626;
   --color-warning: #b45309;
   --color-info: #2563eb;
+  --color-selection: rgba(37, 99, 235, 0.28);
 
   color-scheme: light dark;
 }
@@ -46,6 +47,7 @@
     --color-danger: #f87171;
     --color-warning: #fbbf24;
     --color-info: #60a5fa;
+    --color-selection: rgba(96, 165, 250, 0.32);
 
     color-scheme: dark;
   }
@@ -64,6 +66,7 @@
   --color-danger: #f87171;
   --color-warning: #fbbf24;
   --color-info: #60a5fa;
+  --color-selection: rgba(96, 165, 250, 0.32);
 
   color-scheme: dark;
 }
@@ -739,6 +742,11 @@ button.danger {
  * `.field-input` を当てず、この枠の中でまとめて決めます。 */
 .description-field {
   position: relative;
+  /* 下地を塗るのはこの枠です。**入力欄には塗らせません**——入力欄は表示層より
+   * 後ろに書いてあるぶん手前に描かれるので、そこに背景があると裏の層をそのまま
+   * 覆い、説明の文字が消えます。 */
+  background: var(--color-input-background);
+  border-radius: 6px;
 }
 
 .description-field > .card-description-input,
@@ -757,11 +765,21 @@ button.danger {
 
 .description-field > .card-description-input {
   position: relative;
+  /* インラインのままだと行の下がりぶんだけ枠が高くなり、下地が入力欄の下から
+   * はみ出します。 */
+  display: block;
   border-color: var(--color-border);
-  background: var(--color-input-background);
+  /* 下地は枠が持つ（すぐ上）。ここで塗ると裏の表示層を覆う。 */
+  background: transparent;
   /* 見えている文字は下の層のもの。ここは当たり判定とキャレットだけを持つ。 */
   color: transparent;
   caret-color: var(--color-foreground);
+}
+
+/* 選ぶと文字が消えないように、選択の色は透かします。入力欄は表示層の手前に
+ * あるので、不透明な色で塗ると下の文字が隠れます。 */
+.description-field > .card-description-input::selection {
+  background: var(--color-selection);
 }
 
 .description-layer {
@@ -778,6 +796,18 @@ button.danger {
 .description-link {
   color: var(--color-info);
   text-decoration: underline;
+}
+
+/* IME の変換中だけは、入力欄の文字をそのまま見せます。変換中の文字は入力欄の
+ * 中にしかなく（`onChange` はまだ来ていないので表示層は前の本文のまま）、
+ * 透明にしたままでは打っている本人に何も見えません。入力欄を出し入れは
+ * しません——変換中に差し替えるのが ADR 0002 で避けた事故です。 */
+.description-field.composing > .card-description-input {
+  color: var(--color-foreground);
+}
+
+.description-field.composing > .description-layer {
+  visibility: hidden;
 }
 
 /* ---------------------------------------------------------------- アーカイブ */
