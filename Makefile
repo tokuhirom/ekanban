@@ -2,7 +2,7 @@ APP_NAME := Ekanban
 RELEASE_APP := target/release/bundle/$(APP_NAME).app
 DEBUG_APP := target/debug/bundle/$(APP_NAME).app
 
-.PHONY: help build release run test types types-check fmt fmt-check lint deps-check check screenshots icon bundle bundle-debug open install install-linux uninstall-linux clean
+.PHONY: help build release run dev web-install web-check test types types-check fmt fmt-check lint deps-check check screenshots icon bundle bundle-debug open install install-linux uninstall-linux clean
 
 help: ## このヘルプを表示する
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -14,8 +14,19 @@ build: ## デバッグビルド
 release: ## リリースビルド
 	cargo build --workspace --release
 
-run: ## ターミナルから直接起動する (デバッグビルド)
+run: ## いまのアプリ (gpui) をターミナルから直接起動する
 	cargo run -p ekanban
+
+dev: web-install ## Tauri のアプリを開発モードで起動する (Vite の開発サーバごと)
+	cd crates/app && ../../web/node_modules/.bin/tauri dev
+
+web-install: ## 画面側の依存を入れる (ロックファイルのとおりに)
+	npm --prefix web ci
+
+web-check: web-install ## 画面側の型検査・lint・単体テスト
+	npm --prefix web run typecheck
+	npm --prefix web run lint
+	npm --prefix web run test
 
 test: ## テストを実行する
 	cargo test --workspace --all-features
@@ -38,7 +49,7 @@ types: ## Rust の型から TypeScript の型を書き出す (web/src/ipc/types/
 types-check: types ## 書き出した型がコミットしてあるものと同じか確かめる
 	git diff --exit-code -- web/src/ipc/types
 
-check: fmt-check lint test types-check deps-check ## CI と同じチェックを一通り走らせる
+check: fmt-check lint test types-check deps-check web-check ## CI と同じチェックを一通り走らせる
 
 screenshots: ## マニュアルのスクリーンショットを撮り直す (Linux/X11 のみ)
 	script/manual-screenshots

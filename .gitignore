@@ -3,3 +3,6 @@
 *.sqlite3-shm
 *.sqlite3-wal
 /assets/icon.icns
+/web/node_modules/
+/web/dist/
+/crates/app/gen/

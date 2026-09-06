@@ -347,7 +347,7 @@ make bundle   tauri build（3 OS のバンドラ）
 | 0 | メモリの実測（§13） | 3 OS で、いまの値と Tauri の空アプリの値が表になっている |
 | 1 ✅ | ワークスペースへ再編。`crates/core` を切り出す | `cargo test` が通り、`crates/core` が gpui にも tauri にも依存していない |
 | 2 ✅ | `serde` 化、`ts-rs` の生成、コマンドとイベントの実装（画面なし） | コマンドの一覧（§3）が全部あり、Rust のテストから叩ける |
-| 3 | 読むだけの盤面（サイドバー・ヘッダ・カラム・カード・減光） | 手元のデータベースを開いて、いまのアプリと同じ盤面が出る |
+| 3 ✅ | 読むだけの盤面（サイドバー・ヘッダ・カラム・カード・減光） | 手元のデータベースを開いて、いまのアプリと同じ盤面が出る |
 | 4 | **D&D の spike** | §6 の 1〜8 を 3 OS で満たす。**満たさなければここで止めて判断し直す** |
 | 5 | 編集（カードパネル、チェックリスト、タグ、期限、カラム、ボード） | いまの `view_tests.rs` の項目が Playwright で通る |
 | 6 | メニュー、キー割り当て、テーマ、ウィンドウの状態 | §7 の表のとおりに効き、入力中の `Cmd+Z` が盤面を巻き戻さない |
@@ -377,6 +377,20 @@ make bundle   tauri build（3 OS のバンドラ）
 **`i64` は TypeScript の `number` です。** ts-rs の既定は `bigint` ですが、値を書くのは `serde_json` で JSON の数値になり、`JSON.parse` が返すのも `number` です。型だけ `bigint` にすると、**実行時の値と型が食い違ったまま通ります**。`.cargo/config.toml` の `TS_RS_LARGE_INT` で 1 か所に決め、それが外れたら落ちるテストを両方のクレートに置いてあります。`number` が嘘にならないこと（ID が 2^53 に届かないこと）は `crates/core` のテストが見ています。
 
 **時刻はエポックからのミリ秒でした**（`db` の `now()` が `as_millis`）。§3 の表を直しました。秒だと思って読むと webview は 1970 年を描きます。
+
+### 段階 3 で決まったこと
+
+**スナップショットに期限の状態を足しました。** §2 の Snapshot は 4 つの欄しかありませんが、カードの期限の見出し（「期限切れ 2日 (9/4)」）を描くには「今日が何日か」が要ります。`Card` はデータベースから来るものなので、その日付を持てません。判定を TypeScript に写すのは §5 が禁じているので、`due_statuses`（カード ID と `DueStatus` の対）と、それを出した `today` を snapshot が運びます。**日付をまたぐと古くなります**——開きっぱなしで日が変わると、次のコマンドまで昨日の判定が出たままです。`today` を返しているのは、webview が手元の日付とずれたことに気づいて読み直せるようにするためで、その読み直し自体はまだ作っていません。
+
+**`crates/app` の実行ファイルは `ekanban-tauri` です。** `crates/gpui` が出す `ekanban` と並べて置ける必要があるのは移行の間だけなので、段階 10 で `ekanban` に変わります。`tauri.conf.json` の `mainBinaryName` がそこに合わせてあります。
+
+**デバッグビルドは Vite の開発サーバを要求します。** Tauri は `devUrl` をデバッグの実行ファイルに焼き込むので、`cargo run -p ekanban-app` だけでは白い画面に「Connection refused」が出ます。`make dev`（`tauri dev`）を使ってください。
+
+**`crates/app` のコンパイルに `web/dist` が要ります。** `tauri::generate_context!` が画面を実行ファイルに埋め込むためで、`cargo test --workspace` も同じです。CI は 3 つの OS すべてで、Rust の前に `npm ci && npm run build` を回します。§11 の表は ubuntu にだけ Node を足すと書いていましたが、`crates/app` を macOS と Windows でもコンパイルする以上、そちらにも要ります。
+
+**TypeScript は 5.9 に留めました。** 7.0 は出ていますが `typescript-eslint` がまだ受け付けません（peer が `<6.1.0`）。§9 が `unsafe_code = "forbid"` の代わりに数えている 2 本のうち 1 本を落とすより、こちらを待ちます。
+
+**`overflow` と `min-height: 0` の規則は、そのまま CSS でも要りました**（#43 と同じ間違い）。`.app` → `.board` → `.board-content` → `.column` → `.column-cards` の全部に `min-height: 0` が入っています。横にスクロールする `.board-content` には `min-width: 0` も要ります——軸ごとに別なので、片方だけ書くと片方が伸びます。
 
 ---
 
