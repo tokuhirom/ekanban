@@ -5,6 +5,7 @@ ekanban に手を入れる人向けの文書です。
 - 使う人向けの入口は [README](../README.md)、使い方は [マニュアル](MANUAL.md) にあります
 - 「なぜそう作ってあるか」と、従うべき決まりごとは [設計の記録](DESIGN.md) にあります
 - コーディング規約とテストの方針は [AGENTS.md](../AGENTS.md) にあります
+- **UI は Tauri へ移す途中です。** いまの構造はこの文書のとおりですが、移行後に何がどうなるかは [Tauri 移行の設計](TAURI-MIGRATION.md) にあります（[ADR 0017](adr/0017-moving-the-ui-to-tauri.md)）
 
 ---
 
