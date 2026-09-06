@@ -25,6 +25,15 @@ crates/
       diagnostics.rs  起動失敗とパニックのログ記録、ダイアログ表示
       db/
         mod.rs        SQLite のスキーマ移行、読み書き、トランザクション
+  app/            ekanban-app: Tauri のアプリ（いまはコマンドの層だけ）
+    src/
+      commands.rs     `docs/TAURI-MIGRATION.md` §3 のコマンド
+      state.rs        開いている盤面。適用と保存をコマンドの中で終わらせる
+      snapshot.rs     コマンドが返す形。起動時に読むもの
+      error.rs        失敗の伝え方。入力欄に返すか、ダイアログに出すか
+      events.rs       Rust から webview への 3 つのイベント
+    tests/
+      commands.rs     コマンドを外から呼んで、SQLite まで見るテスト
   gpui/           ekanban: gpui-kit で描くいまのアプリ
     src/
       main.rs         バイナリのエントリポイント
@@ -47,6 +56,7 @@ web/
 ```
 
 - **`ekanban-core` に UI ツールキットを足しません。** gpui にも tauri にも依存しないことが、テストを GUI のランタイム無しで走らせ続ける条件であり、Tauri のアプリと開発用のハーネスが同じコードを使える条件でもあります（[Tauri 移行の設計](TAURI-MIGRATION.md) §1）。依存の依存から入り込むほうがありがちなので、解決した依存グラフを `script/check-core-independence` が CI で見ています
+- **`crates/app` に `tauri` はまだ入っていません。** §3 のコマンドを普通の関数として持ち、Rust のテストから叩けます。`#[tauri::command]` の包みとウィンドウは画面が出る段階 3 で足します。開発用のハーネス（[Tauri 移行の設計](TAURI-MIGRATION.md) §10）が同じ関数を HTTP に出すので、**コマンドの中身が Tauri を知らないことは設計そのもの**です
 - **`crates/gpui` は凍結してあります。** 直すのは使えなくなる不具合だけです（[ADR 0017](adr/0017-moving-the-ui-to-tauri.md)）。中核のモジュールを `ekanban_core` から同じ名前で出し直しているので、`crate::db::…` と書いてある行はそのままです。移行が着地したらこのクレートごと消えます
 - **UI から SQL を直接実行しません。** SQL は `crates/core/src/db/` に閉じます
 - **`web/src/ipc/types/` は手で書きません。** `ts-rs` が Rust の型から書き出します（`cargo test -p ekanban-core`、`make types`）。同じ型を 2 か所に書くと必ずずれるので、生成物をコミットして CI で差分を見ています（[Tauri 移行の設計](TAURI-MIGRATION.md) §3）。境界を越える値の決まり——**ID も時刻も JSON の数値**（`i64` を `bigint` にしない。`.cargo/config.toml` の `TS_RS_LARGE_INT`）、**期限は `"YYYY-MM-DD"` の文字列**、**時刻はエポックからのミリ秒**、鍵は camelCase——は `crates/core` のテストが見ています

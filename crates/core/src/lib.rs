@@ -7,6 +7,7 @@
 pub mod backup;
 pub mod db;
 pub mod diagnostics;
+pub mod export;
 pub mod instance;
 pub mod model;
 pub mod paths;

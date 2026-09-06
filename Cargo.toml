@@ -1,11 +1,12 @@
 # ワークスペースのルート。ここにはパッケージを置かない。
 #
 # `crates/core` が盤面のモデル・SQLite・控え・置き場所を持ち、UI ツールキットに
-# 依存しない。`crates/gpui` は gpui-kit で描く今のアプリで、Tauri へ移り終えたら
-# 消える（`docs/TAURI-MIGRATION.md` の段階 10）。
+# 依存しない。`crates/app` が Tauri のアプリ（いまはコマンドの層だけ）。
+# `crates/gpui` は gpui-kit で描く今のアプリで、Tauri へ移り終えたら消える
+# （`docs/TAURI-MIGRATION.md` の段階 10）。
 [workspace]
 resolver = "2"
-members = ["crates/core", "crates/gpui"]
+members = ["crates/app", "crates/core", "crates/gpui"]
 
 [workspace.package]
 # tagpr がここを書き換え、`script/bundle-mac` がここから .app のバージョンを作る

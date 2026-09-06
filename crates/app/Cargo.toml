@@ -1,0 +1,31 @@
+# Tauri のアプリ。いまは**コマンドの層だけ**があります。
+#
+# `docs/TAURI-MIGRATION.md` §3 のコマンドを、Tauri に依らない普通の関数として
+# 持ちます。`#[tauri::command]` の薄い包みと、ウィンドウ・メニュー・割り当ては
+# 画面が出る段階 3 で足します。§10 の開発用ハーネスが同じ関数を HTTP に出す
+# 予定なので、**コマンドの中身が Tauri を知らないことは、あとで足す包みの
+# 都合ではなく、設計そのもの**です。
+#
+# 段階 10 で `crates/gpui` が消えたら、このパッケージが `ekanban` の名前を
+# 引き継ぎます。
+[package]
+name = "ekanban-app"
+description = "ekanban のコマンド層。盤面を変え、保存し、スナップショットを返す"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+ekanban-core.workspace = true
+chrono.workspace = true
+rusqlite.workspace = true
+serde.workspace = true
+ts-rs.workspace = true
+
+[dev-dependencies]
+ekanban-core = { workspace = true, features = ["test-fixtures"] }
+serde_json.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

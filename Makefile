@@ -33,7 +33,7 @@ deps-check: ## ekanban-core が UI ツールキットに依存していないこ
 	script/check-core-independence
 
 types: ## Rust の型から TypeScript の型を書き出す (web/src/ipc/types/)
-	cargo test -p ekanban-core
+	cargo test --workspace
 
 types-check: types ## 書き出した型がコミットしてあるものと同じか確かめる
 	git diff --exit-code -- web/src/ipc/types

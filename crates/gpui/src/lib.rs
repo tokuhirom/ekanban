@@ -8,7 +8,7 @@ pub mod views;
 // この crate が Tauri へ移り終えたら丸ごと消えるものだからで（段階 10）、
 // 凍結した gpui のコードに import の付け替えを入れる理由がない。
 pub use ekanban_core::{
-    backup, database_path, db, diagnostics, instance, model, paths, APP_ID, APP_NAME,
+    backup, database_path, db, diagnostics, export, instance, model, paths, APP_ID, APP_NAME,
 };
 
 use std::path::{Path, PathBuf};
