@@ -20,7 +20,7 @@ use std::path::PathBuf;
 
 use ekanban_app::commands;
 use ekanban_app::error::{AppError, ErrorKind};
-use ekanban_app::AppState;
+use ekanban_app::{AppState, ThemePreference};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tiny_http::{Header, Method, Request, Response, Server};
@@ -244,6 +244,11 @@ fn invoke(command: &str, args: Value, state: &AppState) -> Result<Value, AppErro
     struct Message {
         message: String,
     }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Theme {
+        preference: ThemePreference,
+    }
 
     match command {
         "startup_state" => ok(commands::startup_state(state)?),
@@ -352,6 +357,12 @@ fn invoke(command: &str, args: Value, state: &AppState) -> Result<Value, AppErro
             state,
             read::<Collapsed>(args)?.collapsed,
         )?),
+        "set_theme_preference" => ok(commands::set_theme_preference(
+            state,
+            read::<Theme>(args)?.preference,
+        )?),
+        "undo" => ok(commands::undo(state)?),
+        "redo" => ok(commands::redo(state)?),
         "log_frontend_error" => {
             commands::log_frontend_error(&read::<Message>(args)?.message);
             ok(())

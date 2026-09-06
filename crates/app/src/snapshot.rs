@@ -33,6 +33,21 @@ pub struct Snapshot {
     pub due_statuses: Vec<CardDueStatus>,
     /// `due_statuses` を出したときの日付。
     pub today: NaiveDate,
+    /// ウィンドウのタイトル。webview がそのまま `set_window_title` に渡します。
+    ///
+    /// 組み立てを TypeScript に持たせません。ボード名の扱い（空白だけの名前は
+    /// アプリ名だけにする）は表示の判断なので、盤面の判断と同じところに置きます。
+    pub window_title: String,
+}
+
+/// ウィンドウのタイトル。
+pub(crate) fn window_title(board_name: &str) -> String {
+    let board_name = board_name.trim();
+    if board_name.is_empty() {
+        ekanban_core::APP_NAME.to_string()
+    } else {
+        format!("{board_name} — {}", ekanban_core::APP_NAME)
+    }
 }
 
 /// カード 1 枚の期限の状態。
@@ -153,4 +168,22 @@ pub struct StartupState {
     pub capture_target: Option<CaptureTarget>,
     /// 保存されている割り当て。登録できるかどうかは別の話（§9）。
     pub quick_capture_shortcut: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn window_title_shows_the_board_and_the_app() {
+        let title = window_title("個人 Kanban");
+        assert!(title.contains("個人 Kanban"));
+        assert!(title.contains(ekanban_core::APP_NAME));
+    }
+
+    /// 名前が空白だけのボードでも、タイトルが区切り記号だけにならないこと。
+    #[test]
+    fn window_title_falls_back_to_the_app_name_for_a_blank_board() {
+        assert_eq!(window_title("   "), ekanban_core::APP_NAME);
+    }
 }

@@ -5,8 +5,11 @@
 // ものなので、ここで型を書き直しません。
 
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
+import { APP_ACTION } from "./events";
 import type { Ipc } from "./index";
+import type { AppAction } from "./types/AppAction";
 import type { Snapshot } from "./types/Snapshot";
 import type { StartupState } from "./types/StartupState";
 
@@ -39,12 +42,36 @@ export const tauriIpc: Ipc = {
   moveCard: (cardId, toColumnId, toIndex) =>
     invoke<Snapshot>("move_card", { cardId, toColumnId, toIndex }),
   moveColumn: (columnId, toIndex) => invoke<Snapshot>("move_column", { columnId, toIndex }),
+  undo: () => invoke<Snapshot>("undo"),
+  redo: () => invoke<Snapshot>("redo"),
   filterCards: (query, tagId) => invoke<number[]>("filter_cards", { query, tagId }),
   setFilterState: async (filter) => {
     await invoke("set_filter_state", { filter });
   },
   setSidebarCollapsed: async (collapsed) => {
     await invoke("set_sidebar_collapsed", { collapsed });
+  },
+  setThemePreference: async (theme) => {
+    await invoke("set_theme_preference", { preference: theme });
+  },
+  setWindowTitle: async (title) => {
+    await invoke("set_window_title", { title });
+  },
+  onAppAction: (handler) => {
+    // 購読が張れるまでは往復が 1 回あります。張り終える前に外されたときに
+    // 取りこぼさないよう、外したことを覚えておいて張った直後に外します。
+    let stop: (() => void) | null = null;
+    let stopped = false;
+    void listen<AppAction>(APP_ACTION, (event) => {
+      handler(event.payload);
+    }).then((unlisten) => {
+      if (stopped) unlisten();
+      else stop = unlisten;
+    });
+    return () => {
+      stopped = true;
+      stop?.();
+    };
   },
   logFrontendError: async (message) => {
     await invoke("log_frontend_error", { message });

@@ -26,4 +26,11 @@ dueStatuses: Array<CardDueStatus>,
 /**
  * `due_statuses` を出したときの日付。
  */
-today: string, };
+today: string, 
+/**
+ * ウィンドウのタイトル。webview がそのまま `set_window_title` に渡します。
+ *
+ * 組み立てを TypeScript に持たせません。ボード名の扱い（空白だけの名前は
+ * アプリ名だけにする）は表示の判断なので、盤面の判断と同じところに置きます。
+ */
+windowTitle: string, };

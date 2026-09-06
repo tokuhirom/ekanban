@@ -13,6 +13,7 @@ import { useIpc } from "../ipc";
 import type { AppError } from "../ipc/types/AppError";
 import type { Snapshot } from "../ipc/types/Snapshot";
 import type { Tag } from "../ipc/types/Tag";
+import { useAppActions } from "../shell/actions";
 
 /// 新しいタグの既定の色。
 ///
@@ -32,6 +33,8 @@ export function TagPanel({ tags, run, onClose }: Props) {
   const [name, setName] = useState("");
   const [color, setColor] = useState(DEFAULT_TAG_COLOR);
   const [failed, setFailed] = useState<AppError | null>(null);
+
+  useAppActions({ cancelEdit: onClose });
 
   async function add() {
     if (name.trim() === "") return;
@@ -78,6 +81,9 @@ export function TagPanel({ tags, run, onClose }: Props) {
             value={name}
             placeholder="タグの名前"
             aria-label="新しいタグの名前"
+            // メニューの「タグを追加」で開いたときに、そのまま打ちはじめられる
+            // ようにする。開く道が 1 つしかないので、奪う相手もいない。
+            autoFocus
             // 1 行の欄なので Enter で確定する（`docs/DESIGN.md`）。
             onKeyDown={(event) => {
               if (event.key !== "Enter" || event.nativeEvent.isComposing) return;

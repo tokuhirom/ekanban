@@ -10,6 +10,7 @@
 // 使われます（`main.tsx` が見分けます）。
 
 import type { Ipc } from "./index";
+import type { AppAction } from "./types/AppAction";
 import type { Snapshot } from "./types/Snapshot";
 import type { StartupState } from "./types/StartupState";
 
@@ -31,6 +32,13 @@ async function call<T>(base: string, command: string, args: unknown = {}): Promi
   // 分岐が増える。
   if (!response.ok) throw payload;
   return payload as T;
+}
+
+declare global {
+  interface Window {
+    /** ハーネスのときだけ生える、メニューを押したことにする口。 */
+    ekanbanMenu?: (action: AppAction) => void;
+  }
 }
 
 export function harnessIpc(base: string): Ipc {
@@ -71,12 +79,32 @@ export function harnessIpc(base: string): Ipc {
     moveCard: (cardId, toColumnId, toIndex) =>
       call<Snapshot>(base, "move_card", { cardId, toColumnId, toIndex }),
     moveColumn: (columnId, toIndex) => call<Snapshot>(base, "move_column", { columnId, toIndex }),
+    undo: () => call<Snapshot>(base, "undo"),
+    redo: () => call<Snapshot>(base, "redo"),
     filterCards: (query, tagId) => call<number[]>(base, "filter_cards", { query, tagId }),
     setFilterState: async (filter) => {
       await call(base, "set_filter_state", { filter });
     },
     setSidebarCollapsed: async (collapsed) => {
       await call(base, "set_sidebar_collapsed", { collapsed });
+    },
+    setThemePreference: async (theme) => {
+      await call(base, "set_theme_preference", { preference: theme });
+    },
+    setWindowTitle: async (title) => {
+      // ブラウザにはウィンドウのタイトルバーが無いので、タブの見出しに出す。
+      document.title = title;
+      return Promise.resolve();
+    },
+    onAppAction: (handler) => {
+      // ハーネスにメニューはありません。**押されたことにする口**だけ開けて、
+      // メニューの行き先（`shell/actions.ts` の配り先）を Playwright から
+      // 確かめられるようにします。本物のメニューバーが出ることは、殻の煙
+      // テストが見ます（§10）。
+      window.ekanbanMenu = handler;
+      return () => {
+        delete window.ekanbanMenu;
+      };
     },
     logFrontendError: async (message) => {
       await call(base, "log_frontend_error", { message });
