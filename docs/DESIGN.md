@@ -19,10 +19,10 @@ README が使う人向けの入口、[マニュアル](MANUAL.md) が使い方�
 | 記録 | カードのライフサイクル履歴（`card_events`） |
 | 状態の復元 | ウィンドウ矩形、フィルター、最後に開いたボード、テーマ設定、クイックキャプチャの割り当てと入れ先（`app_state`） |
 | 持ち出し | JSON / Markdown 書き出し、`VACUUM INTO` による SQLite バックアップ、データベース場所の表示 |
-| 守り | 起動時の日ごと世代バックアップ（`src/backup.rs`、`backups/` に 7 世代） |
+| 守り | 起動時の日ごと世代バックアップ（`crates/core/src/backup.rs`、`backups/` に 7 世代） |
 | クイックキャプチャ | グローバルホットキー（macOS / X11）、1 行入力のキャプチャウィンドウ、キャプチャ先のカラム設定 |
-| メニュー | メニューバーとショートカット（`src/menu.rs`）。macOS は OS が描き、Linux と Windows は `AppMenuBar` で自分で描く |
-| macOS | `.app` バンドルと署名（`script/bundle-mac`、`Makefile`）、OS ごとのデータ・ログ配置（`src/paths.rs`）、起動失敗とパニックの記録（`src/diagnostics.rs`） |
+| メニュー | メニューバーとショートカット（`crates/gpui/src/menu.rs`）。macOS は OS が描き、Linux と Windows は `AppMenuBar` で自分で描く |
+| macOS | `.app` バンドルと署名（`script/bundle-mac`、`Makefile`）、OS ごとのデータ・ログ配置（`crates/core/src/paths.rs`）、起動失敗とパニックの記録（`crates/core/src/diagnostics.rs`） |
 | Linux | デスクトップエントリとアイコン（`assets/`）、`~/.local` 以下に入れる `script/install-linux` |
 
 スキーマは v10（`boards` / `columns` / `cards` / `tags` / `card_tags` / `checklist_items` / `card_events` / `app_state` / `schema_migrations`）。
@@ -48,7 +48,7 @@ README が使う人向けの入口、[マニュアル](MANUAL.md) が使い方�
 - **`overflow_y_scroll` を効かせるには、そこから高さの決まった箱までの間にある flex アイテムすべてに `min_h_0` が要る。** flex アイテムの `min-height` は既定が `auto`（中身より小さく縮まない）で、これが 0 に落ちるのは**その要素自身がその軸に `overflow` を持つときだけ**。スクロールする要素本体は `overflow_y_scroll` を持つので自動的に縮むが、間に挟まる祖先はそうではない。祖先が縮まなければスクロールする要素も引き伸ばされ、はみ出しが起きないのでスクロールが始まらない。#43 はこれで、`board-content` が `overflow_x_scroll` しか持たず（縦の `overflow` は `visible` のまま）カードの枚数だけ縦に伸びていた。軸を取り違えないこと。横に `overflow_x_scroll` を置いても縦の `min-height` は縮まない
 - 入力欄・検索欄にフォーカスがある間はボードのショートカットを無効にし、IME とテキスト編集を優先する
 - **アプリ独自のキーボードショートカットは `secondary-` で定義する。** `secondary` は macOS では Cmd、Linux と Windows では Ctrl になる。`cmd-` を使ってよいのは、macOS のシステムメニューの割り当て（`cmd-q` `cmd-h` `cmd-alt-h` `cmd-m`）と、`Ctrl` を含む組み合わせ（`cmd-ctrl-*`）だけ。後者を `secondary-ctrl-*` にすると非 macOS で `Ctrl` が重なって潰れ、`secondary-s` や `secondary-f` と衝突する
-- **`cmd-` を使う割り当ては macOS 専用にし、ほかの OS には別の割り当てを持つ。** gpui の `cmd-` は非 macOS では Super（Windows キー）になり、デスクトップ環境が先に取るので届かない。`src/menu.rs` は割り当てを共通のもの（`shared_key_bindings`）と OS ごとのもの（`platform_key_bindings`、`cfg` で差し替え）に分ける。macOS 以外では platform 修飾キーを 1 つも使わない。フルスクリーンは `F11`、ボード一覧は `Ctrl+B`、終了は `Ctrl+Q`（[ADR 0009](adr/0009-per-platform-key-bindings.md)）
+- **`cmd-` を使う割り当ては macOS 専用にし、ほかの OS には別の割り当てを持つ。** gpui の `cmd-` は非 macOS では Super（Windows キー）になり、デスクトップ環境が先に取るので届かない。`crates/gpui/src/menu.rs` は割り当てを共通のもの（`shared_key_bindings`）と OS ごとのもの（`platform_key_bindings`、`cfg` で差し替え）に分ける。macOS 以外では platform 修飾キーを 1 つも使わない。フルスクリーンは `F11`、ボード一覧は `Ctrl+B`、終了は `Ctrl+Q`（[ADR 0009](adr/0009-per-platform-key-bindings.md)）
 - **グローバルホットキーが使えるのは macOS と X11 のセッションだけ。** Wayland にはアプリから使える共通の仕組みが無い。`global-hotkey` の X11 実装は使えない環境でも登録が成功したように見える（スレッドの生成しか確かめず、そのスレッドが死んでいても `register` が `Ok` を返す）ので、戻り値を信じずに環境変数で先に判定する。使えない環境ではメニュー項目を灰色にし、理由を文言に出す
 - **グローバルホットキーは既定で登録しない。** ユーザーが割り当てて初めて有効になる。全画面でその組み合わせを奪うので、断りなく取ると、ほかのアプリが動かなくなった理由を追えなくなる。修飾キーを 1 つも含まない割り当ても同じ理由で受け付けない
 - **登録できていない割り当てを保存しない。** 登録に失敗したらその場で理由を出し、設定は変更前のまま残す。起動のたびに黙って失敗する状態を作らない
@@ -157,7 +157,7 @@ issue を閉じる前に、すべて満たしていること。
 2. `cargo clippy --all-targets --all-features -- -D warnings` が通る
 3. `cargo test --all-features` が通る
 4. モデルの変更には `#[cfg(test)]` のユニットテストが付いている
-5. 画面の操作（アクション、ショートカット、入力欄の保存とキャンセル）を追加・変更した場合は、`src/views/board/view_tests.rs` にウィンドウを開くテストが付いている
+5. 画面の操作（アクション、ショートカット、入力欄の保存とキャンセル）を追加・変更した場合は、`crates/gpui/src/views/board/view_tests.rs` にウィンドウを開くテストが付いている
 6. スキーマの変更には、旧バージョンの DB を開くマイグレーションテストが付いている
 7. 入力欄を追加・変更した場合は、日本語 IME での入力を実機で確認している
 8. 表示を変更した場合は、macOS のライトとダークの両方で確認している

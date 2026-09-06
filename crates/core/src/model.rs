@@ -1,5 +1,7 @@
 use chrono::NaiveDate;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use ts_rs::TS;
 
 pub type BoardId = i64;
 pub type ColumnId = i64;
@@ -9,7 +11,9 @@ pub type ChecklistItemId = i64;
 
 pub const SOON_THRESHOLD_DAYS: i64 = 3;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub struct BoardSummary {
     pub id: BoardId,
     pub name: String,
@@ -23,7 +27,9 @@ pub struct BoardSummary {
 ///
 /// 期限は表示するだけで通知しないので、見に行かなければ気づけない。ボードが
 /// 増えると見に行く先も増えるので、開かなくても分かるようにこれを一覧に出す（#62）。
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub struct DueCounts {
     pub overdue: usize,
     pub today: usize,
@@ -65,7 +71,9 @@ pub struct CardEvent {
     pub at: i64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub struct ChecklistItem {
     pub id: ChecklistItemId,
     pub card_id: CardId,
@@ -76,14 +84,18 @@ pub struct ChecklistItem {
     pub updated_at: i64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub struct ChecklistItemDraft {
     pub id: Option<ChecklistItemId>,
     pub text: String,
     pub checked: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub struct Card {
     pub id: CardId,
     pub column_id: ColumnId,
@@ -98,7 +110,9 @@ pub struct Card {
     pub archived_at: Option<i64>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub struct Tag {
     pub id: TagId,
     pub board_id: BoardId,
@@ -108,7 +122,9 @@ pub struct Tag {
     pub updated_at: i64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub struct Column {
     pub id: ColumnId,
     pub board_id: BoardId,
@@ -272,22 +288,38 @@ pub struct ArchivedCardOperation {
     pub index: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub struct Board {
     pub id: BoardId,
     pub name: String,
     pub created_at: i64,
     pub updated_at: i64,
+    #[serde(skip)]
+    #[ts(skip)]
     pub next_card_id: CardId,
+    #[serde(skip)]
+    #[ts(skip)]
     pub next_column_id: ColumnId,
+    #[serde(skip)]
+    #[ts(skip)]
     pub next_tag_id: TagId,
+    #[serde(skip)]
+    #[ts(skip)]
     pub next_checklist_item_id: ChecklistItemId,
     pub tags: Vec<Tag>,
     pub archived_cards: Vec<Card>,
     pub columns: Vec<Column>,
     /// Events that are written by the next save and then cleared.
+    #[serde(skip)]
+    #[ts(skip)]
     pub(crate) pending_events: Vec<CardEvent>,
+    #[serde(skip)]
+    #[ts(skip)]
     pub(crate) undo_stack: Vec<BoardOperation>,
+    #[serde(skip)]
+    #[ts(skip)]
     pub(crate) redo_stack: Vec<BoardOperation>,
 }
 
@@ -340,7 +372,9 @@ pub enum BoardError {
     LastColumn,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[serde(tag = "kind", content = "days", rename_all = "camelCase")]
+#[ts(export)]
 pub enum DueStatus {
     Overdue(i64),
     Today,
@@ -593,7 +627,9 @@ impl Board {
     /// 初回のシード（[`Board::first_run`]）とは別物にしてある。1 つの関数が
     /// 両方を兼ねていたころは、初回の見た目を直すつもりで中身を変えると
     /// テストが壊れた。
-    #[cfg(test)]
+    // `crates/gpui` のテストもこれを使うので、feature で出す。
+    // 実行ファイルには入れない（`cargo build --release` では立たない）。
+    #[cfg(any(test, feature = "test-fixtures"))]
     pub fn fixture() -> Self {
         let now = timestamp();
         let mut board = Self {
@@ -2565,7 +2601,10 @@ impl Board {
         });
     }
 
-    pub(crate) fn discard_pending_events(&mut self) {
+    /// 積んである `card_events` を捨てる。
+    ///
+    /// 保存し終えたぶんと、巻き戻して無かったことにするぶんの両方が通る。
+    pub fn discard_pending_events(&mut self) {
         self.pending_events.clear();
     }
 }

@@ -1,13 +1,15 @@
 pub mod actions;
-pub mod backup;
-pub mod db;
-pub mod diagnostics;
 pub mod hotkey;
-pub mod instance;
 pub mod menu;
-pub mod model;
-pub mod paths;
 pub mod views;
+
+// 盤面のモデル・SQLite・控え・置き場所は `ekanban-core` に移った
+// （`docs/TAURI-MIGRATION.md` §1）。ここから同じ名前で出し直しているのは、
+// この crate が Tauri へ移り終えたら丸ごと消えるものだからで（段階 10）、
+// 凍結した gpui のコードに import の付け替えを入れる理由がない。
+pub use ekanban_core::{
+    backup, database_path, db, diagnostics, export, instance, model, paths, APP_ID, APP_NAME,
+};
 
 use std::path::{Path, PathBuf};
 
@@ -24,24 +26,6 @@ use views::{
     parse_theme_preference, window_title, BoardView, CaptureTarget, QuickCaptureState,
     ThemePreference,
 };
-
-/// ウィンドウタイトルやバンドルに使うアプリ名。`script/bundle-mac` の `APP_NAME` と揃える。
-pub const APP_NAME: &str = "Ekanban";
-
-/// デスクトップ環境がウィンドウをアプリに結びつけるための識別子。
-/// `script/bundle-mac` の `BUNDLE_ID` と揃える。
-pub const APP_ID: &str = "dev.tokuhirom.ekanban";
-
-/// データベースの置き場所を決める。
-///
-/// GUI から起動するとカレントディレクトリが当てにならないため、相対パスは使わない。
-/// `EKANBAN_DATABASE` が指定されていればそれを、なければ OS ごとの標準の場所を使う。
-pub fn database_path() -> PathBuf {
-    if let Some(path) = std::env::var_os("EKANBAN_DATABASE") {
-        return PathBuf::from(path);
-    }
-    paths::data_dir().join("ekanban.sqlite3")
-}
 
 /// 起動時とウィンドウを開き直すときに、データベースから読み直す状態。
 ///
@@ -360,30 +344,6 @@ mod tests {
     use super::*;
 
     use tempfile::tempdir;
-
-    /// Linux のデスクトップエントリと `APP_ID` の対応（#50）。
-    ///
-    /// `StartupWMClass` はデスクトップ環境が「このウィンドウはこのエントリのもの」
-    /// と判断するための印で、`WindowOptions.app_id` と同じでなければ結びつかない。
-    /// 食い違うと、アプリ一覧からは起動できるのにタスクバーのアイコンと名前が
-    /// 汎用のものに戻る。ファイル名も `<APP_ID>.desktop` である必要があり、
-    /// こちらは `include_str!` のパスがコンパイル時に見ている。
-    #[test]
-    fn the_linux_desktop_entry_points_at_the_app_id() {
-        // 見たいのは中身であって行末ではない。`.gitattributes` が LF に固定して
-        // いるが、それが外れたときにここが落ちても理由が読み取れないので、
-        // 読んだ時点でそろえる。
-        let entry = include_str!("../assets/dev.tokuhirom.ekanban.desktop").replace("\r\n", "\n");
-        assert!(
-            entry.contains(&format!("\nStartupWMClass={APP_ID}\n")),
-            "StartupWMClass must match WindowOptions.app_id"
-        );
-        assert!(
-            entry.contains(&format!("\nIcon={APP_ID}\n")),
-            "the icon name must match the files under assets/icons"
-        );
-        assert!(entry.contains(&format!("\nName={APP_NAME}\n")));
-    }
 
     /// ウィンドウを開き直すたびに通る経路。閉じている間に変わった内容が出る
     /// ことと、`app_state` に残した表示の状態が戻ることを見る。

@@ -41,6 +41,7 @@ use crate::{
         UseDarkTheme, UseLightTheme, UseSystemTheme, ZoomWindow,
     },
     db::{save_board_snapshot, Database, DbError, FilterState, WindowBoundsState},
+    export::{render_board_markdown, suggested_export_name},
     hotkey::{QuickCapture, Shortcut},
     model::{
         card_matches_search, due_status, parse_due_date, parse_wip_limit, Board, BoardError,
@@ -1309,7 +1310,7 @@ impl BoardView {
         // The snapshot owns the events produced by this operation. New
         // operations append to the live board while this snapshot is being
         // written, so they can be saved independently by the next request.
-        self.board.pending_events.clear();
+        self.board.discard_pending_events();
         self.start_next_save(cx);
     }
 
@@ -5028,104 +5029,6 @@ fn column_name_for_card(columns: &[Column], card_id: CardId) -> Option<&str> {
         .map(|column| column.name.as_str())
 }
 
-fn render_board_markdown(board: &Board) -> String {
-    let mut markdown = format!("# {}\n\n", markdown_inline(&board.name));
-    for column in &board.columns {
-        markdown.push_str(&format!("## {}\n\n", markdown_inline(&column.name)));
-        if column.cards.is_empty() {
-            markdown.push_str("カードはありません。\n\n");
-            continue;
-        }
-        for card in &column.cards {
-            append_markdown_card(&mut markdown, card, board, None);
-        }
-    }
-
-    if !board.archived_cards.is_empty() {
-        markdown.push_str("## アーカイブ\n\n");
-        for card in &board.archived_cards {
-            let column_name = board
-                .columns
-                .iter()
-                .find(|column| column.id == card.column_id)
-                .map(|column| column.name.as_str());
-            append_markdown_card(&mut markdown, card, board, column_name);
-        }
-    }
-
-    markdown
-}
-
-fn suggested_export_name(board_name: &str, extension: &str) -> String {
-    let stem = board_name
-        .chars()
-        .map(|character| {
-            if character.is_control() || matches!(character, '/' | '\\') {
-                '_'
-            } else {
-                character
-            }
-        })
-        .collect::<String>();
-    let stem = stem.trim().trim_matches('.');
-    let stem = if stem.is_empty() { "board" } else { stem };
-    format!("{stem}.{extension}")
-}
-
-fn append_markdown_card(
-    markdown: &mut String,
-    card: &Card,
-    board: &Board,
-    column_name: Option<&str>,
-) {
-    markdown.push_str(&format!("- **{}**\n", markdown_inline(&card.title)));
-
-    let mut metadata = Vec::new();
-    if let Some(column_name) = column_name {
-        metadata.push(format!("カラム: {}", markdown_inline(column_name)));
-    }
-    if let Some(due_date) = card.due_date {
-        metadata.push(format!("期限: {due_date}"));
-    }
-    let tag_names = card
-        .tag_ids
-        .iter()
-        .filter_map(|tag_id| board.tags.iter().find(|tag| tag.id == *tag_id))
-        .map(|tag| markdown_inline(&tag.name))
-        .collect::<Vec<_>>();
-    if !tag_names.is_empty() {
-        metadata.push(format!("タグ: {}", tag_names.join(", ")));
-    }
-    if card.archived_at.is_some() {
-        metadata.push("アーカイブ済み".to_string());
-    }
-    for line in metadata {
-        markdown.push_str(&format!("  - {line}\n"));
-    }
-
-    if !card.description.trim().is_empty() {
-        for line in card.description.lines() {
-            markdown.push_str(&format!("  > {}\n", markdown_inline(line)));
-        }
-    }
-    for item in &card.checklist_items {
-        let marker = if item.checked { 'x' } else { ' ' };
-        markdown.push_str(&format!("  - [{marker}] {}\n", markdown_inline(&item.text)));
-    }
-    markdown.push('\n');
-}
-
-fn markdown_inline(value: &str) -> String {
-    value
-        .replace('\\', "\\\\")
-        .replace(['\r', '\n'], " ")
-        .replace('*', "\\*")
-        .replace('_', "\\_")
-        .replace('`', "\\`")
-        .replace('[', "\\[")
-        .replace(']', "\\]")
-}
-
 /// ボード一覧の 1 行に出す期限の件数。
 ///
 /// 色だけに意味を持たせない決まりなので、数の隣に何の件数かを書く。件数が 0 の
@@ -5507,11 +5410,12 @@ mod tests {
         archived_day_label, archived_groups, board_error_detail, capture_destination,
         capture_target_is_in_board, capture_title, card_is_dimmed, column_name_for_card,
         db_error_detail, default_capture_target, field_error_for, moves_selected_card,
-        next_card_id, next_tag_filter, render_board_markdown, save_dialog_error_detail,
-        window_title, CaptureTarget, CardDirection, EditorField,
+        next_card_id, next_tag_filter, save_dialog_error_detail, window_title, CaptureTarget,
+        CardDirection, EditorField,
     };
     use crate::{
         db::DbError,
+        export::render_board_markdown,
         model::{Board, BoardError, Card},
     };
     use chrono::{Local, NaiveDate, TimeZone as _};

@@ -2,23 +2,23 @@ APP_NAME := Ekanban
 RELEASE_APP := target/release/bundle/$(APP_NAME).app
 DEBUG_APP := target/debug/bundle/$(APP_NAME).app
 
-.PHONY: help build release run test fmt fmt-check lint check screenshots icon bundle bundle-debug open install install-linux uninstall-linux clean
+.PHONY: help build release run test types types-check fmt fmt-check lint deps-check check screenshots icon bundle bundle-debug open install install-linux uninstall-linux clean
 
 help: ## このヘルプを表示する
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
 		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
 
 build: ## デバッグビルド
-	cargo build
+	cargo build --workspace
 
 release: ## リリースビルド
-	cargo build --release
+	cargo build --workspace --release
 
 run: ## ターミナルから直接起動する (デバッグビルド)
-	cargo run
+	cargo run -p ekanban
 
 test: ## テストを実行する
-	cargo test --all-features
+	cargo test --workspace --all-features
 
 fmt: ## フォーマットを適用する
 	cargo fmt --all
@@ -27,9 +27,18 @@ fmt-check: ## フォーマット崩れがないか確認する
 	cargo fmt --all -- --check
 
 lint: ## clippy を実行する
-	cargo clippy --all-targets --all-features -- -D warnings
+	cargo clippy --workspace --all-targets --all-features -- -D warnings
 
-check: fmt-check lint test ## CI と同じチェックを一通り走らせる
+deps-check: ## ekanban-core が UI ツールキットに依存していないことを確かめる
+	script/check-core-independence
+
+types: ## Rust の型から TypeScript の型を書き出す (web/src/ipc/types/)
+	cargo test --workspace
+
+types-check: types ## 書き出した型がコミットしてあるものと同じか確かめる
+	git diff --exit-code -- web/src/ipc/types
+
+check: fmt-check lint test types-check deps-check ## CI と同じチェックを一通り走らせる
 
 screenshots: ## マニュアルのスクリーンショットを撮り直す (Linux/X11 のみ)
 	script/manual-screenshots
