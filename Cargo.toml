@@ -31,6 +31,8 @@ thiserror = "2.0"
 # 型定義を Rust から生成する。手で 2 か所に書くと必ずずれる
 # (`docs/TAURI-MIGRATION.md` §3)。書き出し先は `.cargo/config.toml`。
 ts-rs = { version = "12.0.1", features = ["chrono-impl"] }
+tauri = { version = "2.11.5", features = ["devtools"] }
+tauri-build = { version = "2.6.3", features = [] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

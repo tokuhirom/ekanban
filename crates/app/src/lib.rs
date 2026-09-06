@@ -4,21 +4,23 @@
 //! 変えるコマンドは、モデルへの適用と SQLite への保存を続けて行い、**両方成功
 //! してから**スナップショットを返します。
 //!
-//! `tauri` にはまだ依存していません。`#[tauri::command]` の包み、ウィンドウ、
-//! メニュー、グローバルな割り当ては、画面が出る段階 3 で足します。§10 の開発用
-//! ハーネスがこの同じ関数を HTTP に出すので、**中身が Tauri を知らないことは
-//! 設計そのもの**です。
+//! `commands` は `tauri` を知りません。`ipc` の `#[tauri::command]` は、その関数を
+//! 呼ぶだけの包みです。§10 の開発用ハーネスが同じ関数を HTTP に出すので、
+//! **判断を包みの側に置かないことは設計そのもの**です。
 //!
 //! [ADR 0018]: ../../../docs/adr/0018-rust-owns-the-board-state.md
 
 pub mod commands;
 pub mod error;
 pub mod events;
+pub mod ipc;
+pub mod run;
 pub mod snapshot;
 pub mod state;
 
 pub use error::{AppError, ErrorKind, Field};
-pub use snapshot::{CaptureTarget, Snapshot, StartupState, ThemePreference};
+pub use run::run;
+pub use snapshot::{CaptureTarget, CardDueStatus, Snapshot, StartupState, ThemePreference};
 pub use state::AppState;
 
 #[cfg(test)]

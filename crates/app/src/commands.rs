@@ -29,41 +29,54 @@ use crate::state::{snapshot_of, AppState};
 /// 最後に開いていたボードが消えていれば先頭のボードに、絞り込みのタグや
 /// キャプチャ先が消えていれば既定に、それぞれ黙って戻します。起動を妨げません。
 pub fn load_startup_state(database_path: &Path) -> Result<(AppState, StartupState), AppError> {
-    let fail = |error: &ekanban_core::db::DbError| {
-        AppError::from_db(ErrorKind::BoardIo, "ボードを読めませんでした", error)
-    };
-
-    let mut database = Database::open(database_path).map_err(|e| fail(&e))?;
-    let boards = database.load_boards().map_err(|e| fail(&e))?;
+    let database = Database::open(database_path).map_err(open_failed)?;
+    let boards = database.load_boards().map_err(open_failed)?;
     let board_id = database
         .load_last_board_id()
-        .map_err(|e| fail(&e))?
+        .map_err(open_failed)?
         .filter(|board_id| boards.iter().any(|board| board.id == *board_id))
         .or_else(|| boards.first().map(|board| board.id))
-        .ok_or_else(|| fail(&ekanban_core::db::DbError::NoBoard))?;
-    let board = database.load_board_by_id(board_id).map_err(|e| fail(&e))?;
-    database.set_last_board_id(board.id).map_err(|e| fail(&e))?;
+        .ok_or_else(|| open_failed(ekanban_core::db::DbError::NoBoard))?;
+    let board = database.load_board_by_id(board_id).map_err(open_failed)?;
+    database.set_last_board_id(board.id).map_err(open_failed)?;
+
+    let state = AppState::open(database_path, board);
+    let startup = startup_state(&state)?;
+    Ok((state, startup))
+}
+
+/// 開いている盤面と、付随する表示の状態。
+///
+/// webview が起動のときに 1 回呼びます。`load_startup_state` が起動の入口で
+/// 呼ぶのと同じもので、**ウィンドウを開き直すときも同じ経路を通ります**。
+/// 閉じている間もクイックキャプチャはカードを足せるので、メモリ上の値を
+/// 抱えて使い回さず、そのつどデータベースから読みます（`docs/DESIGN.md`）。
+pub fn startup_state(state: &AppState) -> Result<StartupState, AppError> {
+    let mut database = state.database().map_err(open_failed)?;
 
     let mut filter = database.load_filter_state().unwrap_or_default();
-    if filter
+    // 絞り込んでいたタグが消えていたら、黙って既定に戻す。起動を妨げない。
+    let tag_is_gone = filter
         .tag_id
-        .is_some_and(|tag_id| !board.tags.iter().any(|tag| tag.id == tag_id))
-    {
+        .is_some_and(|tag_id| !state.lock().tags.iter().any(|tag| tag.id == tag_id));
+    if tag_is_gone {
         filter.tag_id = None;
-        database.set_filter_state(&filter).map_err(|e| fail(&e))?;
+        database.set_filter_state(&filter).map_err(open_failed)?;
     }
 
-    let capture_target = read_capture_target(&mut database)?;
-    let startup = StartupState {
-        snapshot: snapshot_of(&board, &database).map_err(|e| fail(&e))?,
+    Ok(StartupState {
+        snapshot: state.snapshot()?,
         filter,
         window_bounds: database.load_window_bounds().ok().flatten(),
         theme: ThemePreference::parse(database.load_theme_preference().ok().flatten().as_deref()),
         sidebar_collapsed: database.load_sidebar_collapsed().unwrap_or(false),
-        capture_target,
+        capture_target: read_capture_target(&mut database)?,
         quick_capture_shortcut: database.load_quick_capture_shortcut().unwrap_or(None),
-    };
-    Ok((AppState::open(database_path, board), startup))
+    })
+}
+
+fn open_failed(error: ekanban_core::db::DbError) -> AppError {
+    AppError::from_db(ErrorKind::BoardIo, "ボードを読めませんでした", &error)
 }
 
 // ---------------------------------------------------------------- ボード

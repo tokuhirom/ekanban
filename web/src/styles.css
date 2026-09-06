@@ -1,0 +1,376 @@
+/* 色は 1 か所で決めます。
+ *
+ * gpui の `ActiveTheme::theme()` を CSS のカスタムプロパティに置き換えたもので、
+ * 名前は `UiColor` に揃えてあります（`docs/TAURI-MIGRATION.md` §4）。
+ * `docs/DESIGN.md` の規則はそのまま生きます——直書きの色はユーザーが指定した
+ * タグの色だけ、`*-foreground` は対応する背景の上でだけ、色だけに意味を
+ * 持たせない。
+ *
+ * テーマの切り替え（system / light / dark）は段階 6 です。いまは OS の設定に
+ * ついていきます。
+ */
+:root {
+  --color-background: #ffffff;
+  --color-foreground: #18181b;
+  --color-muted-foreground: #71717a;
+  --color-border: #e4e4e7;
+  --color-accent: #f4f4f5;
+  --color-sidebar: #fafafa;
+  --color-sidebar-accent: #e4e4e7;
+  --color-popover: #ffffff;
+  --color-input-background: #ffffff;
+  --color-danger: #dc2626;
+  --color-warning: #b45309;
+  --color-info: #2563eb;
+
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-background: #18181b;
+    --color-foreground: #fafafa;
+    --color-muted-foreground: #a1a1aa;
+    --color-border: #3f3f46;
+    --color-accent: #27272a;
+    --color-sidebar: #1c1c1f;
+    --color-sidebar-accent: #3f3f46;
+    --color-popover: #27272a;
+    --color-input-background: #27272a;
+    --color-danger: #f87171;
+    --color-warning: #fbbf24;
+    --color-info: #60a5fa;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  /* システムのフォントを使う。web フォントは読み込まない
+   * （ネットワークに出ない約束、§9）。 */
+  font-family:
+    system-ui, -apple-system, "Segoe UI", "Noto Sans JP", "Hiragino Sans", "Yu Gothic UI",
+    sans-serif;
+  font-size: 14px;
+  color: var(--color-foreground);
+  background: var(--color-background);
+  /* ドラッグ中に文字が選択されるのを止める（§4）。入力欄では戻す。 */
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+input,
+textarea {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* ---------------------------------------------------------------- 骨組み
+ *
+ * `overflow` を効かせるには、そこから高さの決まった箱までの間にある flex
+ * アイテムすべてに `min-height: 0`（横なら `min-width: 0`）が要ります。
+ * flex アイテムの既定は `auto`（中身より小さく縮まない）で、0 に落ちるのは
+ * その要素自身がその軸に `overflow` を持つときだけです。#43 はこれでした
+ * （`docs/DESIGN.md`）。gpui の作法ではなく CSS の仕様なので、webview でも
+ * そのまま起こせます。
+ */
+.app {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+}
+
+.loading,
+.failure {
+  padding: 16px;
+  color: var(--color-muted-foreground);
+}
+
+.failure {
+  color: var(--color-danger);
+}
+
+/* ---------------------------------------------------------------- サイドバー */
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  width: 220px;
+  flex: 0 0 auto;
+  border-right: 1px solid var(--color-border);
+  background: var(--color-sidebar);
+}
+
+.sidebar[data-collapsed] {
+  width: 44px;
+}
+
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  padding: 10px 12px 6px;
+}
+
+.sidebar-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.sidebar-toggle {
+  margin-left: auto;
+  padding: 2px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-muted-foreground);
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.sidebar-toggle:hover {
+  background: var(--color-accent);
+}
+
+.board-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  list-style: none;
+  margin: 0;
+  padding: 0 8px 8px;
+}
+
+.board-row {
+  display: block;
+  width: 100%;
+  padding: 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.board-row:hover {
+  background: var(--color-accent);
+}
+
+.board-row[data-current] {
+  background: var(--color-sidebar-accent);
+  font-weight: 600;
+}
+
+.board-name {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.due-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 2px;
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  font-size: 12px;
+}
+
+.rail-initial {
+  font-size: 14px;
+}
+
+[data-tone="danger"] {
+  color: var(--color-danger);
+}
+
+[data-tone="warning"] {
+  color: var(--color-warning);
+}
+
+[data-tone="muted"] {
+  color: var(--color-muted-foreground);
+}
+
+/* ---------------------------------------------------------------- 盤面 */
+.board {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+.board-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex: 0 0 auto;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.board-name {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.search {
+  margin-left: auto;
+  width: 260px;
+  padding: 6px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-input-background);
+  color: inherit;
+  font: inherit;
+}
+
+.board-content {
+  display: flex;
+  gap: 12px;
+  flex: 1 1 auto;
+  /* 横にも縦にもはみ出す。両方の軸で `min-*: 0` が要る。 */
+  min-height: 0;
+  min-width: 0;
+  overflow-x: auto;
+  padding: 12px 16px;
+}
+
+/* ---------------------------------------------------------------- カラム */
+.column {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  width: 280px;
+  flex: 0 0 auto;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-accent);
+}
+
+.column-header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding: 10px 12px;
+}
+
+.column-name {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.column-count {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--color-muted-foreground);
+  white-space: nowrap;
+}
+
+.column-over {
+  font-size: 12px;
+}
+
+.column-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 8px 8px;
+}
+
+/* ---------------------------------------------------------------- カード
+ *
+ * 表面の高さを内容で変えすぎないようにします。落とす位置が見て分かることの
+ * ほうが大事なので（§6 の受け入れ条件 2）。
+ */
+.card {
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-background);
+}
+
+/* 絞り込みに外れたカードは隠さず減光する。隠すと D&D の挿入位置が動く
+ * （`docs/DESIGN.md`）。アーカイブ表示だけは隠す（ADR 0010、段階 7）。 */
+.card[data-dimmed] {
+  opacity: 0.4;
+}
+
+.card-title {
+  overflow-wrap: anywhere;
+}
+
+.card-due,
+.card-checklist,
+.card-description {
+  margin-top: 2px;
+  font-size: 12px;
+}
+
+.card-checklist,
+.card-description {
+  color: var(--color-muted-foreground);
+}
+
+.card-description {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+/* タグのチップだけは、背景がユーザーの指定した色になる（直書きの色が許される
+ * 唯一の場所、`docs/DESIGN.md`）。文字色は gpui 版と同じく素の `foreground`。 */
+.tag-chip {
+  padding: 0 4px;
+  border-radius: 4px;
+  color: var(--color-foreground);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+[data-tone="info"] {
+  color: var(--color-info);
+}

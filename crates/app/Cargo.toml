@@ -15,11 +15,21 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+# 実行ファイルの名前は `ekanban-tauri` です。`crates/gpui` が出す `ekanban` と
+# 並べて置ける必要があるのは移行の間だけで、段階 10 で `ekanban` に変わります。
+[[bin]]
+name = "ekanban-tauri"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build.workspace = true
+
 [dependencies]
 ekanban-core.workspace = true
 chrono.workspace = true
 rusqlite.workspace = true
 serde.workspace = true
+tauri.workspace = true
 ts-rs.workspace = true
 
 [dev-dependencies]

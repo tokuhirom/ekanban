@@ -8,10 +8,11 @@ This is a local-first Rust desktop Kanban app built with GPUI Kit and SQLite. It
   - `crates/core/src/model.rs` defines `Board`, `Column`, `Card`, and board operations such as moving and reindexing.
   - `crates/core/src/db/mod.rs` owns SQLite schema migration, loading, seeding, and transactional saves.
   - `crates/core/src/paths.rs`, `backup.rs`, `instance.rs`, `diagnostics.rs` hold the per-OS file locations, the daily generational backup, the one-process-per-database lock, and the crash log.
-- `crates/app/` is `ekanban-app`: the command layer from `docs/TAURI-MIGRATION.md` §3 — one command per model operation, each applying, saving, and returning the whole new snapshot. **It does not depend on `tauri`**: the `#[tauri::command]` wrappers and the window arrive in stage 3, and the HTTP harness of §10 reuses these same functions. `crates/app/tests/commands.rs` calls every command and checks both the snapshot and what reached SQLite.
+- `crates/app/` is `ekanban-app`, the Tauri binary (`ekanban-tauri`). `commands.rs` holds the commands from `docs/TAURI-MIGRATION.md` §3 — one command per model operation, each applying, saving, and returning the whole new snapshot — and **knows nothing about `tauri`**, so the HTTP harness of §10 can reuse it. `ipc.rs` is nothing but `#[tauri::command]` wrappers over those functions; put no judgement there. `crates/app/tests/commands.rs` calls every command and checks both the snapshot and what reached SQLite.
+- `web/` is the webview: TypeScript + React + Vite (ADR 0019). `src/ipc/` is the one door to Rust, `src/state/` holds the snapshot and the single path that replaces it, `src/board/` draws the board, `src/shell/` holds the things a webview must switch off by hand (§4). **Compiling `crates/app` needs `web/dist`**, so run `npm --prefix web ci && npm --prefix web run build` before `cargo build`/`cargo test` on a fresh checkout.
 - `crates/gpui/` is the `ekanban` binary drawn with GPUI Kit. `src/main.rs` is the entry point; `src/lib.rs` opens the database and the window; `src/views/` contains rendering, input handling, and drag-and-drop.
   - **It is frozen** while the move to Tauri is under way (ADR 0017): fix only what stops it from being usable. It re-exports `ekanban_core`'s modules under their old names so the frozen code keeps reading `crate::db::…`, and it goes away when the migration lands.
-- `web/src/ipc/types/` holds the TypeScript types **generated from the Rust ones** by `ts-rs`. Never edit them by hand: `cargo test -p ekanban-core` (or `make types`) rewrites them, and CI fails if the committed files differ from what the Rust types produce.
+- `web/src/ipc/types/` holds the TypeScript types **generated from the Rust ones** by `ts-rs`. Never edit them by hand: `make types` rewrites them, and CI fails if the committed files differ from what the Rust types produce.
 - Tests are colocated with implementation modules under `#[cfg(test)]`; CI configuration is in `.github/workflows/ci.yml`.
 
 Keep SQL inside `crates/core/src/db/` and keep UI code independent of direct database queries.
@@ -20,7 +21,7 @@ The move from GPUI Kit to Tauri is designed in `docs/TAURI-MIGRATION.md`. Read i
 
 ## Build, Test, and Development Commands
 
-Run the application with `cargo run -p ekanban` (the workspace root has no package, so `cargo run` alone cannot pick a binary). It stores its database under the OS data directory resolved by `crates/core/src/paths.rs`; set `EKANBAN_DATABASE=/absolute/path/board.sqlite3` to use another file.
+Run the Tauri app with `make dev` — a debug build has Tauri's `devUrl` baked in, so `cargo run -p ekanban-app` on its own shows a blank window with "Connection refused". Run the outgoing gpui app with `cargo run -p ekanban` (the workspace root has no package, so `cargo run` alone cannot pick a binary). It stores its database under the OS data directory resolved by `crates/core/src/paths.rs`; set `EKANBAN_DATABASE=/absolute/path/board.sqlite3` to use another file.
 
 - `cargo fmt --all -- --check` checks formatting.
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings` runs lint checks as errors.
@@ -28,8 +29,9 @@ Run the application with `cargo run -p ekanban` (the workspace root has no packa
 - `cargo build --workspace --all-features` verifies a complete build.
 - `script/check-core-independence` verifies `ekanban-core` pulls in no UI toolkit.
 - `make types-check` regenerates the TypeScript types and fails if they differ from what is committed.
+- `make web-check` runs the webview's `tsc --noEmit`, ESLint and Vitest. ESLint stands in for `unsafe_code = "forbid"` on the TypeScript side (§9), so a rule is not disabled to make a file pass.
 
-`make check` runs all six.
+`make check` runs all seven.
 
 These are the same checks enforced by GitHub Actions. The bundled SQLite dependency means no database server is required.
 

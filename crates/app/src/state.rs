@@ -10,7 +10,7 @@ use ekanban_core::db::{Database, DbError};
 use ekanban_core::model::{Board, BoardError};
 
 use crate::error::{AppError, ErrorKind};
-use crate::snapshot::Snapshot;
+use crate::snapshot::{due_statuses_of, Snapshot};
 
 /// 開いているボードと、その裏のデータベース。
 ///
@@ -115,11 +115,14 @@ impl AppState {
 }
 
 pub(crate) fn snapshot_of(board: &Board, database: &Database) -> Result<Snapshot, DbError> {
+    let today = Local::now().date_naive();
     Ok(Snapshot {
         board: board.clone(),
-        boards: database.load_boards_as_of(Local::now().date_naive())?,
+        boards: database.load_boards_as_of(today)?,
         can_undo: board.can_undo(),
         can_redo: board.can_redo(),
+        due_statuses: due_statuses_of(board, today),
+        today,
     })
 }
 
