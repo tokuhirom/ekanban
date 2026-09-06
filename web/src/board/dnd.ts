@@ -7,7 +7,7 @@
 //
 // 盤面の論理は Rust が持っています（ADR 0018）。ここが作る盤面は**ドラッグ中の
 // 見た目だけ**で、離した瞬間に `move_card` / `move_column` を 1 回呼び、返って
-// きたスナップショットで置き換えます（§6）。
+// きたスナップショットで置き換えます（`docs/DESIGN.md`「ドラッグ＆ドロップ」）。
 
 import type { Board } from "../ipc/types/Board";
 

@@ -231,7 +231,8 @@ function ColumnEditor({
 
   async function save() {
     if (name.trim() === "") return;
-    // 名前と上限は別のコマンドです（§3 の「1 つのコマンドが 1 つのモデル操作」）。
+    // 名前と上限は別のコマンドです。
+    // （`docs/DESIGN.md`「コマンドとイベント」の「1 つのコマンドが 1 つのモデル操作」）
     // 変わっていないほうは呼びません——同じ値で呼ぶと Undo に空の 1 手が積まれます。
     if (name !== column.name) {
       const failure = await run(() => ipc.renameColumn(column.id, name));

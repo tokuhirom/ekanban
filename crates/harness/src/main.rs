@@ -7,7 +7,7 @@
 //! `POST /invoke/<コマンド名>` に、Tauri へ渡すのと同じ形（camelCase の JSON）
 //! で引数を送ると、同じ形の答えが返ります。webview 側は `web/src/ipc/` の口を
 //! 差し替えるだけで、同じ画面がふつうのブラウザで動きます
-//! （`docs/TAURI-MIGRATION.md` §10）。
+//! （`docs/DESIGN.md`「テスト」）。
 //!
 //! **偽物のバックエンドを TypeScript で書かないため**にあります（ADR 0021）。
 //! 通っているのは本物の `ekanban-core` なので、モデルの挙動がテストの中でだけ

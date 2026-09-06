@@ -1,8 +1,8 @@
 //! アプリを起動する。
 //!
 //! ウィンドウを 1 つ開き、メニューバーを組み、覚えていた矩形を戻します
-//! （`docs/TAURI-MIGRATION.md` §7・§8）。クイックキャプチャのウィンドウと
-//! グローバルな割り当ては段階 8 で足します。
+//! （`docs/DESIGN.md`「メニューとキー割り当て」「ウィンドウ」）。クイックキャプチャの
+//! ウィンドウと、覚えていたグローバルな割り当ての登録もここから始まります。
 
 use std::sync::Arc;
 
@@ -39,7 +39,7 @@ pub fn run() {
     // が 2 つのプロセスから走る。ロックは `run()` が終わるまで持ったままにする
     // （落とすと外れる）。`tauri-plugin-single-instance` は使わない——あれは
     // アプリ 1 つに対する制限で、ADR 0004 が決めた「ロックはデータベースのパス
-    // 単位」を壊す（§8）。
+    // 単位」を壊す（`docs/DESIGN.md`「ウィンドウ」）。
     let _instance = match instance::acquire(&path) {
         Ok(lock) => lock,
         Err(instance::InstanceError::AlreadyRunning(_)) => {
@@ -83,7 +83,7 @@ pub fn run() {
     let bounds_for_events = Arc::clone(&bounds);
 
     let app = tauri::Builder::default()
-        // ファイルを選ばせるのと、場所を開くのに使う（§9）。どちらも Rust から
+        // ファイルを選ばせるのと、場所を開くのに使う（`docs/DESIGN.md`「アプリが伝えること」）。どちらも Rust から
         // 呼ぶので、webview に権限は開けていません。
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
@@ -114,7 +114,7 @@ pub fn run() {
                 window.show()?;
             }
             // 保存されている割り当てを登録する。登録できなくても起動は続け、
-            // 理由は記録に残す（設定は消さない、§9）。
+            // 理由は記録に残す（設定は消さない、`docs/DESIGN.md`「クイックキャプチャ」）。
             if let Some(reason) =
                 crate::capture::register_saved(app.handle(), saved_shortcut.as_deref())
             {
@@ -200,7 +200,7 @@ pub fn run() {
 /// アプリそのものに届く出来事。
 ///
 /// macOS ではウィンドウを閉じてもプロセスが残ります。閉じたあとに Dock の
-/// アイコンから戻れる必要があり、そこを `Reopen` が受けます（§8）。ほかの
+/// アイコンから戻れる必要があり、そこを `Reopen` が受けます（`docs/DESIGN.md`「ウィンドウ」）。ほかの
 /// 環境では、閉じたら終わりで正しい。
 #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
 fn handle_run_event<R: tauri::Runtime>(app: &tauri::AppHandle<R>, event: &RunEvent) {
@@ -212,7 +212,7 @@ fn handle_run_event<R: tauri::Runtime>(app: &tauri::AppHandle<R>, event: &RunEve
     }
 }
 
-/// メニューが押されたときの行き先（§7）。
+/// メニューが押されたときの行き先（`docs/DESIGN.md`「メニューとキー割り当て」）。
 ///
 /// 盤面と下書きに触るものは webview へ流します。**ここで盤面を触りません**
 /// ——開いているパネルや選んでいるカードを知っているのは画面のほうで、

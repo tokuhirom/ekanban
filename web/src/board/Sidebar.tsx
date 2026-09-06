@@ -51,8 +51,8 @@ export function Sidebar({
     <nav className="sidebar" data-collapsed={collapsed || undefined} aria-label="ボード一覧">
       <div className="sidebar-header">
         {!collapsed && <h2 className="sidebar-title">ボード</h2>}
-        {/* 畳んだ帯には出しません。追加・名前変更・削除は、段階 6 で
-            メニューからも届くようになります（`docs/TAURI-MIGRATION.md` §7）。 */}
+        {/* 畳んだ帯には出しません。追加・名前変更・削除はメニューからも
+            届きます（`docs/DESIGN.md`「メニューとキー割り当て」）。 */}
         {!collapsed && (
           <button
             type="button"

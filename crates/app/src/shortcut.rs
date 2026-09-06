@@ -1,4 +1,4 @@
-//! クイックキャプチャの割り当て（§9、[ADR 0012]）。
+//! クイックキャプチャの割り当て（`docs/DESIGN.md`「クイックキャプチャ」、[ADR 0012]）。
 //!
 //! **保存の形は gpui 版のままです**（`ctrl-alt-shift-cmd-n`）。中身は同じ
 //! `global-hotkey` のクレートを `tauri-plugin-global-shortcut` 越しに使うので、

@@ -1,4 +1,4 @@
-// アーカイブの並べ方（ADR 0010、§10 の「部品」）。
+// アーカイブの並べ方（ADR 0010、`docs/DESIGN.md`「テスト」の「部品」）。
 
 import { describe, expect, it } from "vitest";
 

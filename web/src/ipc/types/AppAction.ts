@@ -4,7 +4,7 @@
  * webview が受け取るメニューの操作。`app:action` の積荷です。
  *
  * 名前は TypeScript 側と 1 対 1 で、`ts-rs` が書き出します。**手で 2 か所に
- * 書きません**（§3）。dispatcher が網羅しているかどうかは、この型から作った
+ * 書きません**（`docs/DESIGN.md`「コマンドとイベント」）。dispatcher が網羅しているかどうかは、この型から作った
  * `Record` を TypeScript の型検査が見ます。
  */
 export type AppAction = "addBoard" | "addCard" | "addColumn" | "addTag" | "exportBoardJson" | "exportBoardMarkdown" | "saveEdit" | "undo" | "redo" | "cancelEdit" | "clearSearch" | "renameBoard" | "deleteBoard" | "manageTags" | "focusSearch" | "toggleBoardList" | "toggleArchiveView" | "setQuickCaptureShortcut" | "useLightTheme" | "useDarkTheme" | "useSystemTheme" | "backupDatabase" | "revealDatabase" | "revealBackups" | "about";

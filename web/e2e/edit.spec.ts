@@ -1,8 +1,6 @@
-// 段階 5 の受け入れ条件——`crates/gpui/src/views/board/view_tests.rs` の編集の
-// 項目を、Playwright ＋ ハーネスで通す（`docs/TAURI-MIGRATION.md` §12）。
+// カードの編集を、Playwright ＋ ハーネスで通す。
 //
-// gpui 版は本物のウィンドウを開いてアクションを流し、**画面の状態と SQLite に
-// 書かれた内容の両方**を見ていました。ここも同じで、`invoke()` でハーネスを
+// 見るのは**画面の状態と SQLite に書かれた内容の両方**です。`invoke()` でハーネスを
 // 直接叩いて保存された盤面を読み直します。「画面に出ている」だけでは、保存の
 // 配線が抜けていても気づけません。
 //
@@ -58,6 +56,26 @@ test("カードを足して保存すると、タイトルがデータベース�
   expect(board.columns[0]?.cards.at(-1)?.title).toBe("新しく足したカード");
 });
 
+test("説明の欄は、打った分だけ縦に伸びる", async ({ page }) => {
+  await openBoard(page);
+  await page.locator(".column").first().locator(".add-card").click();
+
+  const description = page.locator(".card-description-input");
+  const height = async () => (await description.boundingBox())?.height ?? 0;
+  const empty = await height();
+
+  await description.fill("一行だけ");
+  // 4 行ぶんの下限があるので、少し書いたくらいでは変わらない。
+  expect(await height()).toBe(empty);
+
+  await description.fill(Array.from({ length: 20 }, (_, i) => `${String(i)} 行目`).join("\n"));
+  await expect.poll(height).toBeGreaterThan(empty);
+
+  // 消せば戻る。伸ばしっぱなしだと、下にある操作が押せなくなる。
+  await description.fill("一行だけ");
+  await expect.poll(height).toBe(empty);
+});
+
 test("タイトル欄で Enter を押すと、そのまま保存される", async ({ page }) => {
   await openBoard(page);
   await page.locator(".column").first().locator(".add-card").click();
@@ -81,7 +99,7 @@ test("足しかけたカードを取り下げると、跡が残らない", async
 
   await expect(page.locator(".card-panel")).toBeHidden();
   // **一度も存在していない。** 下書きは webview のものなので、そもそも
-  // SQLite に触っていない（§2）。
+  // SQLite に触っていない（`docs/DESIGN.md`「状態の持ち主」）。
   expect(await storedTitles()).toEqual(before);
   await expect(page.locator(".card-title", { hasText: "やっぱりやめる" })).toHaveCount(0);
 });
@@ -158,7 +176,7 @@ test("読めない期限は、欄の脇で断られる", async ({ page }) => {
   await page.locator(".save-card").click();
 
   // 断るのは Rust。`Validation` は入力欄の脇に出し、ダイアログには上げない
-  // （§3、ADR 0016）。値は打ち直せるように残す。
+  // （`docs/DESIGN.md`「コマンドとイベント」、ADR 0016）。値は打ち直せるように残す。
   await expect(page.locator(".card-panel .field-error")).toBeVisible();
   await expect(page.locator(".dialog")).toHaveCount(0);
   await expect(page.locator(".card-panel")).toBeVisible();

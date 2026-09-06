@@ -1,7 +1,7 @@
 /* 色は 1 か所で決めます。
  *
  * gpui の `ActiveTheme::theme()` を CSS のカスタムプロパティに置き換えたもので、
- * 名前は `UiColor` に揃えてあります（`docs/TAURI-MIGRATION.md` §4）。
+ * 名前は `UiColor` に揃えてあります（`docs/DESIGN.md`「画面の作り」）。
  * `docs/DESIGN.md` の規則はそのまま生きます——直書きの色はユーザーが指定した
  * タグの色だけ、`*-foreground` は対応する背景の上でだけ、色だけに意味を
  * 持たせない。
@@ -87,14 +87,14 @@ body,
 
 body {
   /* システムのフォントを使う。web フォントは読み込まない
-   * （ネットワークに出ない約束、§9）。 */
+   * （ネットワークに出ない約束、`docs/DESIGN.md`「画面の作り」）。 */
   font-family:
     system-ui, -apple-system, "Segoe UI", "Noto Sans JP", "Hiragino Sans", "Yu Gothic UI",
     sans-serif;
   font-size: 14px;
   color: var(--color-foreground);
   background: var(--color-background);
-  /* ドラッグ中に文字が選択されるのを止める（§4）。入力欄では戻す。 */
+  /* ドラッグ中に文字が選択されるのを止める（`docs/DESIGN.md`「画面の作り」）。入力欄では戻す。 */
   user-select: none;
   -webkit-user-select: none;
 }
@@ -355,7 +355,7 @@ textarea {
 /* ---------------------------------------------------------------- カード
  *
  * 表面の高さを内容で変えすぎないようにします。落とす位置が見て分かることの
- * ほうが大事なので（§6 の受け入れ条件 2）。
+ * ほうが大事なので（`docs/DESIGN.md`「ドラッグ＆ドロップ」の受け入れ条件）。
  */
 .card {
   padding: 8px 10px;
@@ -378,7 +378,7 @@ textarea {
 }
 
 /* 掴んでいる間、元の場所は空きとして残す。詰まってしまうと、どこから来て
- * どこへ行くのかが読めなくなる（§6 の条件 2）。 */
+ * どこへ行くのかが読めなくなる（`docs/DESIGN.md`「ドラッグ＆ドロップ」の受け入れ条件）。 */
 .card[data-placeholder],
 .column[data-placeholder] {
   opacity: 0.25;
@@ -542,7 +542,7 @@ button.danger {
   color: var(--color-muted-foreground);
 }
 
-/* 入力欄に返す理由は、その欄の脇に出す（§3）。ダイアログには上げない。 */
+/* 入力欄に返す理由は、その欄の脇に出す（`docs/DESIGN.md`「コマンドとイベント」）。ダイアログには上げない。 */
 .field-error {
   margin: 0;
   font-size: 12px;
@@ -686,7 +686,13 @@ button.danger {
 }
 
 .card-description-input {
-  resize: vertical;
+  /* 高さは中身が決めます（`Description.tsx` が `scrollHeight` で伸ばす、#89）。
+   * 手でも変えられるようにしておくと、次に打った 1 文字でその高さが捨てられます。 */
+  resize: none;
+  overflow: hidden;
+  /* 空でも 4 行ぶんは開けておきます。中身に合わせるだけだと、説明の無いカードで
+   * 1 行の細い欄になり、そこが何を書く場所なのかが読めなくなります。 */
+  min-height: calc(1.5em * 4 + 12px);
 }
 
 /* 説明の入力欄と、その裏に重ねたリンクの表示層（ADR 0002）。
@@ -943,7 +949,8 @@ button.danger {
 
 /* ---------------------------------------------------------------- キャプチャ */
 
-/* 1 行入力の窓（§9）。盤面とは別のエントリポイントだが、色と字は同じものを使う。 */
+/* 1 行入力の窓（`docs/DESIGN.md`「クイックキャプチャ」）。
+ * 盤面とは別のエントリポイントだが、色と字は同じものを使う。 */
 .capture {
   display: flex;
   flex-direction: column;

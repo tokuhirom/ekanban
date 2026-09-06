@@ -1,9 +1,9 @@
-//! コマンドが返す形（`docs/TAURI-MIGRATION.md` §2）。
+//! コマンドが返す形（`docs/DESIGN.md`「コマンドとイベント」）。
 //!
 //! **盤面を変えるコマンドは、変更後のスナップショットを丸ごと返します。** 差分は
 //! 返しません。差分にすると、適用の順序と欠落を webview の側で面倒みることに
 //! なります。大きさが問題になったら、そのときに測ってから、高頻度のものだけ
-//! 差分に落とします（§13）。
+//! 差分に落とします。
 
 use chrono::NaiveDate;
 use ekanban_core::db::WindowBoundsState;
@@ -23,7 +23,7 @@ pub struct Snapshot {
     pub can_redo: bool,
     /// 期限を持つカードの、いま時点での状態。
     ///
-    /// `due_status` は `model.rs` の純粋関数で、判定は Rust に残します（§5）。
+    /// `due_status` は `model.rs` の純粋関数で、判定は Rust に残します（`docs/DESIGN.md`「絞り込みと検索」）。
     /// カードそのものには載せられません——`Card` はデータベースから来るもので、
     /// 「今日が何日か」を知らないからです。
     ///
@@ -114,7 +114,7 @@ impl ThemePreference {
 /// 動いている OS。
 ///
 /// **webview に自分で当てさせません。** キーの割り当ては OS ごとに違い
-/// （§7、[ADR 0009]）、`secondary` が Cmd か Ctrl かを取り違えると割り当てが
+/// （`docs/DESIGN.md`「メニューとキー割り当て」、[ADR 0009]）、`secondary` が Cmd か Ctrl かを取り違えると割り当てが
 /// 丸ごと効かなくなります。`navigator.userAgent` は webview が書き換えられる
 /// 文字列で、実際 Playwright の Safari 模擬は Linux 上で `Macintosh` を名乗り
 /// ます。ここは Rust がコンパイル時に知っていることなので、そちらから渡します。
@@ -163,7 +163,7 @@ pub struct CaptureTarget {
 #[ts(export)]
 pub struct StartupState {
     /// 盤面そのもの。`board:changed` で届くのと同じ形なので、webview は
-    /// 起動でもイベントでも同じ 1 本の経路で差し替えられます（§4）。
+    /// 起動でもイベントでも同じ 1 本の経路で差し替えられます（`docs/DESIGN.md`「画面の作り」）。
     pub snapshot: Snapshot,
     /// 動いている OS。キーの割り当てを決めるのに使います。
     pub platform: Platform,
@@ -172,7 +172,7 @@ pub struct StartupState {
     pub theme: ThemePreference,
     pub sidebar_collapsed: bool,
     pub capture_target: Option<CaptureTarget>,
-    /// 保存されている割り当て。登録できるかどうかは別の話（§9）。
+    /// 保存されている割り当て。登録できるかどうかは別の話（`docs/DESIGN.md`「クイックキャプチャ」）。
     pub quick_capture_shortcut: Option<String>,
 }
 

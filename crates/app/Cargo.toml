@@ -1,13 +1,9 @@
-# Tauri のアプリ。いまは**コマンドの層だけ**があります。
+# Tauri のアプリ。
 #
-# `docs/TAURI-MIGRATION.md` §3 のコマンドを、Tauri に依らない普通の関数として
-# 持ちます。`#[tauri::command]` の薄い包みと、ウィンドウ・メニュー・割り当ては
-# 画面が出る段階 3 で足します。§10 の開発用ハーネスが同じ関数を HTTP に出す
-# 予定なので、**コマンドの中身が Tauri を知らないことは、あとで足す包みの
-# 都合ではなく、設計そのもの**です。
-#
-# 段階 10 で `crates/gpui` が消えたら、このパッケージが `ekanban` の名前を
-# 引き継ぎます。
+# `docs/DESIGN.md`「コマンドとイベント」のコマンドを、Tauri に依らない普通の関数
+# として持ちます（`commands.rs`）。`#[tauri::command]` はそれを呼ぶだけの薄い包み
+# （`ipc.rs`）で、開発用のハーネスは同じ関数を HTTP に出します。**コマンドの中身が
+# Tauri を知らないことは、包みの都合ではなく設計そのもの**です。
 [package]
 name = "ekanban-app"
 description = "ekanban のコマンド層。盤面を変え、保存し、スナップショットを返す"
@@ -15,9 +11,9 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
-# 実行ファイルの名前は `ekanban` です。配るものがこちらに替わったので
-# (`docs/TAURI-MIGRATION.md` の段階 9)、名前もこちらが引き継ぎました。
-# 出ていく gpui のほうは `ekanban-gpui` になっています。
+# 実行ファイルの名前は `ekanban` です。デスクトップエントリの `StartupWMClass`
+# はここから決まるので、変えるときは `crates/core` の `WM_CLASS` も一緒に
+# 動かします (`docs/DESIGN.md`「ウィンドウ」)。
 [[bin]]
 name = "ekanban"
 path = "src/main.rs"

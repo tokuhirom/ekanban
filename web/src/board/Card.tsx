@@ -44,7 +44,7 @@ interface FaceProps {
 /// 見た目が変わりません。
 ///
 /// **高さを中身で変えすぎない**規則は残します。落とす位置が見て分かること
-/// （§6 の条件 2）は、掴んでいる間に周りの高さが動かないことで決まります。
+/// （`docs/DESIGN.md`「ドラッグ＆ドロップ」の受け入れ条件）は、掴んでいる間に周りの高さが動かないことで決まります。
 export function CardFace({ card, tags, due }: FaceProps) {
   const cardTags = card.tagIds
     .map((id) => tags.find((tag) => tag.id === id))
@@ -151,7 +151,7 @@ export interface MenuProps {
 ///
 /// **カードの操作はここに集約します**（`docs/DESIGN.md`「常用しない操作を画面に
 /// 常時出さない」）。webview では既定の右クリックメニューが先に出るので、
-/// `shell/harden.ts` がそれを止めています（§4）。
+/// `shell/harden.ts` がそれを止めています（`docs/DESIGN.md`「画面の作り」）。
 ///
 /// **カードの中には描きません。** カードは dnd-kit の `transform` を持つことが
 /// あり、`transform` を持つ要素は `position: fixed` の基準になります。画面の

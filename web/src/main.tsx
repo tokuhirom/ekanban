@@ -9,14 +9,14 @@ import { hardenWebview } from "./shell/harden";
 import "./styles.css";
 
 // ふつうのブラウザで開いたときは、開発用ハーネス越しに Rust を呼びます
-// （`?harness=http://127.0.0.1:1421`、`docs/TAURI-MIGRATION.md` §10）。
+// （`?harness=http://127.0.0.1:1421`、`docs/DESIGN.md`「テスト」）。
 // Tauri の中では `tauri.ts` です。
 const harness = harnessUrl();
 const ipc = harness === null ? tauriIpc : harnessIpc(harness);
 setIpc(ipc);
 hardenWebview();
 
-// webview の未捕捉例外を、Rust 側と同じログに落とす（§9）。黙って消えると、
+// webview の未捕捉例外を、Rust 側と同じログに落とす（`docs/DESIGN.md`「アプリが伝えること」）。黙って消えると、
 // 原因を追う手段がなくなる。
 function report(what: string, detail: unknown): void {
   void ipc.logFrontendError(`${what}: ${String(detail)}`).catch(() => {

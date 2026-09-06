@@ -4,7 +4,7 @@
  * 動いている OS。
  *
  * **webview に自分で当てさせません。** キーの割り当ては OS ごとに違い
- * （§7、[ADR 0009]）、`secondary` が Cmd か Ctrl かを取り違えると割り当てが
+ * （`docs/DESIGN.md`「メニューとキー割り当て」、[ADR 0009]）、`secondary` が Cmd か Ctrl かを取り違えると割り当てが
  * 丸ごと効かなくなります。`navigator.userAgent` は webview が書き換えられる
  * 文字列で、実際 Playwright の Safari 模擬は Linux 上で `Macintosh` を名乗り
  * ます。ここは Rust がコンパイル時に知っていることなので、そちらから渡します。

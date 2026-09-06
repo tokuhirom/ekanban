@@ -1,4 +1,4 @@
-// テーマの適用（`docs/TAURI-MIGRATION.md` §7）。
+// テーマの適用（`docs/DESIGN.md`「画面の作り」）。
 //
 // 選ばれたテーマは `app_state` に入り、起動のときに `StartupState.theme` で
 // 届きます。ここがすることは、それを CSS に見える形にするだけです。

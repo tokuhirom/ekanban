@@ -1,7 +1,7 @@
-//! `docs/TAURI-MIGRATION.md` §3 のコマンドを、外から呼んで確かめる。
+//! `docs/DESIGN.md`「コマンドとイベント」のコマンドを、外から呼んで確かめる。
 //!
 //! 見るのは 2 つです。**返ってきたスナップショット**と、**SQLite に何が入ったか**。
-//! 保存はコマンドの中で終わるので（§2）、待ち合わせも巻き戻しも要りません。
+//! 保存はコマンドの中で終わるので（`docs/DESIGN.md`「状態の持ち主」）、待ち合わせも巻き戻しも要りません。
 //! 開き直したデータベースから読むのは、gpui 版の `Harness::stored_board` と
 //! 同じやり方です。
 
@@ -269,7 +269,7 @@ fn setting_a_due_date_and_tags_on_a_card() {
         .is_none());
 }
 
-/// 読めない期限は、打った入力欄に返す。ダイアログには出さない（§3）。
+/// 読めない期限は、打った入力欄に返す。ダイアログには出さない（`docs/DESIGN.md`「コマンドとイベント」）。
 #[test]
 fn an_unreadable_due_date_comes_back_to_the_field_with_the_value_that_was_typed() {
     let harness = Harness::open();
@@ -283,7 +283,7 @@ fn an_unreadable_due_date_comes_back_to_the_field_with_the_value_that_was_typed(
     assert_eq!(error.value.as_deref(), Some("2026/03/04"));
 }
 
-/// 失敗したら盤面は動かない。画面には何も届いていないので、戻すものもない（§2）。
+/// 失敗したら盤面は動かない。画面には何も届いていないので、戻すものもない（`docs/DESIGN.md`「状態の持ち主」）。
 #[test]
 fn a_refused_operation_leaves_the_board_exactly_as_it_was() {
     let harness = Harness::open();
@@ -300,7 +300,7 @@ fn a_refused_operation_leaves_the_board_exactly_as_it_was() {
 /// 無題のカードは作らない（`docs/DESIGN.md`）。
 ///
 /// gpui 版は先にカードを足して取り下げる経路でこれを守っていた。下書きが
-/// webview のものになった以上、断る場所はコマンドの入口しかない（§2）。
+/// webview のものになった以上、断る場所はコマンドの入口しかない（`docs/DESIGN.md`「状態の持ち主」）。
 #[test]
 fn an_untitled_card_never_reaches_the_board_or_the_database() {
     let harness = Harness::open();
@@ -458,7 +458,7 @@ fn filtering_matches_cards_by_text_number_and_tag() {
     );
 }
 
-/// 正規化は Rust に残す（§5）。全角で打っても半角のカードに当たる。
+/// 正規化は Rust に残す（`docs/DESIGN.md`「絞り込みと検索」）。全角で打っても半角のカードに当たる。
 #[test]
 fn filtering_normalizes_full_width_text_the_same_way_the_model_does() {
     let harness = Harness::open();

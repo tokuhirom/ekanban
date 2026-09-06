@@ -17,6 +17,6 @@ Keywords[ja]=かんばん;カンバン;タスク;
 # ウィンドウが名乗る WM_CLASS と同じでなければ結びつきません。Tauri（tao）は
 # **実行ファイルの名前**から作るので `("ekanban", "Ekanban")` で、ここは
 # バンドラが `.deb` に入れるエントリと同じ小文字のほうを書きます
-# （`crates/core/src/lib.rs` の `WM_CLASS`、`docs/TAURI-MIGRATION.md` §8）。
+# （`crates/core/src/lib.rs` の `WM_CLASS`、`docs/DESIGN.md`「ウィンドウ」）。
 StartupWMClass=ekanban
 StartupNotify=true

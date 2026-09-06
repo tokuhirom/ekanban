@@ -5,13 +5,12 @@ ekanban に手を入れる人向けの文書です。
 - 使う人向けの入口は [README](../README.md)、使い方は [マニュアル](MANUAL.md) にあります
 - 「なぜそう作ってあるか」と、従うべき決まりごとは [設計の記録](DESIGN.md) にあります
 - コーディング規約とテストの方針は [AGENTS.md](../AGENTS.md) にあります
-- **UI は Tauri へ移す途中です。** いまの構造はこの文書のとおりですが、移行後に何がどうなるかは [Tauri 移行の設計](TAURI-MIGRATION.md) にあります（[ADR 0017](adr/0017-moving-the-ui-to-tauri.md)）
 
 ---
 
 ## 構成
 
-Cargo のワークスペースです。**中核と UI を別のクレートに分けてあります**（[Tauri 移行の設計](TAURI-MIGRATION.md) §1）。
+Cargo のワークスペースです。**中核と UI を別のクレートに分けてあります**（[設計の記録](DESIGN.md)「層の分け方」）。
 
 ```text
 crates/
@@ -26,7 +25,7 @@ crates/
       db/
         mod.rs        SQLite のスキーマ移行、読み書き、トランザクション
   harness/        ekanban-harness: コマンドを HTTP に出す。開発とテスト専用
-  app/            ekanban-app: Tauri のアプリ（実行ファイルは ekanban-tauri）
+  app/            ekanban-app: Tauri のアプリ（実行ファイルは ekanban）
     tauri.conf.json ウィンドウ、CSP、バンドルの設定
     capabilities/   webview に許すもの。使うものだけを並べる
     icons/          `tauri icon` が assets/icon.png から作ったもの
@@ -37,7 +36,7 @@ crates/
       capture.rs      クイックキャプチャの窓とグローバルな割り当て
       shortcut.rs     割り当ての形。保存も登録もここを通る
       ipc.rs          `#[tauri::command]` の包み。中身は持たない
-      commands.rs     `docs/TAURI-MIGRATION.md` §3 のコマンド
+      commands.rs     1 操作 1 コマンド。適用して保存して盤面を返す
       state.rs        開いている盤面。適用と保存をコマンドの中で終わらせる
       snapshot.rs     コマンドが返す形。起動時に読むもの
       error.rs        失敗の伝え方。入力欄に返すか、ダイアログに出すか
@@ -60,14 +59,14 @@ harness/         ekanban-harness: コマンドを HTTP に出す開発・テス�
     manual_screenshot_seed.rs  マニュアルのスクリーンショット用のデータベースを作る
 ```
 
-- **`ekanban-core` に UI ツールキットを足しません。** gpui にも tauri にも依存しないことが、テストを GUI のランタイム無しで走らせ続ける条件であり、Tauri のアプリと開発用のハーネスが同じコードを使える条件でもあります（[Tauri 移行の設計](TAURI-MIGRATION.md) §1）。依存の依存から入り込むほうがありがちなので、解決した依存グラフを `script/check-core-independence` が CI で見ています
-- **`crates/app/src/commands.rs` に `tauri` は出てきません。** `ipc.rs` の `#[tauri::command]` は、その関数を呼ぶだけの包みです。開発用のハーネス（[Tauri 移行の設計](TAURI-MIGRATION.md) §10）が同じ関数を HTTP に出すので、**判断を包みの側に置かないことは設計そのもの**です
+- **`ekanban-core` に UI ツールキットを足しません。** `tauri` に依存しないことが、テストを GUI のランタイム無しで走らせ続ける条件であり、Tauri のアプリと開発用のハーネスが同じコードを使える条件でもあります（[設計の記録](DESIGN.md)「層の分け方」）。依存の依存から入り込むほうがありがちなので、解決した依存グラフを `script/check-core-independence` が CI で見ています
+- **`crates/app/src/commands.rs` に `tauri` は出てきません。** `ipc.rs` の `#[tauri::command]` は、その関数を呼ぶだけの包みです。開発用のハーネス（[設計の記録](DESIGN.md)「テスト」）が同じ関数を HTTP に出すので、**判断を包みの側に置かないことは設計そのもの**です
 - **D&D の挿入位置と、キーボードの割り当ては `web/src/board/dnd.ts` と `keyboard.ts` に置きます。** dnd-kit に渡すのは掴む・運ぶ・オートスクロールだけです（[ADR 0022](adr/0022-dnd-kit-core-for-drag-and-drop.md)）。盤面の意味を決めるところをライブラリに預けると、外せなくなります
 - **どの OS で動いているかを `navigator.userAgent` から決めません。** あれは webview が書き換えられる文字列です（Playwright の Safari 模擬は Linux 上で `Macintosh` を名乗ります）。`secondary` が Cmd か Ctrl かを取り違えると割り当てが丸ごと効かないので、Rust が `StartupState.platform` で渡します（[ADR 0009](adr/0009-per-platform-key-bindings.md)、[ADR 0023](adr/0023-verifying-the-webview-engines.md)）
 - **`crates/app` のコンパイルには `web/dist` が要ります。** `tauri::generate_context!` が画面を実行ファイルに埋め込むためです。checkout したてなら `npm --prefix web ci && npm --prefix web run build` を先に走らせてください（`make dev` と CI はそうしています）
 - **Tauri のアプリは `make dev` で起動します。** デバッグビルドには Vite の開発サーバの URL が焼き込まれているので、`cargo run -p ekanban-app` だけでは白い画面になります
 - **UI から SQL を直接実行しません。** SQL は `crates/core/src/db/` に閉じます
-- **`web/src/ipc/types/` は手で書きません。** `ts-rs` が Rust の型から書き出します（`cargo test -p ekanban-core`、`make types`）。同じ型を 2 か所に書くと必ずずれるので、生成物をコミットして CI で差分を見ています（[Tauri 移行の設計](TAURI-MIGRATION.md) §3）。境界を越える値の決まり——**ID も時刻も JSON の数値**（`i64` を `bigint` にしない。`.cargo/config.toml` の `TS_RS_LARGE_INT`）、**期限は `"YYYY-MM-DD"` の文字列**、**時刻はエポックからのミリ秒**、鍵は camelCase——は `crates/core` のテストが見ています
+- **`web/src/ipc/types/` は手で書きません。** `ts-rs` が Rust の型から書き出します（`cargo test -p ekanban-core`、`make types`）。同じ型を 2 か所に書くと必ずずれるので、生成物をコミットして CI で差分を見ています（[設計の記録](DESIGN.md)「境界を越える値」）。境界を越える値の決まり——**ID も時刻も JSON の数値**（`i64` を `bigint` にしない。`.cargo/config.toml` の `TS_RS_LARGE_INT`）、**期限は `"YYYY-MM-DD"` の文字列**、**時刻はエポックからのミリ秒**、鍵は camelCase——は `crates/core` のテストが見ています
 - テストは実装と同じモジュールの `#[cfg(test)]` に置きます。データベースのテストは `tempfile` を使い、実物のデータベースを触りません。ビューのテストについては [テスト](#テスト) を見てください
 - カード移動やカラム移動の保存は、必ず 1 つのトランザクションで行います
 

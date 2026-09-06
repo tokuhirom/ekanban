@@ -2,7 +2,7 @@
 //!
 //! JSON は `db::export_board_json`（保存しているものをそのまま出すので、SQL の
 //! 近くにある）。Markdown はここです。どちらも UI に依らないので、Tauri のアプリ
-//! も開発用のハーネスも同じものを使います（`docs/TAURI-MIGRATION.md` §9）。
+//! も開発用のハーネスも同じものを使います（`docs/DESIGN.md`「層の分け方」）。
 
 use crate::model::{Board, Card};
 

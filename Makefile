@@ -1,5 +1,5 @@
 APP_NAME := Ekanban
-# Tauri のバンドラが出す先（`docs/TAURI-MIGRATION.md` §11）。
+# Tauri のバンドラが出す先（`docs/DESIGN.md`「ビルドと配布」）。
 BUNDLE := target/release/bundle
 RELEASE_APP := $(BUNDLE)/macos/$(APP_NAME).app
 # 画面側の依存として入っている Tauri の CLI。別に入れる必要はない。

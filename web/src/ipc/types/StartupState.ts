@@ -16,7 +16,7 @@ import type { WindowBoundsState } from "./WindowBoundsState";
 export type StartupState = { 
 /**
  * 盤面そのもの。`board:changed` で届くのと同じ形なので、webview は
- * 起動でもイベントでも同じ 1 本の経路で差し替えられます（§4）。
+ * 起動でもイベントでも同じ 1 本の経路で差し替えられます（`docs/DESIGN.md`「画面の作り」）。
  */
 snapshot: Snapshot, 
 /**
@@ -24,6 +24,6 @@ snapshot: Snapshot,
  */
 platform: Platform, filter: FilterState, windowBounds: WindowBoundsState | null, theme: ThemePreference, sidebarCollapsed: boolean, captureTarget: CaptureTarget | null, 
 /**
- * 保存されている割り当て。登録できるかどうかは別の話（§9）。
+ * 保存されている割り当て。登録できるかどうかは別の話（`docs/DESIGN.md`「クイックキャプチャ」）。
  */
 quickCaptureShortcut: string | null, };

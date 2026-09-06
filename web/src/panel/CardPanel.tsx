@@ -3,7 +3,7 @@
 // ボードに重ねず、右端に押し出して置きます。重ねると右端のカラムが隠れ、
 // ドロップ先が見えなくなるためです（gpui 版と同じ）。
 //
-// **下書きはここが持ちます**（`docs/TAURI-MIGRATION.md` §2）。打っている間は
+// **下書きはここが持ちます**（`docs/DESIGN.md`「状態の持ち主」）。打っている間は
 // Rust に渡さず、保存を押した 1 回だけ `add_card` か `update_card` を呼びます。
 // gpui 版が「先にカードを足して、タイトルが入るまで保存を保留する」形だったのは、
 // 下書きの置き場所がモデルの中にしか無かったからで、その経路はここで消えます。
@@ -222,7 +222,7 @@ export function CardPanel({
 
         {/* 期限・チェックリスト・タグは、保存済みのカードにしか付けられません。
             `add_card` が受けるのはタイトルと説明だけで、まだカードが無いうちは
-            付ける先がないからです（§3）。足したあとに開いて付けます。 */}
+            付ける先がないからです（`docs/DESIGN.md`「コマンドとイベント」）。足したあとに開いて付けます。 */}
         {editing.kind === "card" && (
           <>
             <label className="field-label" htmlFor="card-due-date">
@@ -403,7 +403,7 @@ function FieldError({ message }: { message: string }) {
   );
 }
 
-/// Rust が入力欄に返した理由を、その欄の脇に出す（§3）。
+/// Rust が入力欄に返した理由を、その欄の脇に出す（`docs/DESIGN.md`「コマンドとイベント」）。
 function FieldFailure({ failure, field }: { failure: AppError | null; field: Field }) {
   if (failure?.field !== field) return null;
   return <FieldError message={failure.detail} />;
