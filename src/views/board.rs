@@ -20,7 +20,7 @@ use gpui_kit::{
         button::{Button, ButtonVariant, ButtonVariants as _},
         window_border, ActiveTheme, Root, Theme, ThemeMode,
     },
-    div, point,
+    deferred, div, point,
     prelude::*,
     px, rgb, size, AnyElement, App, Bounds, Context, DragMoveEvent, Entity, FocusHandle,
     Focusable as _, Half, IntoElement, KeyDownEvent, Keystroke, Modifiers, MouseButton,
@@ -4318,8 +4318,13 @@ impl BoardView {
                             .on_click(cx.listener(|this, _, _, cx| this.cancel_card_edit(cx))),
                     ),
             )
+            // メニューはヘッダの中に絶対配置しているが、ヘッダはパネルの最初の
+            // 子で、タイトル入力欄を含む本文はそのあとに描かれる。`absolute` は
+            // 描画順を変えないので、そのままだと入力欄の下に潜る（#78）。
+            // `deferred` はレイアウトを今の木に残したまま描画だけ祖先より後ろへ
+            // 回すので、位置も当たり判定もそのままで前面に出る。
             .when(menu_open, |this| {
-                this.child(self.render_card_panel_menu(card_id, cx))
+                this.child(deferred(self.render_card_panel_menu(card_id, cx)))
             })
     }
 
