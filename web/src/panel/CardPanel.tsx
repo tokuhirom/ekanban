@@ -15,8 +15,10 @@ import type { AppError } from "../ipc/types/AppError";
 import type { Board } from "../ipc/types/Board";
 import type { Card } from "../ipc/types/Card";
 import type { Field } from "../ipc/types/Field";
+import type { Platform } from "../ipc/types/Platform";
 import type { Snapshot } from "../ipc/types/Snapshot";
 import { useAppActions } from "../shell/actions";
+import { Description } from "./Description";
 import type { Editing } from "../state/board";
 import {
   deleteChecklistItem,
@@ -36,6 +38,8 @@ interface Props {
   editing: Editing;
   /** `due_statuses` を出した日。期限の近道はここから数える（ブラウザの時計ではなく）。 */
   today: string;
+  /** 説明の中のリンクを開く修飾キーを決めるのに使う（ADR 0002）。 */
+  platform: Platform;
   run: (call: () => Promise<Snapshot>) => Promise<AppError | null>;
   onClose: () => void;
   /** 削除・アーカイブの確認を頼む。出すかどうかを決めるのは呼ぶ側。 */
@@ -47,6 +51,7 @@ export function CardPanel({
   board,
   editing,
   today,
+  platform,
   run,
   onClose,
   onDeleteCard,
@@ -206,14 +211,12 @@ export function CardPanel({
         <label className="field-label" htmlFor="card-description">
           説明
         </label>
-        <textarea
+        <Description
           id="card-description"
-          className="field-input card-description-input"
           value={draft.description}
-          placeholder="任意。詳しいことがあれば"
-          rows={4}
-          onChange={(event) => {
-            setDraft({ ...draft, description: event.target.value });
+          platform={platform}
+          onChange={(description) => {
+            setDraft({ ...draft, description });
           }}
         />
 

@@ -7,10 +7,12 @@
 
 import type { AppAction } from "./types/AppAction";
 import type { ChecklistItemDraft } from "./types/ChecklistItemDraft";
+import type { ExportFormat } from "./types/ExportFormat";
 import type { FilterState } from "./types/FilterState";
 import type { Snapshot } from "./types/Snapshot";
 import type { StartupState } from "./types/StartupState";
 import type { ThemePreference } from "./types/ThemePreference";
+import type { UrlSpan } from "./types/UrlSpan";
 
 /// 画面が呼べるコマンド。Rust の `crates/app/src/commands.rs` に 1 対 1。
 ///
@@ -40,6 +42,8 @@ export interface Ipc {
   copyCard(cardId: number): Promise<Snapshot>;
   deleteCard(cardId: number): Promise<Snapshot>;
   archiveCard(cardId: number): Promise<Snapshot>;
+  /** アーカイブから戻す。戻り先は元のカラムの末尾（`Board::restore_card`）。 */
+  restoreCard(cardId: number): Promise<Snapshot>;
   /** 右クリックメニューからタグだけを付け外しする。パネルを開かずに済ませるため。 */
   setCardTags(cardId: number, tagIds: number[]): Promise<Snapshot>;
 
@@ -70,6 +74,24 @@ export interface Ipc {
   setWindowTitle(title: string): Promise<void>;
   /** メニューが押されたことを受ける（§7）。返るのは購読をやめる関数。 */
   onAppAction(handler: (action: AppAction) => void): () => void;
+  /** 保存ダイアログに出す既定のファイル名。 */
+  suggestedExportName(format: ExportFormat): Promise<string>;
+  /** OS の保存ダイアログ。閉じられたら `null`——**そのときは何も言わない**（§9）。 */
+  chooseSavePath(fileName: string): Promise<string | null>;
+  /** 書き出す。書けたパスが返る。 */
+  exportBoard(format: ExportFormat, destination: string): Promise<string>;
+  /** データベースの控えを取る。書けたパスが返る。 */
+  backupDatabase(destination: string): Promise<string>;
+  databaseLocation(): Promise<string>;
+  /** OS のファイル管理で場所を開く。 */
+  revealPath(path: string): Promise<void>;
+  revealDatabase(): Promise<void>;
+  /** 控えがまだ 1 つも無ければ、何も起きない。 */
+  revealBackups(): Promise<void>;
+  /** 説明の中の URL の位置。**見つけ方は Rust に 1 つだけ**（ADR 0002）。 */
+  descriptionLinks(text: string): Promise<UrlSpan[]>;
+  /** 説明の中のリンクをブラウザで開く。 */
+  openUrl(url: string): Promise<void>;
   /** webview の未捕捉例外を Rust 側と同じログに落とす（§9）。 */
   logFrontendError(message: string): Promise<void>;
 }

@@ -103,3 +103,4 @@
 | [0021](0021-two-layer-testing-for-the-webview.md) | 画面のテストは、ハーネス経由の Playwright と、殻の煙テストに分ける | 2026-09-06 | 有効 |
 | [0022](0022-dnd-kit-core-for-drag-and-drop.md) | D&D は `@dnd-kit/core` 6 系に載せる | 2026-09-06 | 有効（条件 8 の確かめ方は 0023 が置き換えた） |
 | [0023](0023-verifying-the-webview-engines.md) | webview の差は、エンジンの系統で確かめる | 2026-09-06 | 有効 |
+| [0024](0024-no-portal-requirement-on-linux.md) | Linux で xdg-desktop-portal を必須にしない | 2026-09-06 | 有効 |

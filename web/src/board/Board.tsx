@@ -19,10 +19,12 @@ import type { AppError } from "../ipc/types/AppError";
 import type { BoardSummary } from "../ipc/types/BoardSummary";
 import type { Column as ColumnData } from "../ipc/types/Column";
 import type { Snapshot } from "../ipc/types/Snapshot";
+import { Archive } from "../panel/Archive";
 import { CardPanel } from "../panel/CardPanel";
 import { TagPanel } from "../panel/TagPanel";
 import { useAppActions, useAppActionSource } from "../shell/actions";
 import { AlertDialog, ConfirmDialog, PromptDialog } from "../shell/Dialog";
+import { useFileActions } from "../shell/files";
 import { targetOf, undoIntent } from "../shell/keys";
 import { useBoardState } from "../state/board";
 import { CardFace, CardMenu } from "./Card";
@@ -88,6 +90,7 @@ export function Board() {
   const [addingColumn, setAddingColumn] = useState(false);
   const [about, setAbout] = useState(false);
   const searchInput = useRef<HTMLInputElement>(null);
+  const files = useFileActions(state.notify);
 
   // メニューが押されたことを受けはじめる。配る先はこの下と、開いている
   // パネルの中（`shell/actions.ts`）。
@@ -99,7 +102,9 @@ export function Board() {
     // 選んでいるカードのカラムへ。選んでいなければ先頭のカラムへ（gpui 版と
     // 同じ決め方）。
     addCard: () => {
-      if (board === null) return;
+      // アーカイブ表示にカードを足す場所は無い。理由を言う相手がいないので
+      // 黙って何もしない（gpui 版と同じ）。
+      if (board === null || state.showArchived) return;
       const column =
         board.columns.find((each) => each.cards.some((card) => card.id === selectedCard)) ??
         board.columns[0];
@@ -129,6 +134,16 @@ export function Board() {
       searchInput.current?.focus();
     },
     toggleBoardList: state.toggleSidebar,
+    toggleArchiveView: state.toggleArchive,
+    exportBoardJson: () => {
+      files.exportBoard("json");
+    },
+    exportBoardMarkdown: () => {
+      files.exportBoard("markdown");
+    },
+    backupDatabase: files.backupDatabase,
+    revealDatabase: files.revealDatabase,
+    revealBackups: files.revealBackups,
     // メニューからの取り消しも、入力欄にフォーカスがあるときは盤面を巻き戻し
     // ません（gpui 版と同じ）。打っている途中の欄が、下の盤面ごと戻るのを
     // 避けるためです。
@@ -358,12 +373,32 @@ export function Board() {
           >
             タグ整理
           </button>
+          {/* アーカイブの出入り口。件数を出すのは、溜まっていることに気づける
+              ようにするため（gpui 版と同じ）。 */}
+          <button
+            type="button"
+            className="secondary archive-view"
+            aria-pressed={state.showArchived}
+            onClick={state.toggleArchive}
+          >
+            {state.showArchived
+              ? "ボードへ戻る"
+              : `アーカイブ (${board.archivedCards.length})`}
+          </button>
         </header>
         {state.failure !== null && (
           <p className="failure" role="alert">
             {state.failure}
           </p>
         )}
+        {state.showArchived ? (
+          <Archive
+            board={board}
+            dueStatuses={state.dueStatuses}
+            matched={state.matched}
+            onRestore={state.restoreCard}
+          />
+        ) : (
         <DndContext
           sensors={sensors}
           collisionDetection={collisionDetection}
@@ -437,9 +472,10 @@ export function Board() {
             )}
           </DragOverlay>
         </DndContext>
+        )}
       </main>
 
-      {state.editing !== null && (
+      {state.editing !== null && !state.showArchived && (
         <CardPanel
           // 対象が変わったら作り直す。下書きを `useEffect` で起こし直すと、
           // 描いてから 1 回ぶん古い値が出る（React の `key` の使いどころ）。
@@ -451,6 +487,7 @@ export function Board() {
           board={board}
           editing={state.editing}
           today={state.snapshot.today}
+          platform={platform}
           run={run}
           onClose={state.closePanel}
           onArchiveCard={(cardId) => void run(() => ipc.archiveCard(cardId))}
@@ -536,6 +573,7 @@ export function Board() {
         <AlertDialog
           title={state.alert.title}
           detail={state.alert.detail}
+          action={state.alert.action}
           onDismiss={state.dismissAlert}
         />
       )}

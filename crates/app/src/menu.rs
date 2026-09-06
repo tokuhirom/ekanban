@@ -36,6 +36,8 @@ pub enum AppAction {
     AddCard,
     AddColumn,
     AddTag,
+    ExportBoardJson,
+    ExportBoardMarkdown,
     SaveEdit,
     Undo,
     Redo,
@@ -46,9 +48,13 @@ pub enum AppAction {
     ManageTags,
     FocusSearch,
     ToggleBoardList,
+    ToggleArchiveView,
     UseLightTheme,
     UseDarkTheme,
     UseSystemTheme,
+    BackupDatabase,
+    RevealDatabase,
+    RevealBackups,
     About,
 }
 
@@ -92,6 +98,8 @@ impl AppAction {
             Self::AddCard => "addCard",
             Self::AddColumn => "addColumn",
             Self::AddTag => "addTag",
+            Self::ExportBoardJson => "exportBoardJson",
+            Self::ExportBoardMarkdown => "exportBoardMarkdown",
             Self::SaveEdit => "saveEdit",
             Self::Undo => "undo",
             Self::Redo => "redo",
@@ -102,9 +110,13 @@ impl AppAction {
             Self::ManageTags => "manageTags",
             Self::FocusSearch => "focusSearch",
             Self::ToggleBoardList => "toggleBoardList",
+            Self::ToggleArchiveView => "toggleArchiveView",
             Self::UseLightTheme => "useLightTheme",
             Self::UseDarkTheme => "useDarkTheme",
             Self::UseSystemTheme => "useSystemTheme",
+            Self::BackupDatabase => "backupDatabase",
+            Self::RevealDatabase => "revealDatabase",
+            Self::RevealBackups => "revealBackups",
             Self::About => "about",
         }
     }
@@ -126,6 +138,8 @@ const ACTIONS: &[Action] = &[
     Action::App(AppAction::AddCard),
     Action::App(AppAction::AddColumn),
     Action::App(AppAction::AddTag),
+    Action::App(AppAction::ExportBoardJson),
+    Action::App(AppAction::ExportBoardMarkdown),
     Action::App(AppAction::SaveEdit),
     Action::App(AppAction::Undo),
     Action::App(AppAction::Redo),
@@ -136,9 +150,13 @@ const ACTIONS: &[Action] = &[
     Action::App(AppAction::ManageTags),
     Action::App(AppAction::FocusSearch),
     Action::App(AppAction::ToggleBoardList),
+    Action::App(AppAction::ToggleArchiveView),
     Action::App(AppAction::UseLightTheme),
     Action::App(AppAction::UseDarkTheme),
     Action::App(AppAction::UseSystemTheme),
+    Action::App(AppAction::BackupDatabase),
+    Action::App(AppAction::RevealDatabase),
+    Action::App(AppAction::RevealBackups),
     Action::App(AppAction::About),
     Action::Window(WindowAction::CloseWindow),
     Action::Window(WindowAction::ToggleFullscreen),
@@ -245,6 +263,13 @@ fn macos_sections() -> Vec<Section> {
                 ),
                 app(AppAction::AddTag, "タグを追加", Some("CmdOrCtrl+Shift+T")),
                 Item::Separator,
+                app(AppAction::ExportBoardJson, "ボードを書き出す（JSON）", None),
+                app(
+                    AppAction::ExportBoardMarkdown,
+                    "ボードを書き出す（Markdown）",
+                    None,
+                ),
+                Item::Separator,
                 app(AppAction::SaveEdit, "保存", Some("CmdOrCtrl+S")),
                 Item::Predefined(Predefined::CloseWindow),
             ],
@@ -274,7 +299,21 @@ fn macos_sections() -> Vec<Section> {
         },
         Section {
             name: "ヘルプ",
-            items: vec![Item::Predefined(Predefined::About)],
+            items: vec![
+                app(AppAction::BackupDatabase, "データベースをコピー…", None),
+                app(
+                    AppAction::RevealDatabase,
+                    "データベースの場所をFinderで開く",
+                    None,
+                ),
+                app(
+                    AppAction::RevealBackups,
+                    "バックアップの場所をFinderで開く",
+                    None,
+                ),
+                Item::Separator,
+                Item::Predefined(Predefined::About),
+            ],
         },
     ]
 }
@@ -297,6 +336,13 @@ fn drawn_sections() -> Vec<Section> {
                     Some("CmdOrCtrl+Shift+N"),
                 ),
                 app(AppAction::AddTag, "タグを追加", Some("CmdOrCtrl+Shift+T")),
+                Item::Separator,
+                app(AppAction::ExportBoardJson, "ボードを書き出す（JSON）", None),
+                app(
+                    AppAction::ExportBoardMarkdown,
+                    "ボードを書き出す（Markdown）",
+                    None,
+                ),
                 Item::Separator,
                 app(AppAction::SaveEdit, "保存", Some("CmdOrCtrl+S")),
                 action(
@@ -332,7 +378,21 @@ fn drawn_sections() -> Vec<Section> {
         },
         Section {
             name: "ヘルプ",
-            items: vec![app(AppAction::About, "ekanbanについて", None)],
+            items: vec![
+                app(AppAction::BackupDatabase, "データベースをコピー…", None),
+                app(
+                    AppAction::RevealDatabase,
+                    "データベースの場所をフォルダで開く",
+                    None,
+                ),
+                app(
+                    AppAction::RevealBackups,
+                    "バックアップの場所をフォルダで開く",
+                    None,
+                ),
+                Item::Separator,
+                app(AppAction::About, "ekanbanについて", None),
+            ],
         },
     ]
 }

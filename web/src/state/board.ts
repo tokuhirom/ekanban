@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { moveCardArgs, moveColumnArgs, parseHandle, previewMove } from "../board/dnd";
 import { useIpc } from "../ipc";
+import { asAppError, describeFailure } from "../ipc/error";
 import type { AppError } from "../ipc/types/AppError";
 import type { Board } from "../ipc/types/Board";
 import type { DueStatus } from "../ipc/types/DueStatus";
@@ -19,10 +20,12 @@ import { applyTheme } from "../shell/theme";
 /** カードの編集パネルが開いている対象。新しいカードはまだ ID を持たない。 */
 export type Editing = { kind: "new"; columnId: number } | { kind: "card"; cardId: number };
 
-/** ダイアログに出す失敗。使う人が手を打たないと直らないものだけ（ADR 0016）。 */
+/** ダイアログに出す知らせ。失敗と、書けたファイルの報せ（ADR 0016）。 */
 export interface Alert {
   title: string;
   detail: string;
+  /** 押せる行き先が 1 つだけあるとき。書き出しの「場所を開く」がこれ。 */
+  action?: { label: string; act: () => void };
 }
 
 export interface BoardState {
@@ -50,15 +53,21 @@ export interface BoardState {
    * なので、呼び元しか置き場所を知りません。それ以外はここでダイアログに
    * 積むので、呼び元は返り値を捨ててかまいません（ADR 0016）。 */
   run: (call: () => Promise<Snapshot>) => Promise<AppError | null>;
-  /** ダイアログに出す失敗。読んだら `dismissAlert` で消す。 */
+  /** ダイアログに出す知らせ。読んだら `dismissAlert` で消す。 */
   alert: Alert | null;
   dismissAlert: () => void;
+  /** ダイアログに出す（書き出しやコピーが終わったときの報せ）。 */
+  notify: (alert: Alert) => void;
   /** 開いているカードの編集パネル。 */
   editing: Editing | null;
   openCard: (cardId: number) => void;
   /** そのカラムに新しいカードを足す下書きを開く。まだ何も保存しない（§2）。 */
   newCard: (columnId: number) => void;
   closePanel: () => void;
+  /** アーカイブ表示。盤面の代わりに、アーカイブしたカードを並べる（ADR 0010）。 */
+  showArchived: boolean;
+  toggleArchive: () => void;
+  restoreCard: (cardId: number) => void;
   /** タグ整理パネルの開閉。扱うのはボード全体のタグなので、カードのパネルとは別。 */
   tagPanelOpen: boolean;
   toggleTagPanel: () => void;
@@ -102,6 +111,9 @@ export function useBoardState(): BoardState {
   const [alert, setAlert] = useState<Alert | null>(null);
   const [requested, setRequested] = useState<Editing | null>(null);
   const [tagPanelOpen, setTagPanelOpen] = useState(false);
+  // 表示だけの状態なので、覚えません。次に開いたときは盤面から始めます
+  // （gpui 版と同じ）。
+  const [showArchived, setShowArchived] = useState(false);
 
   const report = useCallback(
     (what: string, error: unknown) => {
@@ -127,10 +139,7 @@ export function useBoardState(): BoardState {
           // 出すと、打ち直す先から離れたところに理由が出る。
           return failure;
         }
-        const alert: Alert =
-          failure === null
-            ? { title: "操作できませんでした", detail: String(error) }
-            : { title: failure.title, detail: failure.detail };
+        const alert: Alert = describeFailure(error);
         setAlert(alert);
         void ipc.logFrontendError(`${alert.title}: ${alert.detail}`);
         return failure;
@@ -345,6 +354,21 @@ export function useBoardState(): BoardState {
     setAlert(null);
   }, []);
 
+  const notify = useCallback((next: Alert) => {
+    setAlert(next);
+  }, []);
+
+  const toggleArchive = useCallback(() => {
+    setShowArchived((shown) => !shown);
+  }, []);
+
+  const restoreCard = useCallback(
+    (cardId: number) => {
+      void run(() => ipc.restoreCard(cardId));
+    },
+    [ipc, run],
+  );
+
   return {
     snapshot,
     board: drag?.preview ?? snapshot?.board ?? null,
@@ -360,6 +384,10 @@ export function useBoardState(): BoardState {
     run,
     alert,
     dismissAlert,
+    notify,
+    showArchived,
+    toggleArchive,
+    restoreCard,
     editing,
     openCard,
     newCard,
@@ -384,18 +412,4 @@ export function useBoardState(): BoardState {
 /// コマンドが返した `AppError` から、人が読む一行を取り出す。
 function describe(error: unknown): string {
   return asAppError(error)?.detail ?? String(error);
-}
-
-/// 投げられたものが `AppError` かどうか。
-///
-/// Tauri の `invoke` もハーネスも、コマンドの `Err` をそのままの形で投げます。
-/// ネットワークが切れたときのように、そうでないものも来るので見分けます。
-function asAppError(error: unknown): AppError | null {
-  if (error === null || typeof error !== "object") return null;
-  const candidate = error as Partial<AppError>;
-  return typeof candidate.kind === "string" &&
-    typeof candidate.title === "string" &&
-    typeof candidate.detail === "string"
-    ? (error as AppError)
-    : null;
 }

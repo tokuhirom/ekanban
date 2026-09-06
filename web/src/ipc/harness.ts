@@ -13,6 +13,7 @@ import type { Ipc } from "./index";
 import type { AppAction } from "./types/AppAction";
 import type { Snapshot } from "./types/Snapshot";
 import type { StartupState } from "./types/StartupState";
+import type { UrlSpan } from "./types/UrlSpan";
 
 /// ハーネスの居場所。`?harness=http://127.0.0.1:1421` で差し替えられます。
 export function harnessUrl(): string | null {
@@ -63,6 +64,7 @@ export function harnessIpc(base: string): Ipc {
     copyCard: (cardId) => call<Snapshot>(base, "copy_card", { cardId }),
     deleteCard: (cardId) => call<Snapshot>(base, "delete_card", { cardId }),
     archiveCard: (cardId) => call<Snapshot>(base, "archive_card", { cardId }),
+    restoreCard: (cardId) => call<Snapshot>(base, "restore_card", { cardId }),
     setCardTags: (cardId, tagIds) => call<Snapshot>(base, "set_card_tags", { cardId, tagIds }),
     addColumn: (name) => call<Snapshot>(base, "add_column", { name }),
     renameColumn: (columnId, name) => call<Snapshot>(base, "rename_column", { columnId, name }),
@@ -105,6 +107,28 @@ export function harnessIpc(base: string): Ipc {
       return () => {
         delete window.ekanbanMenu;
       };
+    },
+    suggestedExportName: (format) => call<string>(base, "suggested_export_name", { format }),
+    // ブラウザに OS の保存ダイアログはありません。ハーネスがデータベースの隣の
+    // パスを返すので、書き出しの経路はそのまま通ります（選ぶところだけが
+    // 本物ではない、と分かる形にしてあります）。
+    chooseSavePath: (fileName) => call<string | null>(base, "choose_save_path", { fileName }),
+    exportBoard: (format, destination) =>
+      call<string>(base, "export_board", { format, destination }),
+    backupDatabase: (destination) => call<string>(base, "backup_database", { destination }),
+    databaseLocation: () => call<string>(base, "database_location"),
+    revealPath: async (path) => {
+      await call(base, "reveal_path", { path });
+    },
+    revealDatabase: async () => {
+      await call(base, "reveal_database");
+    },
+    revealBackups: async () => {
+      await call(base, "reveal_backups");
+    },
+    descriptionLinks: (text) => call<UrlSpan[]>(base, "description_links", { text }),
+    openUrl: async (url) => {
+      await call(base, "open_url", { url });
     },
     logFrontendError: async (message) => {
       await call(base, "log_frontend_error", { message });

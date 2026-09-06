@@ -53,15 +53,30 @@ function Shell({ title, onCancel, children }: ShellProps) {
 interface AlertProps {
   title: string;
   detail: string;
+  /** 押せる行き先が 1 つだけあるとき。書き出しの「場所を開く」がこれ。 */
+  action?: { label: string; act: () => void } | undefined;
   onDismiss: () => void;
 }
 
-/// 失敗の知らせ。読んで閉じるだけなので、ボタンは 1 つ。
-export function AlertDialog({ title, detail, onDismiss }: AlertProps) {
+/// 知らせ。読んで閉じるだけなので、ボタンは 1 つ——
+/// 書けたファイルのように、そこから先へ行ける相手があるときだけ 2 つ。
+export function AlertDialog({ title, detail, action, onDismiss }: AlertProps) {
   return (
     <Shell title={title} onCancel={onDismiss}>
       <p className="dialog-detail">{detail}</p>
       <div className="dialog-buttons">
+        {action !== undefined && (
+          <button
+            type="button"
+            className="secondary alert-action"
+            onClick={() => {
+              action.act();
+              onDismiss();
+            }}
+          >
+            {action.label}
+          </button>
+        )}
         <button type="button" className="primary" onClick={onDismiss}>
           OK
         </button>

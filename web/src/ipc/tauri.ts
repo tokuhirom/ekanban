@@ -12,6 +12,7 @@ import type { Ipc } from "./index";
 import type { AppAction } from "./types/AppAction";
 import type { Snapshot } from "./types/Snapshot";
 import type { StartupState } from "./types/StartupState";
+import type { UrlSpan } from "./types/UrlSpan";
 
 export const tauriIpc: Ipc = {
   startupState: () => invoke<StartupState>("startup_state"),
@@ -27,6 +28,7 @@ export const tauriIpc: Ipc = {
   copyCard: (cardId) => invoke<Snapshot>("copy_card", { cardId }),
   deleteCard: (cardId) => invoke<Snapshot>("delete_card", { cardId }),
   archiveCard: (cardId) => invoke<Snapshot>("archive_card", { cardId }),
+  restoreCard: (cardId) => invoke<Snapshot>("restore_card", { cardId }),
   setCardTags: (cardId, tagIds) => invoke<Snapshot>("set_card_tags", { cardId, tagIds }),
   addColumn: (name) => invoke<Snapshot>("add_column", { name }),
   renameColumn: (columnId, name) => invoke<Snapshot>("rename_column", { columnId, name }),
@@ -72,6 +74,24 @@ export const tauriIpc: Ipc = {
       stopped = true;
       stop?.();
     };
+  },
+  suggestedExportName: (format) => invoke<string>("suggested_export_name", { format }),
+  chooseSavePath: (fileName) => invoke<string | null>("choose_save_path", { fileName }),
+  exportBoard: (format, destination) => invoke<string>("export_board", { format, destination }),
+  backupDatabase: (destination) => invoke<string>("backup_database", { destination }),
+  databaseLocation: () => invoke<string>("database_location"),
+  revealPath: async (path) => {
+    await invoke("reveal_path", { path });
+  },
+  revealDatabase: async () => {
+    await invoke("reveal_database");
+  },
+  revealBackups: async () => {
+    await invoke("reveal_backups");
+  },
+  descriptionLinks: (text) => invoke<UrlSpan[]>("description_links", { text }),
+  openUrl: async (url) => {
+    await invoke("open_url", { url });
   },
   logFrontendError: async (message) => {
     await invoke("log_frontend_error", { message });

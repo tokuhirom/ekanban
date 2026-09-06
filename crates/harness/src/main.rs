@@ -18,7 +18,7 @@
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::path::PathBuf;
 
-use ekanban_app::commands;
+use ekanban_app::commands::{self, ExportFormat};
 use ekanban_app::error::{AppError, ErrorKind};
 use ekanban_app::{AppState, ThemePreference};
 use serde::Deserialize;
@@ -249,6 +249,37 @@ fn invoke(command: &str, args: Value, state: &AppState) -> Result<Value, AppErro
     struct Theme {
         preference: ThemePreference,
     }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Format {
+        format: ExportFormat,
+    }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct FileName {
+        file_name: String,
+    }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Export {
+        format: ExportFormat,
+        destination: PathBuf,
+    }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Destination {
+        destination: PathBuf,
+    }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Text {
+        text: String,
+    }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Url {
+        url: String,
+    }
 
     match command {
         "startup_state" => ok(commands::startup_state(state)?),
@@ -287,6 +318,10 @@ fn invoke(command: &str, args: Value, state: &AppState) -> Result<Value, AppErro
         "copy_card" => ok(commands::copy_card(state, read::<CardId>(args)?.card_id)?),
         "delete_card" => ok(commands::delete_card(state, read::<CardId>(args)?.card_id)?),
         "archive_card" => ok(commands::archive_card(
+            state,
+            read::<CardId>(args)?.card_id,
+        )?),
+        "restore_card" => ok(commands::restore_card(
             state,
             read::<CardId>(args)?.card_id,
         )?),
@@ -363,6 +398,43 @@ fn invoke(command: &str, args: Value, state: &AppState) -> Result<Value, AppErro
         )?),
         "undo" => ok(commands::undo(state)?),
         "redo" => ok(commands::redo(state)?),
+        "suggested_export_name" => ok(commands::suggested_export_name(
+            state,
+            read::<Format>(args)?.format,
+        )),
+        // ブラウザに OS の保存ダイアログはありません。**選ぶところだけ**を
+        // データベースの隣に決め打ちで返し、書き出しの経路はそのまま通します。
+        // 開発とテストのためのもので、配るものには入りません。
+        "choose_save_path" => {
+            let file_name = read::<FileName>(args)?.file_name;
+            let directory = commands::database_location(state)
+                .parent()
+                .map(std::path::Path::to_path_buf)
+                .unwrap_or_else(|| PathBuf::from("."));
+            ok(directory.join(file_name))
+        }
+        "export_board" => {
+            let a: Export = read(args)?;
+            ok(commands::export_board(state, a.format, &a.destination)?)
+        }
+        "backup_database" => ok(commands::backup_database(
+            state,
+            &read::<Destination>(args)?.destination,
+        )?),
+        "database_location" => ok(commands::database_location(state)),
+        // 場所を開く相手（OS のファイル管理）がブラウザにはいない。押しても
+        // 何も起きないことだけが本物と違う。
+        "reveal_path" | "reveal_database" | "reveal_backups" => ok(()),
+        "description_links" => ok(commands::description_links(&read::<Text>(args)?.text)),
+        // 開く先のブラウザが、すでにブラウザ。記録だけ残す。
+        "open_url" => {
+            let url = read::<Url>(args)?.url;
+            match commands::openable_url(&url) {
+                Some(url) => println!("open_url {url}"),
+                None => println!("refused to open {url}"),
+            }
+            ok(())
+        }
         "log_frontend_error" => {
             commands::log_frontend_error(&read::<Message>(args)?.message);
             ok(())

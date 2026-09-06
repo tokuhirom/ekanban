@@ -82,6 +82,10 @@ pub fn run() {
     let bounds_for_events = Arc::clone(&bounds);
 
     let app = tauri::Builder::default()
+        // ファイルを選ばせるのと、場所を開くのに使う（§9）。どちらも Rust から
+        // 呼ぶので、webview に権限は開けていません。
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .manage(state)
         .menu(menu::build)
         .on_menu_event(|app, event| handle_menu_event(app, event.id().as_ref()))
@@ -145,11 +149,15 @@ pub fn run() {
             ipc::set_window_bounds,
             ipc::set_window_title,
             ipc::suggested_export_name,
+            ipc::choose_save_path,
             ipc::export_board,
             ipc::backup_database,
             ipc::database_location,
+            ipc::reveal_path,
             ipc::reveal_database,
             ipc::reveal_backups,
+            ipc::description_links,
+            ipc::open_url,
             ipc::capture_card,
             ipc::set_capture_target,
             ipc::set_quick_capture_shortcut,
