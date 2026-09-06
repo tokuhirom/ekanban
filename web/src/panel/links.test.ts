@@ -6,7 +6,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { UrlSpan } from "../ipc/types/UrlSpan";
-import { linkAt, opensLink, segments } from "./description";
+import { linkAt, opensLink, segments } from "./links";
 
 function span(start: number, end: number, url: string): UrlSpan {
   return { start, end, url };

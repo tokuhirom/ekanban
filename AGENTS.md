@@ -39,6 +39,8 @@ Run the Tauri app with `make dev` — a debug build has Tauri's `devUrl` baked i
 
 `make check` runs all seven; `make e2e` is separate because it builds browsers.
 
+**Never let two files differ only in case.** macOS and Windows resolve `./Archive` to `archive.ts`, so an import picks the wrong file and the build fails there while Linux is green — the CI cross jobs are where you find out. Component files are `PascalCase.tsx` and the plain modules beside them get a different word (`Archive.tsx` with `archived.ts`, `Description.tsx` with `links.ts`), not the same word in another case.
+
 **Never decide platform behaviour from `navigator.userAgent`.** It is a string a webview can change — Playwright's Safari emulation calls itself `Macintosh` on Linux — and getting `secondary` wrong disables a whole key binding. Rust knows the platform at compile time and sends it in `StartupState.platform`.
 
 These are the same checks enforced by GitHub Actions. The bundled SQLite dependency means no database server is required.

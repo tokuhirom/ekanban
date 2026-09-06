@@ -15,7 +15,7 @@ import { useEffect, useState } from "react";
 import { useIpc } from "../ipc";
 import type { Platform } from "../ipc/types/Platform";
 import type { UrlSpan } from "../ipc/types/UrlSpan";
-import { linkAt, opensLink, segments } from "./description";
+import { linkAt, opensLink, segments } from "./links";
 
 interface Props {
   id: string;

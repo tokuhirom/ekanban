@@ -3,7 +3,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { Card } from "../ipc/types/Card";
-import { archivedDayLabel, archivedGroups } from "./archive";
+import { archivedDayLabel, archivedGroups } from "./archived";
 
 function card(id: number, archivedAt: number | null): Card {
   return {

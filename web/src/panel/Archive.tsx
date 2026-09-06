@@ -9,7 +9,7 @@
 import { CardFace } from "../board/Card";
 import type { Board } from "../ipc/types/Board";
 import type { DueStatus } from "../ipc/types/DueStatus";
-import { archivedGroups } from "./archive";
+import { archivedGroups } from "./archived";
 
 interface Props {
   board: Board;
