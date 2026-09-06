@@ -15,10 +15,11 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
-# 実行ファイルの名前は `ekanban-tauri` です。`crates/gpui` が出す `ekanban` と
-# 並べて置ける必要があるのは移行の間だけで、段階 10 で `ekanban` に変わります。
+# 実行ファイルの名前は `ekanban` です。配るものがこちらに替わったので
+# (`docs/TAURI-MIGRATION.md` の段階 9)、名前もこちらが引き継ぎました。
+# 出ていく gpui のほうは `ekanban-gpui` になっています。
 [[bin]]
-name = "ekanban-tauri"
+name = "ekanban"
 path = "src/main.rs"
 
 [build-dependencies]

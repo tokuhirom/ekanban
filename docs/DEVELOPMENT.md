@@ -244,16 +244,16 @@ fn adding_a_card_and_saving_it_writes_the_title_to_the_database(cx: &mut TestApp
 | `make web-check` | 画面側の `tsc --noEmit` / ESLint / Vitest |
 | `make e2e` | ハーネス越しに Chromium と WebKit で画面を動かす |
 | `make screenshots` | マニュアルのスクリーンショットを撮り直す（Linux/X11 のみ） |
-| `make icon` | macOS 用の `assets/icon.icns` を `assets/icon.png` から生成する |
-| `make bundle` | リリースビルドから `target/release/bundle/Ekanban.app` を作る |
-| `make open` | `.app` を作って起動する |
-| `make install` | `.app` を `/Applications` にコピーする |
+| `make icon` | 3 つの OS 分のアイコンを `assets/icon.png` から生成する（`tauri icon`） |
+| `make bundle` | この OS の配布物を作る（macOS は `.app` と `.dmg`、Linux は `.deb` と `.AppImage`、Windows はインストーラ） |
+| `make open` | `.app` を作って起動する（macOS） |
+| `make install` | `.app` を `/Applications` にコピーする（macOS） |
 | `make install-linux` | Linux のアプリ一覧に登録する（`~/.local` 以下） |
 | `make uninstall-linux` | `install-linux` で入れたものを消す |
 
-`cargo build` が作るのは実行ファイルだけで、`.app` バンドルにはなりません。Dock のアイコンやアプリ名、Launchpad からの起動を正しく扱うには `make bundle` を使ってください。バンドル生成の実体は `script/bundle-mac` です。
+`cargo build` が作るのは実行ファイルだけです。Dock のアイコンやアプリ名、Launchpad からの起動、アプリ一覧への登録を正しく扱うには `make bundle` を使ってください。組むのは Tauri のバンドラで、CLI は画面側の devDependencies に入っているので別に入れるものはありません。
 
-`make bundle` は `assets/icon.png` から `assets/icon.icns` を生成してアイコンに取り込みます。生成には macOS の `sips` と `iconutil` が必要です。
+アイコンは `crates/app/icons/` に生成したものをコミットしてあります（`.icns`・`.ico`・PNG 各種）。`assets/icon.png` を差し替えたときは `make icon` で作り直してください。**macOS のツール（`sips` / `iconutil`）は要りません**——`tauri icon` がどの OS でも 3 つ分を作ります。
 
 ### Linux のデスクトップ統合
 
@@ -267,19 +267,21 @@ Linux でも、実行ファイルだけではアプリ一覧に出ず、タス�
 
 入れるのは `script/install-linux`（`make install-linux`）です。root は要りません。`--uninstall` で消します。エントリの `Exec=` は、入れた実行ファイルの絶対パスに書き換えてから置きます。`~/.local/bin` が PATH に入っていない環境でも一覧から起動できるようにするためです。
 
-**`StartupWMClass` は `crates/core/src/lib.rs` の `APP_ID`（`WindowOptions.app_id`）と必ず同じにしてください。** 食い違うと、起動したウィンドウがそのエントリに結びつかず、タスクバーのアイコンと名前が元に戻ります。
+**`StartupWMClass` は、ウィンドウが名乗る `WM_CLASS` と必ず同じにしてください**（`crates/core/src/lib.rs` の `WM_CLASS`）。食い違うと、起動したウィンドウがそのエントリに結びつかず、タスクバーのアイコンと名前が元に戻ります。
+
+**これは `APP_ID` ではありません。** Tauri（tao）は `WM_CLASS` を**実行ファイルの名前**から作るので、`ekanban` という実行ファイルは `("ekanban", "Ekanban")` と名乗ります。実機で確かめるなら `xprop WM_CLASS` です。`.deb` と `.AppImage` に入るエントリはバンドラが作るので、そちらを直したいときは `tauri.conf.json` を見てください。
 
 アイコンは大きさごとに `assets/icons/` へコミットしてあります。ビルド時に縮小しないのは、Linux のランナーに画像処理のツールを増やさないためです。`assets/icon.png` を差し替えたときは、同じ 7 種類（16 / 32 / 48 / 64 / 128 / 256 / 512）を作り直してください。
 
 ### 署名
 
-ローカルでは ad-hoc 署名（`-`）を使うので、追加の設定は要りません。配布用に Developer ID で署名する場合は環境変数で ID を渡します。
+ad-hoc 署名（`-`）です。指定は `crates/app/tauri.conf.json` の `bundle.macOS.signingIdentity` にあり、ローカルでも CI でも同じものが使われます（[ADR 0014](adr/0014-unsigned-apple-silicon-only-macos-builds.md)）。
+
+配布用に Developer ID で署名するなら、環境変数で ID を渡します。Tauri のバンドラは、これがあるときだけ hardened runtime とタイムスタンプを付けます。
 
 ```sh
-CODESIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" make bundle
+APPLE_SIGNING_IDENTITY="Developer ID Application: Your Name (TEAMID)" make bundle
 ```
-
-ad-hoc 以外の ID を指定したときは hardened runtime（`--options runtime`）とタイムスタンプが自動で付き、公証をそのまま通せる状態になります。entitlements が必要になったら `script/entitlements.plist` を置けば署名時に読み込まれます。
 
 ## アプリを動かして確かめるとき
 
@@ -372,22 +374,17 @@ git push origin v0.1.0
 
 | プラットフォーム | ランナー | 成果物 |
 | --- | --- | --- |
-| macOS (Apple Silicon) | `macos-latest` | `ekanban-<版>-aarch64-apple-darwin.zip`（`Ekanban.app`） |
-| Linux (x86_64) | `ubuntu-24.04` | `ekanban-<版>-x86_64-unknown-linux-gnu.tar.gz`（実行ファイル + README + LICENSE + `dev.tokuhirom.ekanban.desktop` + `icons/` + `install-linux`） |
-| Windows (x86_64) | `windows-latest` | `ekanban-<版>-x86_64-pc-windows-msvc.zip`（`ekanban.exe` + README + LICENSE） |
+| macOS (Apple Silicon) | `macos-latest` | `ekanban-<版>-aarch64-apple-darwin.zip`（`Ekanban.app`）と `.dmg` |
+| Linux (x86_64) | `ubuntu-24.04` | `ekanban-<版>-x86_64-unknown-linux-gnu.tar.gz`（実行ファイル + README + LICENSE + `dev.tokuhirom.ekanban.desktop` + `icons/` + `install-linux`）、`.deb`、`.AppImage` |
+| Windows (x86_64) | `windows-latest` | `ekanban-<版>-x86_64-pc-windows-msvc.zip`（`ekanban.exe` + README + LICENSE）と `-setup.exe`（NSIS） |
+
+**パッケージと一緒に、素の実行ファイルも配り続けます。** `.deb` を入れるには root が要り、それを求めない導線を残すというのが [ADR 0013](adr/0013-linux-desktop-integration.md) の決定だからです。
 
 あわせて `SHA256SUMS.txt` を置きます。
 
 - **Intel Mac 向けは出していません。** 判断と理由は [`docs/DESIGN.md`](DESIGN.md) と [ADR 0014](adr/0014-unsigned-apple-silicon-only-macos-builds.md) にあります。出すことにしたら、`macos-15-intel` のジョブを足すか、`lipo` で universal binary にします
-- **Linux は `ubuntu-24.04` でビルドします。** glibc 2.39 に依存するので、それより古いディストリビューションでは動きません。実行にはこのほか Vulkan のドライバと fontconfig が要ります。`ubuntu-22.04` は 2026-09-17 から段階的に廃止されるので使いません
-- **Linux では xdg-desktop-portal に依存する操作が 4 つあります。** ポータルと、デスクトップ環境に合ったバックエンド（`xdg-desktop-portal-gnome` / `-kde` / `-gtk`）が入っていない環境では動きません
-
-  | 操作 | 使っている API | ポータルが無いと |
-  | --- | --- | --- |
-  | ボードを書き出す（JSON / Markdown） | `cx.prompt_for_new_path` | ダイアログが開かず、何を入れれば直るかを添えたエラーを出す（`save_dialog_error_detail`） |
-  | データベースをコピー… | `cx.prompt_for_new_path` | 同上 |
-  | データベース / バックアップの場所を開く | `cx.reveal_path` | 何も起きない。gpui は `open` へのフォールバックを持つが、成否は返らないので画面には出せない |
-  | テーマ「システムに合わせる」 | `org.freedesktop.appearance` の `color-scheme` | 常にライト扱いになる。メニューからライト / ダークを選べば効く |
+- **Linux は `ubuntu-24.04` でビルドします。** glibc 2.39 に依存するので、それより古いディストリビューションでは動きません。実行には WebKitGTK 4.1 と GTK 3 が要ります。`ubuntu-22.04` は 2026-09-17 から段階的に廃止されるので使いません
+- **xdg-desktop-portal は要りません**（[ADR 0024](adr/0024-no-portal-requirement-on-linux.md)）。保存ダイアログは GTK の口、テーマの「システムに合わせる」は CSS の `prefers-color-scheme` です。ポータルに触れるのは「場所を開く」だけで、そこもファイル管理（`org.freedesktop.FileManager1`）→ ポータル → `xdg-open` の順に試します
 - **Windows のバイナリは、ビルドが通ることしか確かめていません。** クイックキャプチャは対象外のままです
 
 ### macOS の署名と公証
@@ -403,7 +400,7 @@ git push origin v0.1.0
 
 Developer ID での署名と公証をやらない判断と、その理由は [`docs/DESIGN.md`](DESIGN.md) と [ADR 0014](adr/0014-unsigned-apple-silicon-only-macos-builds.md) にあります。やるときに要るものは次の通りです。
 
-ワークフローは `CODESIGN_IDENTITY` シークレットがあれば `script/bundle-mac` にそのまま渡します。実際に Developer ID で署名するには、これに加えて次が要ります。
+実際に Developer ID で署名するには、次が要ります（いまのワークフローは ad-hoc のまま組みます）。
 
 - Apple Developer Program の登録（年額）
 - 証明書（`.p12`）をシークレットに入れて、ビルド前に一時キーチェーンへ取り込むステップ
@@ -442,7 +439,7 @@ App には Contents と Pull requests の write 権限が要ります。あわ�
 
 `.tagpr` で気をつけているところが 2 つあります。
 
-- **`versionFile = Cargo.toml`。** tag だけでなくワークスペースのルートの `Cargo.toml`（`[workspace.package]` の `version`）も上げます。`script/bundle-mac` がここから `.app` の `CFBundleShortVersionString` を作るので、置いていかれるとバンドルのバージョンがタグと食い違います。行頭の `version = "..."` はこの 1 か所だけにしてください。両方とも先頭の 1 つを見ています
+- **`versionFile = Cargo.toml`。** tag だけでなくワークスペースのルートの `Cargo.toml`（`[workspace.package]` の `version`）も上げます。Tauri のバンドラがここから `.app` の `CFBundleShortVersionString` や `.deb` のバージョンを作るので、置いていかれるとパッケージのバージョンがタグと食い違います。行頭の `version = "..."` はこの 1 か所だけにしてください。両方とも先頭の 1 つを見ています
 - **`postVersionCommand = cargo update --workspace`。** tagpr は `*.lock` を対象外にするので、これが無いと `Cargo.lock` の `ekanban` と `ekanban-core` のバージョンだけ取り残されます
 
 `main` のルールセットが `Check and test` を必須にしているので、tagpr の pull request も CI を通ってから merge されます。

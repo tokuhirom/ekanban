@@ -13,7 +13,10 @@ Terminal=false
 Categories=Office;ProjectManagement;
 Keywords=kanban;board;task;todo;
 Keywords[ja]=かんばん;カンバン;タスク;
-# デスクトップ環境がウィンドウをこのエントリに結びつけるための ID。
-# `src/lib.rs` の `APP_ID`（`WindowOptions.app_id`）と必ず同じにすること。
-StartupWMClass=dev.tokuhirom.ekanban
+# デスクトップ環境がウィンドウをこのエントリに結びつけるための印。
+# ウィンドウが名乗る WM_CLASS と同じでなければ結びつきません。Tauri（tao）は
+# **実行ファイルの名前**から作るので `("ekanban", "Ekanban")` で、ここは
+# バンドラが `.deb` に入れるエントリと同じ小文字のほうを書きます
+# （`crates/core/src/lib.rs` の `WM_CLASS`、`docs/TAURI-MIGRATION.md` §8）。
+StartupWMClass=ekanban
 StartupNotify=true
