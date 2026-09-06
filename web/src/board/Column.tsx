@@ -129,16 +129,6 @@ export function Column({
           <button
             type="button"
             className="ghost"
-            onClick={() => {
-              setMenuOpen(false);
-              void run(() => ipc.sortColumnByDueDate(column.id));
-            }}
-          >
-            期限順
-          </button>
-          <button
-            type="button"
-            className="ghost"
             // 空のカラムにはアーカイブするものが無い。押せてしまうと
             // 「アーカイブするカードがありません」と言う必要が出る。
             disabled={column.cards.length === 0}

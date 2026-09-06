@@ -177,11 +177,6 @@ pub fn set_column_wip_limit(
 }
 
 #[tauri::command]
-pub fn sort_column_by_due_date(state: State<'_, AppState>, column_id: ColumnId) -> Reply<Snapshot> {
-    commands::sort_column_by_due_date(&state, column_id)
-}
-
-#[tauri::command]
 pub fn archive_column(state: State<'_, AppState>, column_id: ColumnId) -> Reply<Snapshot> {
     commands::archive_column(&state, column_id)
 }

@@ -106,3 +106,5 @@
 | [0024](0024-no-portal-requirement-on-linux.md) | Linux で xdg-desktop-portal を必須にしない | 2026-09-06 | 有効 |
 | [0025](0025-the-tauri-migration-landed.md) | Tauri 移行が着地したので、移行の設計文書を消す | 2026-09-06 | 有効 |
 | [0026](0026-gpui-stays-only-in-the-adrs.md) | gpui の名前は ADR にだけ残す | 2026-09-06 | 有効 |
+| [0027](0027-creating-tags-while-editing-a-card.md) | カードを編集しながらタグを作れるようにする | 2026-09-06 | 有効 |
+| [0028](0028-a-single-default-quick-capture-target.md) | クイックキャプチャの既定の入れ先を、先頭のボードに固定する | 2026-09-06 | 有効 |

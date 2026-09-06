@@ -309,15 +309,6 @@ pub fn set_column_wip_limit(
         .map(|(_, snapshot)| snapshot)
 }
 
-pub fn sort_column_by_due_date(
-    state: &AppState,
-    column_id: ColumnId,
-) -> Result<Snapshot, AppError> {
-    state
-        .mutate(COLUMN, |board| board.sort_column_by_due_date(column_id))
-        .map(|(_, snapshot)| snapshot)
-}
-
 pub fn archive_column(state: &AppState, column_id: ColumnId) -> Result<Snapshot, AppError> {
     state
         .mutate(COLUMN, |board| board.archive_column(column_id))
@@ -636,11 +627,40 @@ fn read_capture_target(database: &mut Database) -> Result<Option<CaptureTarget>,
     }
 }
 
+/// 設定が無いときの既定の入れ先。**先頭のボードの先頭カラム**（#117、[ADR 0028]）。
+///
+/// 開いているボードから決めていたころは、ボードを切り替えるだけで入れ先が動いて
+/// いました。「キャプチャ先はアプリ全体で 1 つ」（`docs/DESIGN.md`「クイック
+/// キャプチャ」）は、設定していないときも同じでなければ成り立ちません。
+///
+/// 先頭のボードは `load_boards`（`ORDER BY boards.id`）の 1 つめで、サイドバーの
+/// 一番上と同じです。そのボードにカラムが 1 本も無ければ `None` です。
+///
+/// [ADR 0028]: ../../../docs/adr/0028-a-single-default-quick-capture-target.md
+fn default_capture_target(database: &Database) -> Result<Option<CaptureTarget>, AppError> {
+    let Some(first) = database
+        .load_boards()
+        .unwrap_or_default()
+        .into_iter()
+        .next()
+    else {
+        return Ok(None);
+    };
+    let board = database.load_board_by_id(first.id).map_err(|error| {
+        AppError::from_db(ErrorKind::BoardIo, "キャプチャ先を読めませんでした", &error)
+    })?;
+    Ok(board.columns.first().map(|column| CaptureTarget {
+        board_id: board.id,
+        column_id: column.id,
+        board_name: board.name.clone(),
+        column_name: column.name.clone(),
+    }))
+}
+
 /// いまのキャプチャ先。設定が無い・消えているときは既定に落とす。
 ///
-/// 既定は**開いているボードの先頭カラム**です。決まっていないから足せない、
-/// にはしません——キャプチャは 1 行を放り込むためのもので、そこで設定を
-/// 求めると用が足りません。
+/// 決まっていないから足せない、にはしません——キャプチャは 1 行を放り込むための
+/// もので、そこで設定を求めると用が足りません。
 ///
 /// 設定が指していたカラムが消えていたら、黙って設定を消して既定に戻します。
 /// 次のキャプチャを失敗させないためです。
@@ -651,13 +671,7 @@ pub fn capture_target(state: &AppState) -> Result<Option<CaptureTarget>, AppErro
     if let Some(target) = read_capture_target(&mut database)? {
         return Ok(Some(target));
     }
-    let board = state.lock();
-    Ok(board.columns.first().map(|column| CaptureTarget {
-        board_id: board.id,
-        column_id: column.id,
-        board_name: board.name.clone(),
-        column_name: column.name.clone(),
-    }))
+    default_capture_target(&database)
 }
 
 /// クイックキャプチャからカードを 1 枚足す。
@@ -670,24 +684,19 @@ pub fn capture_card(state: &AppState, title: &str) -> Result<Snapshot, AppError>
     let mut database = state
         .database()
         .map_err(|error| AppError::from_db(ErrorKind::Save, FAILED, &error))?;
-    let target = read_capture_target(&mut database)?
-        .or_else(|| {
-            // 設定が無ければ既定（開いているボードの先頭カラム）へ。
-            let board = state.lock();
-            board.columns.first().map(|column| CaptureTarget {
-                board_id: board.id,
-                column_id: column.id,
-                board_name: board.name.clone(),
-                column_name: column.name.clone(),
-            })
-        })
-        .ok_or_else(|| {
-            AppError::new(
-                ErrorKind::Save,
-                FAILED,
-                "カードの追加先が決まっていません。ボードにカラムを 1 つ足してください",
-            )
-        })?;
+    let stored = read_capture_target(&mut database)?;
+    // 設定が無ければ既定（先頭のボードの先頭カラム）へ。
+    let target = match stored {
+        Some(target) => Some(target),
+        None => default_capture_target(&database)?,
+    }
+    .ok_or_else(|| {
+        AppError::new(
+            ErrorKind::Save,
+            FAILED,
+            "カードの追加先が決まっていません。ボードにカラムを 1 つ足してください",
+        )
+    })?;
 
     if title.trim().is_empty() {
         return Err(AppError::from_board(FAILED, &BoardError::EmptyCardTitle));

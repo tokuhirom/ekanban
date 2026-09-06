@@ -230,11 +230,6 @@ pub enum BoardOperation {
         before: Option<NaiveDate>,
         after: Option<NaiveDate>,
     },
-    SortColumnByDueDate {
-        column_id: ColumnId,
-        before_order: Vec<CardId>,
-        after_order: Vec<CardId>,
-    },
     SetColumnWipLimit {
         column_id: ColumnId,
         before: Option<i64>,
@@ -928,10 +923,17 @@ impl Board {
             .find(|card| card.id == card_id)
             .ok_or(BoardError::CardNotFound(card_id))?
             .clone();
+        // **項目名が空のものは落とします**（#114）。ここに渡ってくるのは
+        // 「このカードのチェックリストのすべて」なので、何を残すかを決めるのは
+        // モデルです。断ると、`＋ 項目を追加` で作った行を消すまでカードごと
+        // 保存できなくなります。1 項目ずつの `add_checklist_item` /
+        // `set_checklist_item_text` は「空の項目を作れ」という指示なので、
+        // そちらは今までどおり断ります。
+        let checklist_drafts: Vec<ChecklistItemDraft> = checklist_drafts
+            .into_iter()
+            .filter(|draft| !draft.text.trim().is_empty())
+            .collect();
         for draft in &checklist_drafts {
-            if draft.text.trim().is_empty() {
-                return Err(BoardError::EmptyChecklistItemText);
-            }
             if let Some(item_id) = draft.id {
                 if !before_card
                     .checklist_items
@@ -1468,43 +1470,6 @@ impl Board {
             card_id,
             before,
             after: due_date,
-        });
-        Ok(true)
-    }
-
-    pub fn sort_column_by_due_date(&mut self, column_id: ColumnId) -> Result<bool, BoardError> {
-        let column = self
-            .columns
-            .iter_mut()
-            .find(|column| column.id == column_id)
-            .ok_or(BoardError::ColumnNotFound(column_id))?;
-        let original_order = column.cards.iter().map(|card| card.id).collect::<Vec<_>>();
-        column.cards.sort_by(|left, right| {
-            match (left.due_date, right.due_date) {
-                (Some(left), Some(right)) => left.cmp(&right),
-                (Some(_), None) => std::cmp::Ordering::Less,
-                (None, Some(_)) => std::cmp::Ordering::Greater,
-                (None, None) => std::cmp::Ordering::Equal,
-            }
-            .then_with(|| left.position.cmp(&right.position))
-        });
-
-        if column
-            .cards
-            .iter()
-            .map(|card| card.id)
-            .eq(original_order.iter().copied())
-        {
-            return Ok(false);
-        }
-
-        let sorted_order = column.cards.iter().map(|card| card.id).collect();
-        self.reindex();
-        self.updated_at = timestamp();
-        self.push_operation(BoardOperation::SortColumnByDueDate {
-            column_id,
-            before_order: original_order,
-            after_order: sorted_order,
         });
         Ok(true)
     }
@@ -2083,11 +2048,6 @@ impl Board {
                 before,
                 after,
             } => self.set_due_date_raw(*card_id, if undo { *before } else { *after })?,
-            BoardOperation::SortColumnByDueDate {
-                column_id,
-                before_order,
-                after_order,
-            } => self.sort_column_raw(*column_id, if undo { before_order } else { after_order })?,
             BoardOperation::SetColumnWipLimit {
                 column_id,
                 before,
@@ -2436,30 +2396,6 @@ impl Board {
             .ok_or(BoardError::CardNotFound(card_id))?;
         card.due_date = due_date;
         card.updated_at = timestamp();
-        Ok(())
-    }
-
-    fn sort_column_raw(&mut self, column_id: ColumnId, order: &[CardId]) -> Result<(), BoardError> {
-        let column = self
-            .columns
-            .iter_mut()
-            .find(|column| column.id == column_id)
-            .ok_or(BoardError::ColumnNotFound(column_id))?;
-        let cards = std::mem::take(&mut column.cards);
-        let mut reordered = Vec::with_capacity(cards.len());
-        let mut remaining = cards;
-        for card_id in order {
-            let index = remaining
-                .iter()
-                .position(|card| card.id == *card_id)
-                .ok_or(BoardError::CardNotFound(*card_id))?;
-            reordered.push(remaining.remove(index));
-        }
-        if !remaining.is_empty() {
-            return Err(BoardError::CardNotFound(remaining[0].id));
-        }
-        column.cards = reordered;
-        self.reindex();
         Ok(())
     }
 
@@ -2952,23 +2888,6 @@ mod tests {
     }
 
     #[test]
-    fn sorts_cards_by_due_date_with_empty_dates_last() {
-        let mut board = Board::fixture();
-        let first = board.columns[0].cards[0].id;
-        let second = board.columns[0].cards[1].id;
-        let first_due = NaiveDate::from_ymd_opt(2026, 10, 10).unwrap();
-        let second_due = NaiveDate::from_ymd_opt(2026, 10, 5).unwrap();
-        board.set_card_due_date(first, Some(first_due)).unwrap();
-        board.set_card_due_date(second, Some(second_due)).unwrap();
-
-        assert!(board.sort_column_by_due_date(1).unwrap());
-        assert_eq!(board.columns[0].cards[0].id, second);
-        assert_eq!(board.columns[0].cards[1].id, first);
-        assert!(!board.sort_column_by_due_date(1).unwrap());
-        assert_eq!(board.columns[0].cards[0].position, 0);
-    }
-
-    #[test]
     fn searches_case_insensitively_and_normalizes_full_width_ascii() {
         let mut board = Board::fixture();
         board
@@ -3345,6 +3264,7 @@ mod tests {
             .any(|card| card.id == copied_id));
     }
 
+    /// 1 項目ずつの操作は、空の項目を作れという指示なので断る。
     #[test]
     fn rejects_empty_checklist_items() {
         let mut board = Board::fixture();
@@ -3353,21 +3273,94 @@ mod tests {
             board.add_checklist_item(card_id, "  "),
             Err(BoardError::EmptyChecklistItemText)
         );
+        let item_id = board.add_checklist_item(card_id, "確認する").unwrap();
         assert_eq!(
-            board.update_card_details_with_checklist(
+            board.update_checklist_item(card_id, item_id, " "),
+            Err(BoardError::EmptyChecklistItemText)
+        );
+    }
+
+    /// カードごとまとめて渡す経路では、名前の入っていない項目は落として保存する（#114）。
+    #[test]
+    fn drops_checklist_items_left_blank() {
+        let mut board = Board::fixture();
+        let card_id = board.columns[0].cards[0].id;
+        board
+            .update_card_details_with_checklist(
                 card_id,
                 "タイトル",
                 "",
                 None,
                 Vec::new(),
-                vec![ChecklistItemDraft {
-                    id: None,
-                    text: "".to_string(),
-                    checked: false,
-                }],
-            ),
-            Err(BoardError::EmptyChecklistItemText)
+                vec![
+                    ChecklistItemDraft {
+                        id: None,
+                        text: "調べる".to_string(),
+                        checked: false,
+                    },
+                    ChecklistItemDraft {
+                        id: None,
+                        text: "   ".to_string(),
+                        checked: true,
+                    },
+                    ChecklistItemDraft {
+                        id: None,
+                        text: "書く".to_string(),
+                        checked: false,
+                    },
+                ],
+            )
+            .expect("空の項目があっても保存できる");
+
+        let items = &board.columns[0].cards[0].checklist_items;
+        assert_eq!(
+            items
+                .iter()
+                .map(|item| item.text.as_str())
+                .collect::<Vec<_>>(),
+            ["調べる", "書く"],
+            "名前の入っていない項目は残らない"
         );
+        assert_eq!(
+            items.iter().map(|item| item.position).collect::<Vec<_>>(),
+            [0, 1],
+            "落とした分だけ位置は詰まる"
+        );
+    }
+
+    /// 保存済みの項目の名前を空にして渡したら、その項目が消える（#114）。
+    #[test]
+    fn removes_a_saved_checklist_item_whose_text_was_cleared() {
+        let mut board = Board::fixture();
+        let card_id = board.columns[0].cards[0].id;
+        let kept = board.add_checklist_item(card_id, "残す").unwrap();
+        let cleared = board.add_checklist_item(card_id, "消す").unwrap();
+
+        board
+            .update_card_details_with_checklist(
+                card_id,
+                "タイトル",
+                "",
+                None,
+                Vec::new(),
+                vec![
+                    ChecklistItemDraft {
+                        id: Some(kept),
+                        text: "残す".to_string(),
+                        checked: false,
+                    },
+                    ChecklistItemDraft {
+                        id: Some(cleared),
+                        text: "".to_string(),
+                        checked: false,
+                    },
+                ],
+            )
+            .expect("空にした項目があっても保存できる");
+
+        let items = &board.columns[0].cards[0].checklist_items;
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id, kept);
     }
 
     #[test]

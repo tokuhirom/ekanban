@@ -3,9 +3,12 @@
 // カードの詳細パネルと同じく右に押し出して置きます。扱うのはボード全体のタグ
 // なので、カード 1 枚の話である詳細パネルには混ぜません。
 //
-// **タグの追加・編集・削除はここだけから行います**（`docs/DESIGN.md`「常用しない
+// **タグの編集・削除はここだけから行います**（`docs/DESIGN.md`「常用しない
 // 操作を画面に常時出さない」）。ヘッダにタグを一覧しないのも同じ理由で、
 // 絞り込みはカード上のチップから行います。
+//
+// 追加はここと、カード編集パネルのタグ欄の 2 か所です（ADR 0027）。あちらは
+// 「いま打っているカードに付ける」ためのもので、名前と色を整えるのはここです。
 
 import { useState } from "react";
 
@@ -14,13 +17,7 @@ import type { AppError } from "../ipc/types/AppError";
 import type { Snapshot } from "../ipc/types/Snapshot";
 import type { Tag } from "../ipc/types/Tag";
 import { useAppActions } from "../shell/actions";
-
-/// 新しいタグの既定の色。
-///
-/// **これは直書きの色ではありません**——ユーザーが決めるまでの初期値で、
-/// 決めたあとは `tags.color` がそのまま使われます（直書きが許されるのは
-/// ユーザーが指定したタグの色だけ、`docs/DESIGN.md`）。
-const DEFAULT_TAG_COLOR = "#94a3b8";
+import { DEFAULT_TAG_COLOR } from "./tags";
 
 interface Props {
   tags: readonly Tag[];
