@@ -101,3 +101,4 @@
 | [0019](0019-typescript-react-vite-for-the-webview.md) | 画面は TypeScript + React + Vite で作る | 2026-09-06 | 有効 |
 | [0020](0020-pointer-based-drag-and-drop.md) | D&D はポインタイベントで作り、HTML5 の drag events は使わない | 2026-09-06 | 有効 |
 | [0021](0021-two-layer-testing-for-the-webview.md) | 画面のテストは、ハーネス経由の Playwright と、殻の煙テストに分ける | 2026-09-06 | 有効 |
+| [0022](0022-dnd-kit-core-for-drag-and-drop.md) | D&D は `@dnd-kit/core` 6 系に載せる | 2026-09-06 | 有効 |

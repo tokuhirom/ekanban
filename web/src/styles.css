@@ -260,7 +260,13 @@ textarea {
   /* 横にも縦にもはみ出す。両方の軸で `min-*: 0` が要る。 */
   min-height: 0;
   min-width: 0;
+  /* **`overflow-y: hidden` を明示する。** 片方の軸を `visible` 以外にすると、
+   * もう片方は CSS の仕様で `auto` に計算される。書かずにおくと、カラムが
+   * 縦に伸びたときに**ここが縦スクロールしてしまい**、カラムの中
+   * (`.column-cards`) は永久にスクロールしない。#43 と同じ形の間違いで、
+   * 窓が高いうちは表に出ない。 */
   overflow-x: auto;
+  overflow-y: hidden;
   padding: 12px 16px;
 }
 
@@ -330,6 +336,45 @@ textarea {
  * （`docs/DESIGN.md`）。アーカイブ表示だけは隠す（ADR 0010、段階 7）。 */
 .card[data-dimmed] {
   opacity: 0.4;
+}
+
+/* 選んでいるカード。色だけに意味を持たせないので、枠の太さでも分かるようにする。 */
+.card[data-selected] {
+  border-color: var(--color-info);
+  box-shadow: inset 0 0 0 1px var(--color-info);
+}
+
+/* 掴んでいる間、元の場所は空きとして残す。詰まってしまうと、どこから来て
+ * どこへ行くのかが読めなくなる（§6 の条件 2）。 */
+.card[data-placeholder],
+.column[data-placeholder] {
+  opacity: 0.25;
+}
+
+/* ゴースト。ポインタに付いてくるのはこちらで、OS の描くものではない
+ * （ADR 0020）。掴んだことが分かるように少しだけ持ち上げる。 */
+.card-ghost,
+.column-ghost {
+  cursor: grabbing;
+  box-shadow: 0 8px 20px rgb(0 0 0 / 25%);
+}
+
+.column-ghost {
+  width: 280px;
+  background: var(--color-accent);
+}
+
+.column-header {
+  cursor: grab;
+}
+
+.card {
+  cursor: grab;
+}
+
+/* カードの下の余白も落とし先。空のカラムに入れられなくなるので高さを残す。 */
+.column-cards {
+  min-height: 48px;
 }
 
 .card-title {
