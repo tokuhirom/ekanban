@@ -7,9 +7,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
-import { APP_ACTION } from "./events";
+import { APP_ACTION, BOARD_CHANGED } from "./events";
 import type { Ipc } from "./index";
 import type { AppAction } from "./types/AppAction";
+import type { CaptureTarget } from "./types/CaptureTarget";
 import type { Snapshot } from "./types/Snapshot";
 import type { StartupState } from "./types/StartupState";
 import type { UrlSpan } from "./types/UrlSpan";
@@ -92,6 +93,29 @@ export const tauriIpc: Ipc = {
   descriptionLinks: (text) => invoke<UrlSpan[]>("description_links", { text }),
   openUrl: async (url) => {
     await invoke("open_url", { url });
+  },
+  captureTarget: () => invoke<CaptureTarget | null>("capture_target"),
+  setCaptureColumn: (columnId) => invoke<Snapshot>("set_capture_column", { columnId }),
+  captureCard: (title) => invoke<Snapshot>("capture_card", { title }),
+  quickCaptureSupport: () => invoke<string | null>("quick_capture_support"),
+  setQuickCaptureShortcut: (press) =>
+    invoke<string | null>("set_quick_capture_shortcut_from_key", { press }),
+  closeCaptureWindow: async (focusBoard) => {
+    await invoke("close_capture_window", { focusBoard });
+  },
+  onBoardChanged: (handler) => {
+    let stop: (() => void) | null = null;
+    let stopped = false;
+    void listen<Snapshot>(BOARD_CHANGED, (event) => {
+      handler(event.payload);
+    }).then((unlisten) => {
+      if (stopped) unlisten();
+      else stop = unlisten;
+    });
+    return () => {
+      stopped = true;
+      stop?.();
+    };
   },
   logFrontendError: async (message) => {
     await invoke("log_frontend_error", { message });

@@ -10,13 +10,15 @@ use std::path::{Path, PathBuf};
 
 use ekanban_core::db::{FilterState, WindowBoundsState};
 use ekanban_core::model::{BoardId, CardId, ChecklistItemDraft, ColumnId, TagId};
-use tauri::{AppHandle, State, WebviewWindow};
+use tauri::{AppHandle, Emitter as _, State, WebviewWindow};
 use tauri_plugin_dialog::DialogExt as _;
 use tauri_plugin_opener::OpenerExt as _;
 
 use crate::commands::{self, ExportFormat};
 use crate::error::AppError;
-use crate::snapshot::{Snapshot, StartupState, ThemePreference};
+use crate::events;
+use crate::shortcut::KeyPress;
+use crate::snapshot::{CaptureTarget, Snapshot, StartupState, ThemePreference};
 use crate::state::AppState;
 
 type Reply<T> = Result<T, AppError>;
@@ -380,9 +382,55 @@ pub fn open_url(app: AppHandle, url: String) {
 
 // ---------------------------------------------------------------- キャプチャ
 
+/// クイックキャプチャの入れ先。窓の見出しに出す「〇〇ボード / △△カラム」。
 #[tauri::command]
-pub fn capture_card(state: State<'_, AppState>, title: String) -> Reply<Snapshot> {
-    commands::capture_card(&state, &title)
+pub fn capture_target(state: State<'_, AppState>) -> Reply<Option<CaptureTarget>> {
+    commands::capture_target(&state)
+}
+
+/// 開いているボードのカラムをキャプチャ先にする。`None` で既定に戻す。
+#[tauri::command]
+pub fn set_capture_column(
+    state: State<'_, AppState>,
+    column_id: Option<ColumnId>,
+) -> Reply<Snapshot> {
+    commands::set_capture_column(&state, column_id)
+}
+
+/// この環境でグローバルホットキーを使えるか。使えないなら理由。
+#[tauri::command]
+pub fn quick_capture_support() -> Option<String> {
+    crate::shortcut::platform_support().err()
+}
+
+/// 割り当てを差し替える。`None` で解除。保存された形が返る。
+#[tauri::command]
+pub fn set_quick_capture_shortcut_from_key(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    press: Option<KeyPress>,
+) -> Reply<Option<String>> {
+    crate::capture::set(&app, &state, press)
+}
+
+/// キャプチャの窓を閉じる。
+///
+/// 盤面には触らないので `commands` に置き場所がありません。窓の操作だけです。
+#[tauri::command]
+pub fn close_capture_window(app: AppHandle, focus_board: bool) {
+    crate::capture::close(&app, focus_board);
+}
+
+#[tauri::command]
+pub fn capture_card(app: AppHandle, state: State<'_, AppState>, title: String) -> Reply<Snapshot> {
+    let snapshot = commands::capture_card(&state, &title)?;
+    // ボードの窓は、自分が呼んでいないこの変更を知らない（§3）。
+    if let Err(error) = app.emit_to(crate::run::BOARD_WINDOW, events::BOARD_CHANGED, &snapshot) {
+        ekanban_core::diagnostics::log(&format!(
+            "failed to tell the board about a capture: {error}"
+        ));
+    }
+    Ok(snapshot)
 }
 
 #[tauri::command]

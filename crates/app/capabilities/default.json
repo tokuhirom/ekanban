@@ -2,6 +2,6 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "ボードのウィンドウが webview から使えるもの。使うものだけを並べる（docs/TAURI-MIGRATION.md §9）。",
-  "windows": ["board"],
+  "windows": ["board", "capture"],
   "permissions": ["core:event:default"]
 }

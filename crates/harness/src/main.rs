@@ -20,6 +20,7 @@ use std::path::PathBuf;
 
 use ekanban_app::commands::{self, ExportFormat};
 use ekanban_app::error::{AppError, ErrorKind};
+use ekanban_app::shortcut::{KeyPress, Shortcut};
 use ekanban_app::{AppState, ThemePreference};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -280,6 +281,23 @@ fn invoke(command: &str, args: Value, state: &AppState) -> Result<Value, AppErro
     struct Url {
         url: String,
     }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct CaptureColumn {
+        // ここの `ColumnId` はモデルのほう。すぐ上の `ColumnId` は、引数を
+        // 1 つだけ受け取るための入れ物で、別のもの。
+        column_id: Option<ekanban_core::model::ColumnId>,
+    }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Title {
+        title: String,
+    }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Press {
+        press: Option<KeyPress>,
+    }
 
     match command {
         "startup_state" => ok(commands::startup_state(state)?),
@@ -426,6 +444,35 @@ fn invoke(command: &str, args: Value, state: &AppState) -> Result<Value, AppErro
         // 何も起きないことだけが本物と違う。
         "reveal_path" | "reveal_database" | "reveal_backups" => ok(()),
         "description_links" => ok(commands::description_links(&read::<Text>(args)?.text)),
+        "capture_target" => ok(commands::capture_target(state)?),
+        "set_capture_column" => ok(commands::set_capture_column(
+            state,
+            read::<CaptureColumn>(args)?.column_id,
+        )?),
+        "capture_card" => ok(commands::capture_card(state, &read::<Title>(args)?.title)?),
+        // ブラウザにグローバルホットキーはありません。登録できるかどうかは
+        // 本物の窓の話なので、ここでは「使える」ことにして、割り当ての読み取りと
+        // 保存だけを本物と同じ経路に通します。
+        "quick_capture_support" => ok(Option::<String>::None),
+        "set_quick_capture_shortcut" => {
+            let press = read::<Press>(args)?.press;
+            let stored = match press {
+                Some(press) => Some(
+                    Shortcut::from_key_press(&press)
+                        .map_err(|error| {
+                            AppError::new(
+                                ErrorKind::Shortcut,
+                                "ショートカットを割り当てられません",
+                                error.to_string(),
+                            )
+                        })?
+                        .to_string(),
+                ),
+                None => None,
+            };
+            commands::set_quick_capture_shortcut(state, stored.as_deref())?;
+            ok(stored)
+        }
         // 開く先のブラウザが、すでにブラウザ。記録だけ残す。
         "open_url" => {
             let url = read::<Url>(args)?.url;

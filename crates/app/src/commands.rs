@@ -637,6 +637,30 @@ fn read_capture_target(database: &mut Database) -> Result<Option<CaptureTarget>,
     }
 }
 
+/// いまのキャプチャ先。設定が無い・消えているときは既定に落とす。
+///
+/// 既定は**開いているボードの先頭カラム**です（gpui 版の `resolve_capture_target`
+/// と同じ）。決まっていないから足せない、にはしません——キャプチャは 1 行を
+/// 放り込むためのもので、そこで設定を求めると用が足りません。
+///
+/// 設定が指していたカラムが消えていたら、黙って設定を消して既定に戻します。
+/// 次のキャプチャを失敗させないためです。
+pub fn capture_target(state: &AppState) -> Result<Option<CaptureTarget>, AppError> {
+    let mut database = state.database().map_err(|error| {
+        AppError::from_db(ErrorKind::BoardIo, "キャプチャ先を読めませんでした", &error)
+    })?;
+    if let Some(target) = read_capture_target(&mut database)? {
+        return Ok(Some(target));
+    }
+    let board = state.lock();
+    Ok(board.columns.first().map(|column| CaptureTarget {
+        board_id: board.id,
+        column_id: column.id,
+        board_name: board.name.clone(),
+        column_name: column.name.clone(),
+    }))
+}
+
 /// クイックキャプチャからカードを 1 枚足す。
 ///
 /// **ボードと同じ保存経路に乗せます**（§9）——カラムの末尾に足し、Undo の対象に
@@ -647,13 +671,24 @@ pub fn capture_card(state: &AppState, title: &str) -> Result<Snapshot, AppError>
     let mut database = state
         .database()
         .map_err(|error| AppError::from_db(ErrorKind::Save, FAILED, &error))?;
-    let target = read_capture_target(&mut database)?.ok_or_else(|| {
-        AppError::new(
-            ErrorKind::Save,
-            FAILED,
-            "カードの追加先が決まっていません。ボードのメニューから選んでください",
-        )
-    })?;
+    let target = read_capture_target(&mut database)?
+        .or_else(|| {
+            // 設定が無ければ既定（開いているボードの先頭カラム）へ。
+            let board = state.lock();
+            board.columns.first().map(|column| CaptureTarget {
+                board_id: board.id,
+                column_id: column.id,
+                board_name: board.name.clone(),
+                column_name: column.name.clone(),
+            })
+        })
+        .ok_or_else(|| {
+            AppError::new(
+                ErrorKind::Save,
+                FAILED,
+                "カードの追加先が決まっていません。ボードにカラムを 1 つ足してください",
+            )
+        })?;
 
     if title.trim().is_empty() {
         return Err(AppError::from_board(FAILED, &BoardError::EmptyCardTitle));
@@ -688,8 +723,21 @@ pub fn set_capture_target(
     )
 }
 
+/// 開いているボードのカラムを、キャプチャ先にする。`None` で既定に戻す。
+///
+/// 画面はカラムしか知らないので、ボードを足すのはここです。返すスナップショットで
+/// 「⚡ クイックキャプチャ先」の印が動きます。
+pub fn set_capture_column(
+    state: &AppState,
+    column_id: Option<ColumnId>,
+) -> Result<Snapshot, AppError> {
+    let target = column_id.map(|column_id| (state.lock().id, column_id));
+    set_capture_target(state, target)?;
+    state.snapshot()
+}
+
 /// 割り当てを覚える。**登録できなかった割り当ては保存しません**（§9）ので、
-/// 呼ぶ側が登録に成功してからここを呼びます。
+/// 呼ぶ側が登録に成功してからここを呼びます。読めない文字列はここで断ります。
 pub fn set_quick_capture_shortcut(
     state: &AppState,
     shortcut: Option<&str>,

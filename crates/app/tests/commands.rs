@@ -658,11 +658,20 @@ fn quick_capture_writes_to_a_board_that_is_not_open() {
 }
 
 #[test]
-fn quick_capture_says_so_when_no_target_has_been_chosen() {
+fn quick_capture_falls_back_to_the_first_column_when_no_target_has_been_chosen() {
     let harness = Harness::open();
-    let error = commands::capture_card(&harness.state, "行き先がない").expect_err("refused");
-    assert_eq!(error.kind, ErrorKind::Save);
-    assert!(error.detail.contains("追加先"));
+    // 決まっていないから足せない、にはしない。キャプチャは 1 行を放り込む
+    // ためのもので、そこで設定を求めると用が足りない（gpui 版と同じ既定）。
+    commands::capture_card(&harness.state, "行き先を決めていない").expect("the card is added");
+
+    let stored = harness.stored();
+    assert_eq!(
+        stored.columns[0]
+            .cards
+            .last()
+            .map(|card| card.title.as_str()),
+        Some("行き先を決めていない")
+    );
 }
 
 /// キャプチャ先のカラムが消えていたら、黙って未設定に戻す。起動を妨げない。
@@ -682,12 +691,13 @@ fn a_capture_target_that_no_longer_exists_falls_back_to_none() {
 #[test]
 fn the_quick_capture_shortcut_is_remembered_as_it_was_given() {
     let harness = Harness::open();
-    commands::set_quick_capture_shortcut(&harness.state, Some("CommandOrControl+Shift+N"))
-        .expect("stored");
+    // 保存の形は gpui 版のまま。**旧いデータベースの割り当てをそのまま読める
+    // ことが、この形を変えない理由**（`shortcut.rs`）。
+    commands::set_quick_capture_shortcut(&harness.state, Some("ctrl-shift-n")).expect("stored");
 
     let (_, startup) = commands::load_startup_state(&harness.path).expect("the state is read");
     assert_eq!(
         startup.quick_capture_shortcut.as_deref(),
-        Some("CommandOrControl+Shift+N")
+        Some("ctrl-shift-n")
     );
 }

@@ -64,6 +64,9 @@ export interface BoardState {
   /** そのカラムに新しいカードを足す下書きを開く。まだ何も保存しない（§2）。 */
   newCard: (columnId: number) => void;
   closePanel: () => void;
+  /** 保存されているクイックキャプチャの割り当て。無ければ `null`。 */
+  quickCaptureShortcut: string | null;
+  setQuickCaptureShortcut: (shortcut: string | null) => void;
   /** アーカイブ表示。盤面の代わりに、アーカイブしたカードを並べる（ADR 0010）。 */
   showArchived: boolean;
   toggleArchive: () => void;
@@ -114,6 +117,7 @@ export function useBoardState(): BoardState {
   // 表示だけの状態なので、覚えません。次に開いたときは盤面から始めます
   // （gpui 版と同じ）。
   const [showArchived, setShowArchived] = useState(false);
+  const [quickCaptureShortcut, setQuickCaptureShortcut] = useState<string | null>(null);
 
   const report = useCallback(
     (what: string, error: unknown) => {
@@ -160,6 +164,7 @@ export function useBoardState(): BoardState {
         setPlatform(startup.platform);
         setThemeValue(startup.theme);
         applyTheme(startup.theme);
+        setQuickCaptureShortcut(startup.quickCaptureShortcut);
       })
       .catch((error: unknown) => {
         if (!cancelled) report("ボードを読み込めませんでした", error);
@@ -168,6 +173,10 @@ export function useBoardState(): BoardState {
       cancelled = true;
     };
   }, [ipc, report]);
+
+  // クイックキャプチャが書いたとき、盤面はこちらが呼んでいないところで変わる
+  // （§3）。**差し替えは `run` と同じ 1 本**で、届いた盤面をそのまま載せる。
+  useEffect(() => ipc.onBoardChanged(setSnapshot), [ipc]);
 
   // 検索語が変わるたびに一致する ID を Rust に聞く。**同じ判定を
   // TypeScript にもう 1 つ持たない**（§5）。返るのは ID の配列だけなので、
@@ -385,6 +394,8 @@ export function useBoardState(): BoardState {
     alert,
     dismissAlert,
     notify,
+    quickCaptureShortcut,
+    setQuickCaptureShortcut,
     showArchived,
     toggleArchive,
     restoreCard,

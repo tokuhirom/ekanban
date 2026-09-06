@@ -7,7 +7,7 @@ use std::sync::{Mutex, PoisonError};
 
 use chrono::Local;
 use ekanban_core::db::{Database, DbError};
-use ekanban_core::model::{Board, BoardError};
+use ekanban_core::model::{Board, BoardError, ColumnId};
 
 use crate::error::{AppError, ErrorKind};
 use crate::snapshot::{due_statuses_of, window_title, Snapshot};
@@ -114,6 +114,23 @@ impl AppState {
     }
 }
 
+/// クイックキャプチャの入れ先が、このボードのどのカラムか。
+///
+/// 設定が指しているカラムがこのボードにあればそれ、別のボードなら `None`、
+/// 設定が無い（または消えている）なら既定の先頭カラム。gpui 版の
+/// `resolve_capture_target` と同じ落とし方です。
+fn capture_column_of(board: &Board, database: &Database) -> Option<ColumnId> {
+    let default = || board.columns.first().map(|column| column.id);
+    match database.load_capture_target().unwrap_or(None) {
+        Some((board_id, _)) if board_id != board.id => None,
+        Some((_, column_id)) if board.columns.iter().any(|column| column.id == column_id) => {
+            Some(column_id)
+        }
+        // このボードを指しているのにカラムが無い。既定に落とす。
+        Some(_) | None => default(),
+    }
+}
+
 pub(crate) fn snapshot_of(board: &Board, database: &Database) -> Result<Snapshot, DbError> {
     let today = Local::now().date_naive();
     Ok(Snapshot {
@@ -123,6 +140,7 @@ pub(crate) fn snapshot_of(board: &Board, database: &Database) -> Result<Snapshot
         can_redo: board.can_redo(),
         due_statuses: due_statuses_of(board, today),
         today,
+        capture_column: capture_column_of(board, database),
         window_title: window_title(&board.name),
     })
 }

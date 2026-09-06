@@ -6,8 +6,10 @@
 // 画面の振る舞いを Playwright から確かめる道が閉じます。
 
 import type { AppAction } from "./types/AppAction";
+import type { CaptureTarget } from "./types/CaptureTarget";
 import type { ChecklistItemDraft } from "./types/ChecklistItemDraft";
 import type { ExportFormat } from "./types/ExportFormat";
+import type { KeyPress } from "./types/KeyPress";
 import type { FilterState } from "./types/FilterState";
 import type { Snapshot } from "./types/Snapshot";
 import type { StartupState } from "./types/StartupState";
@@ -92,6 +94,20 @@ export interface Ipc {
   descriptionLinks(text: string): Promise<UrlSpan[]>;
   /** 説明の中のリンクをブラウザで開く。 */
   openUrl(url: string): Promise<void>;
+  /** クイックキャプチャの入れ先。設定が無ければ既定（先頭カラム）が返る。 */
+  captureTarget(): Promise<CaptureTarget | null>;
+  /** 開いているボードのカラムを入れ先にする。`null` で既定に戻す。 */
+  setCaptureColumn(columnId: number | null): Promise<Snapshot>;
+  /** 1 行のキャプチャ。ボードと同じ保存経路に乗る（§9）。 */
+  captureCard(title: string): Promise<Snapshot>;
+  /** 割り当てを使えない環境なら、その理由。使えるなら `null`。 */
+  quickCaptureSupport(): Promise<string | null>;
+  /** 押されたキーを割り当てにする。`null` で解除。保存された形が返る。 */
+  setQuickCaptureShortcut(press: KeyPress | null): Promise<string | null>;
+  /** キャプチャの窓を閉じる。`focusBoard` でボードを前に出す（ADR 0012）。 */
+  closeCaptureWindow(focusBoard: boolean): Promise<void>;
+  /** ほかの窓が盤面を変えたときに届く（§3）。返るのは購読をやめる関数。 */
+  onBoardChanged(handler: (snapshot: Snapshot) => void): () => void;
   /** webview の未捕捉例外を Rust 側と同じログに落とす（§9）。 */
   logFrontendError(message: string): Promise<void>;
 }

@@ -79,12 +79,14 @@ pub fn run() {
     // 矩形を覚える先。動かしている間の値をまとめて、静まってから 1 回書く。
     let bounds = Arc::new(BoundsSaver::spawn(path.clone()));
     let saved_bounds = startup.window_bounds;
+    let saved_shortcut = startup.quick_capture_shortcut.clone();
     let bounds_for_events = Arc::clone(&bounds);
 
     let app = tauri::Builder::default()
         // ファイルを選ばせるのと、場所を開くのに使う（§9）。どちらも Rust から
         // 呼ぶので、webview に権限は開けていません。
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .manage(state)
         .menu(menu::build)
@@ -110,6 +112,13 @@ pub fn run() {
             if let Some(window) = app.get_webview_window(BOARD_WINDOW) {
                 crate::window::restore(&window, saved_bounds);
                 window.show()?;
+            }
+            // 保存されている割り当てを登録する。登録できなくても起動は続け、
+            // 理由は記録に残す（設定は消さない、§9）。
+            if let Some(reason) =
+                crate::capture::register_saved(app.handle(), saved_shortcut.as_deref())
+            {
+                diagnostics::log(&format!("quick capture is not registered: {reason}"));
             }
             Ok(())
         })
@@ -159,8 +168,13 @@ pub fn run() {
             ipc::description_links,
             ipc::open_url,
             ipc::capture_card,
+            ipc::capture_target,
             ipc::set_capture_target,
+            ipc::set_capture_column,
+            ipc::quick_capture_support,
             ipc::set_quick_capture_shortcut,
+            ipc::set_quick_capture_shortcut_from_key,
+            ipc::close_capture_window,
             ipc::log_frontend_error,
         ])
         .build(tauri::generate_context!());

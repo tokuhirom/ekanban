@@ -26,6 +26,7 @@ import { useAppActions, useAppActionSource } from "../shell/actions";
 import { AlertDialog, ConfirmDialog, PromptDialog } from "../shell/Dialog";
 import { useFileActions } from "../shell/files";
 import { targetOf, undoIntent } from "../shell/keys";
+import { ShortcutDialog } from "../shell/ShortcutDialog";
 import { useBoardState } from "../state/board";
 import { CardFace, CardMenu } from "./Card";
 import { Column } from "./Column";
@@ -89,6 +90,9 @@ export function Board() {
   const [cardMenu, setCardMenu] = useState<{ cardId: number; x: number; y: number } | null>(null);
   const [addingColumn, setAddingColumn] = useState(false);
   const [about, setAbout] = useState(false);
+  // 割り当てのダイアログ。使えない環境なら理由を持って開く（押せる項目は
+  // メニュー側で灰色になっているが、そこを通らない道もある）。
+  const [shortcutDialog, setShortcutDialog] = useState<{ unavailable: string | null } | null>(null);
   const searchInput = useRef<HTMLInputElement>(null);
   const files = useFileActions(state.notify);
 
@@ -140,6 +144,16 @@ export function Board() {
     },
     exportBoardMarkdown: () => {
       files.exportBoard("markdown");
+    },
+    setQuickCaptureShortcut: () => {
+      void ipc
+        .quickCaptureSupport()
+        .then((unavailable) => {
+          setShortcutDialog({ unavailable });
+        })
+        .catch(() => {
+          setShortcutDialog({ unavailable: null });
+        });
     },
     backupDatabase: files.backupDatabase,
     revealDatabase: files.revealDatabase,
@@ -426,6 +440,7 @@ export function Board() {
                   matched={state.matched}
                   selectedCard={selectedCard}
                   lastColumn={board.columns.length <= 1}
+                  captureTarget={state.snapshot?.captureColumn === column.id}
                   run={run}
                   onSelectCard={selectCard}
                   onOpenCard={openCard}
@@ -575,6 +590,16 @@ export function Board() {
           detail={state.alert.detail}
           action={state.alert.action}
           onDismiss={state.dismissAlert}
+        />
+      )}
+      {shortcutDialog !== null && (
+        <ShortcutDialog
+          current={state.quickCaptureShortcut}
+          unavailable={shortcutDialog.unavailable}
+          onChanged={state.setQuickCaptureShortcut}
+          onClose={() => {
+            setShortcutDialog(null);
+          }}
         />
       )}
       {about && (

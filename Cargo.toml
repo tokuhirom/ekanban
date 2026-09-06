@@ -36,6 +36,9 @@ tauri = { version = "2.11.5", features = ["devtools"] }
 tauri-build = { version = "2.6.3", features = [] }
 # ファイルの選択と、場所を開くこと (`docs/TAURI-MIGRATION.md` §9)。
 tauri-plugin-dialog = "2.7.3"
+# クイックキャプチャのグローバルホットキー。中身は gpui 版が直接使っていた
+# `global-hotkey` と同じ tauri-apps のクレート (ADR 0012 の制約もそのまま)。
+tauri-plugin-global-shortcut = "2.3.2"
 tauri-plugin-opener = "2.5.5"
 
 # 開発用ハーネスの HTTP。非同期ランタイムを持ち込まない小さいものを選ぶ。

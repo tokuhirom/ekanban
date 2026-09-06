@@ -49,6 +49,7 @@ pub enum AppAction {
     FocusSearch,
     ToggleBoardList,
     ToggleArchiveView,
+    SetQuickCaptureShortcut,
     UseLightTheme,
     UseDarkTheme,
     UseSystemTheme,
@@ -111,6 +112,7 @@ impl AppAction {
             Self::FocusSearch => "focusSearch",
             Self::ToggleBoardList => "toggleBoardList",
             Self::ToggleArchiveView => "toggleArchiveView",
+            Self::SetQuickCaptureShortcut => "setQuickCaptureShortcut",
             Self::UseLightTheme => "useLightTheme",
             Self::UseDarkTheme => "useDarkTheme",
             Self::UseSystemTheme => "useSystemTheme",
@@ -151,6 +153,7 @@ const ACTIONS: &[Action] = &[
     Action::App(AppAction::FocusSearch),
     Action::App(AppAction::ToggleBoardList),
     Action::App(AppAction::ToggleArchiveView),
+    Action::App(AppAction::SetQuickCaptureShortcut),
     Action::App(AppAction::UseLightTheme),
     Action::App(AppAction::UseDarkTheme),
     Action::App(AppAction::UseSystemTheme),
@@ -189,23 +192,50 @@ pub enum Item {
     /// 自分で持つ項目。`accelerator` は muda の書き方（`"CmdOrCtrl+N"`）。
     Action {
         action: Action,
-        label: &'static str,
+        /// 文言。**使えない項目では理由まで入ります**——灰色の項目は押せず、
+        /// 理由を出す先が無いためです（gpui 版と同じ）。
+        label: String,
         accelerator: Option<&'static str>,
+        /// 押せるか。使えない環境の項目は灰色にして、消しはしません。
+        /// 消すと「この機能はこのアプリに無い」に見えます。
+        enabled: bool,
     },
     Predefined(Predefined),
     Separator,
 }
 
-fn action(action: Action, label: &'static str, accelerator: Option<&'static str>) -> Item {
+fn action(action: Action, label: &str, accelerator: Option<&'static str>) -> Item {
     Item::Action {
         action,
-        label,
+        label: label.to_string(),
         accelerator,
+        enabled: true,
     }
 }
 
-fn app(kind: AppAction, label: &'static str, accelerator: Option<&'static str>) -> Item {
+fn app(kind: AppAction, label: &str, accelerator: Option<&'static str>) -> Item {
     action(Action::App(kind), label, accelerator)
+}
+
+/// 「クイックキャプチャのショートカット…」。
+///
+/// 使えない環境では灰色にし、**理由を文言に入れます**。灰色の項目は押せないので、
+/// 押したときに理由を出す道がありません（gpui 版と同じ）。判定は起動中に変わり
+/// ません。
+fn quick_capture_item() -> Item {
+    match crate::shortcut::platform_support() {
+        Ok(()) => app(
+            AppAction::SetQuickCaptureShortcut,
+            "クイックキャプチャのショートカット…",
+            None,
+        ),
+        Err(reason) => Item::Action {
+            action: Action::App(AppAction::SetQuickCaptureShortcut),
+            label: format!("クイックキャプチャのショートカット…（{reason}）"),
+            accelerator: None,
+            enabled: false,
+        },
+    }
 }
 
 /// メニューバーの 1 つぶん。
@@ -237,6 +267,8 @@ fn macos_sections() -> Vec<Section> {
             name: "ekanban",
             items: vec![
                 Item::Predefined(Predefined::About),
+                Item::Separator,
+                quick_capture_item(),
                 Item::Separator,
                 Item::Predefined(Predefined::Services),
                 Item::Separator,
@@ -379,6 +411,8 @@ fn drawn_sections() -> Vec<Section> {
         Section {
             name: "ヘルプ",
             items: vec![
+                quick_capture_item(),
+                Item::Separator,
                 app(AppAction::BackupDatabase, "データベースをコピー…", None),
                 app(
                     AppAction::RevealDatabase,
@@ -451,6 +485,11 @@ fn view_items(board_list: Option<&'static str>, fullscreen: Item) -> Vec<Item> {
             "ボード一覧の表示を切り替え",
             board_list,
         ),
+        app(
+            AppAction::ToggleArchiveView,
+            "アーカイブ表示を切り替え",
+            Some("CmdOrCtrl+Shift+A"),
+        ),
         Item::Separator,
         app(AppAction::UseLightTheme, "ライトモード", None),
         app(AppAction::UseDarkTheme, "ダークモード", None),
@@ -477,8 +516,9 @@ fn submenu<R: Runtime>(app_handle: &AppHandle<R>, section: &Section) -> tauri::R
                 action,
                 label,
                 accelerator,
+                enabled,
             } => {
-                let mut item = MenuItemBuilder::with_id(action.id(), *label);
+                let mut item = MenuItemBuilder::with_id(action.id(), label).enabled(*enabled);
                 if let Some(accelerator) = accelerator {
                     item = item.accelerator(*accelerator);
                 }
@@ -580,6 +620,45 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    /// **画面が引き受ける操作は、どちらのメニューバーにも出ていること。**
+    ///
+    /// 足したのに並べ忘れると、dispatcher にだけ手が入って、押す道がどこにも
+    /// 無い操作が残ります（実際に「アーカイブ表示を切り替え」でそうなりました）。
+    #[test]
+    fn puts_every_app_action_on_both_menu_bars() {
+        for (bar, sections) in [("macOS", macos_sections()), ("drawn", drawn_sections())] {
+            let on_the_bar = actions_of(&sections);
+            for action in ACTIONS {
+                let Action::App(app_action) = action else {
+                    continue;
+                };
+                // 「ekanbanについて」だけは macOS では OS の項目が出す。
+                if *app_action == AppAction::About && bar == "macOS" {
+                    continue;
+                }
+                assert!(
+                    on_the_bar.contains(action),
+                    "{} is not on the {bar} menu bar",
+                    app_action.id()
+                );
+            }
+        }
+    }
+
+    /// ウィンドウの操作は、どちらかのメニューバーから届くこと。
+    ///
+    /// macOS では OS の項目（閉じる・終了・フルスクリーン）が持つので、自前の
+    /// 項目は macOS 以外にだけ出ます。
+    #[test]
+    fn reaches_every_window_action_from_the_drawn_menu_bar() {
+        let drawn = actions_of(&drawn_sections());
+        for action in ACTIONS {
+            if let Action::Window(_) = action {
+                assert!(drawn.contains(action), "{} has no menu item", action.id());
+            }
+        }
     }
 
     /// 押された id から引き当てられること。`from_id` が読む一覧に漏れがあると、
