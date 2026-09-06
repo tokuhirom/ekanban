@@ -7,7 +7,7 @@ use std::sync::{Mutex, PoisonError};
 
 use chrono::Local;
 use ekanban_core::db::{Database, DbError};
-use ekanban_core::model::{Board, BoardError, ColumnId};
+use ekanban_core::model::{Board, BoardError, BoardSummary, ColumnId};
 
 use crate::error::{AppError, ErrorKind};
 use crate::snapshot::{due_statuses_of, window_title, Snapshot};
@@ -116,32 +116,52 @@ impl AppState {
 
 /// クイックキャプチャの入れ先が、このボードのどのカラムか。
 ///
-/// 設定が指しているカラムがこのボードにあればそれ、別のボードなら `None`、
-/// 設定が無い（または消えている）なら既定の先頭カラム。gpui 版の
-/// `resolve_capture_target` と同じ落とし方です。
-fn capture_column_of(board: &Board, database: &Database) -> Option<ColumnId> {
-    let default = || board.columns.first().map(|column| column.id);
+/// 設定が指しているカラムがこのボードにあればそれ、別のボードなら `None`。
+/// 設定が無ければ既定で、それは**先頭のボードの先頭カラム**です（#117、[ADR 0027]）
+/// ——開いているボードから決めていたころは、設定していない状態でどのボードを
+/// 開いても「⚡ クイックキャプチャ先」が出ていました。入れ先はアプリ全体で
+/// 1 つなので、印も 1 か所にしか出ません。
+///
+/// 先頭のボードは `boards`（`load_boards_as_of` の順、`ORDER BY boards.id`）の
+/// 1 つめで、サイドバーの一番上と同じです。**スナップショットが既に読んで
+/// いる一覧をそのまま受けます**——ここでもう 1 回引くと、盤面を変えるたびに
+/// 同じクエリが 2 回走ります。
+///
+/// [ADR 0027]: ../../../docs/adr/0027-a-single-default-quick-capture-target.md
+fn capture_column_of(
+    board: &Board,
+    database: &Database,
+    boards: &[BoardSummary],
+) -> Option<ColumnId> {
+    let first_column = || board.columns.first().map(|column| column.id);
     match database.load_capture_target().unwrap_or(None) {
         Some((board_id, _)) if board_id != board.id => None,
         Some((_, column_id)) if board.columns.iter().any(|column| column.id == column_id) => {
             Some(column_id)
         }
-        // このボードを指しているのにカラムが無い。既定に落とす。
-        Some(_) | None => default(),
+        // このボードを指しているのにカラムが無い。選ばれているのはこのボード
+        // なので、その先頭カラムに落とす。
+        Some(_) => first_column(),
+        // 設定が無い。既定の先頭ボードでなければ、ここには印を出さない。
+        None => match boards.first() {
+            Some(first) if first.id == board.id => first_column(),
+            _ => None,
+        },
     }
 }
 
 pub(crate) fn snapshot_of(board: &Board, database: &Database) -> Result<Snapshot, DbError> {
     let today = Local::now().date_naive();
+    let boards = database.load_boards_as_of(today)?;
     Ok(Snapshot {
         board: board.clone(),
-        boards: database.load_boards_as_of(today)?,
         can_undo: board.can_undo(),
         can_redo: board.can_redo(),
         due_statuses: due_statuses_of(board, today),
         today,
-        capture_column: capture_column_of(board, database),
+        capture_column: capture_column_of(board, database, &boards),
         window_title: window_title(&board.name),
+        boards,
     })
 }
 

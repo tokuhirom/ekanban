@@ -7,7 +7,7 @@
 // 動かしているのは本物の webview ではありません（ADR 0021）。エンジンの系統
 // （Chromium と WebKit）の差はここで出ますが、platform 層の差は出ません。
 
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
 import { invoke, openBoard, startHarness, stopHarness } from "./harness";
 
@@ -40,6 +40,27 @@ async function storedTitles(): Promise<string[]> {
 async function openFirstCard(page: Page) {
   await page.locator(".column").first().locator(".card").first().dblclick();
   await expect(page.locator(".card-panel")).toBeVisible();
+}
+
+/// 掴んで運ぶ。**HTML5 の drag events は使わない**ので、ポインタを自分で動かす
+/// （ADR 0020）。1 回で飛ばすと掴んだと判定されないため、刻んで動かす。
+async function dragTo(page: Page, from: Locator, to: Locator) {
+  const start = await from.boundingBox();
+  const end = await to.boundingBox();
+  if (start === null || end === null) throw new Error("画面に出ていません");
+  const at = { x: start.x + start.width / 2, y: start.y + start.height / 2 };
+  const target = { x: end.x + end.width / 2, y: end.y + end.height / 2 };
+  await page.mouse.move(at.x, at.y);
+  await page.mouse.down();
+  const steps = 12;
+  for (let i = 1; i <= steps; i += 1) {
+    await page.mouse.move(
+      at.x + ((target.x - at.x) * i) / steps,
+      at.y + ((target.y - at.y) * i) / steps,
+    );
+    await page.waitForTimeout(16);
+  }
+  await page.mouse.up();
 }
 
 // ---------------------------------------------------------------- カード
@@ -175,19 +196,47 @@ test("期限の近道を押すと、その日付が入って保存される", as
     .toBe(today);
 });
 
-test("読めない期限は、欄の脇で断られる", async ({ page }) => {
+/// 期限はカレンダーから選ぶ欄（#120）。`type="date"` なので、打ち込める形は
+/// `"YYYY-MM-DD"` だけ。ポップアップそのものは OS が出すので、ここでは見られない。
+test("カレンダーの欄に入れた日付が、そのまま保存される", async ({ page }) => {
   await openBoard(page);
   await openFirstCard(page);
+  const cardId = Number(
+    await page.locator(".column").first().locator(".card").first().getAttribute("data-card"),
+  );
 
-  await page.locator(".card-due-input").fill("きのう");
+  await expect(page.locator(".card-due-input")).toHaveAttribute("type", "date");
+  await page.locator(".card-due-input").fill("2026-12-31");
   await page.locator(".save-card").click();
 
-  // 断るのは Rust。`Validation` は入力欄の脇に出し、ダイアログには上げない
-  // （`docs/DESIGN.md`「コマンドとイベント」、ADR 0016）。値は打ち直せるように残す。
-  await expect(page.locator(".card-panel .field-error")).toBeVisible();
-  await expect(page.locator(".dialog")).toHaveCount(0);
-  await expect(page.locator(".card-panel")).toBeVisible();
-  await expect(page.locator(".card-due-input")).toHaveValue("きのう");
+  await expect
+    .poll(async () =>
+      (await storedBoard()).columns
+        .flatMap((column) => column.cards)
+        .find((card) => card.id === cardId)?.dueDate,
+    )
+    .toBe("2026-12-31");
+});
+
+test("「クリア」を押すと期限が外れる", async ({ page }) => {
+  await openBoard(page);
+  await openFirstCard(page);
+  const cardId = Number(
+    await page.locator(".column").first().locator(".card").first().getAttribute("data-card"),
+  );
+
+  await page.locator(".card-due-input").fill("2026-12-31");
+  await page.getByRole("button", { name: "クリア", exact: true }).click();
+  await expect(page.locator(".card-due-input")).toHaveValue("");
+  await page.locator(".save-card").click();
+
+  await expect
+    .poll(async () =>
+      (await storedBoard()).columns
+        .flatMap((column) => column.cards)
+        .find((card) => card.id === cardId)?.dueDate,
+    )
+    .toBeNull();
 });
 
 // ---------------------------------------------------------------- チェックリスト
@@ -225,18 +274,67 @@ test("チェックリストの項目を足し、並べ替え、チェックで�
     ]);
 });
 
-test("中身の無いチェックリスト項目があるうちは保存できない", async ({ page }) => {
+/// 名前を入れないままの項目があっても保存でき、その項目は残らない（#114）。
+test("項目名を入れないままの行は、保存のときに消える", async ({ page }) => {
   await openBoard(page);
   await openFirstCard(page);
+  const cardId = Number(
+    await page.locator(".column").first().locator(".card").first().getAttribute("data-card"),
+  );
+  const before = await page.locator(".checklist-row").count();
 
   await page.locator(".add-checklist-item").click();
-  await expect(page.locator(".save-card")).toBeDisabled();
-  await expect(page.locator(".checklist-row .field-error")).toContainText(
-    "項目名を入力してください",
+  await page.locator(".checklist-text").nth(before).fill("書いた");
+  // 2 行目は空のまま。ここで止められないことが、この issue の受け入れ条件。
+  await page.locator(".add-checklist-item").click();
+  await expect(page.locator(".save-card")).toBeEnabled();
+  await page.locator(".save-card").click();
+
+  await expect
+    .poll(async () =>
+      (await storedBoard()).columns
+        .flatMap((column) => column.cards)
+        .find((card) => card.id === cardId)
+        ?.checklistItems.map((item) => item.text),
+    )
+    .toEqual(["書いた"]);
+});
+
+/// ハンドルを掴んで並べ替える（#113）。落とす位置を決めるのは `draft.ts` で、
+/// 動くのは下書きの配列だけ——落とした瞬間には Rust を呼ばず、保存の 1 回で渡す。
+test("チェックリストの項目を掴んで並べ替えられる", async ({ page }) => {
+  await openBoard(page);
+  await openFirstCard(page);
+  const cardId = Number(
+    await page.locator(".column").first().locator(".card").first().getAttribute("data-card"),
   );
 
-  await page.locator(".checklist-text").last().fill("書いた");
-  await expect(page.locator(".save-card")).toBeEnabled();
+  const before = await page.locator(".checklist-row").count();
+  for (const text of ["いち", "に", "さん"]) {
+    await page.locator(".add-checklist-item").click();
+    await page.locator(".checklist-text").last().fill(text);
+  }
+
+  const rows = page.locator(".checklist-row");
+  // 3 つ目を 1 つ目の位置へ運ぶ。
+  await dragTo(page, rows.nth(before + 2).locator(".checklist-handle"), rows.nth(before));
+  await expect(page.locator(".checklist-text").nth(before)).toHaveValue("さん");
+
+  // **落とした直後はクリックで保存しません。** `@dnd-kit` は落としてから 50ms
+  // のあいだ document の `click` を握りつぶします（`AbstractPointerSensor` の
+  // `detach()`）。人の指では届かない窓ですが、Playwright は届いてしまうので、
+  // ここは打鍵で保存します（タイトル欄の `Enter`、`docs/DESIGN.md`「画面の作り」）。
+  await page.locator(".card-title-input").press("Enter");
+  await expect(page.locator(".card-panel")).toBeHidden();
+
+  await expect
+    .poll(async () =>
+      (await storedBoard()).columns
+        .flatMap((column) => column.cards)
+        .find((card) => card.id === cardId)
+        ?.checklistItems.map((item) => item.text),
+    )
+    .toEqual(["さん", "いち", "に"]);
 });
 
 // ---------------------------------------------------------------- タグ
@@ -258,7 +356,7 @@ test("タグを作り、カードに付け、名前を変えて消せる", async
   const cardId = Number(
     await page.locator(".column").first().locator(".card").first().getAttribute("data-card"),
   );
-  await page.locator(".card-tag-picker").getByRole("button", { name: "あたらしいタグ" }).click();
+  await page.locator(".tag-suggestions").getByRole("button", { name: "あたらしいタグ" }).click();
   await page.locator(".save-card").click();
 
   const tagId = (await storedBoard()).tags.find((tag) => tag.name === "あたらしいタグ")?.id;
@@ -287,6 +385,86 @@ test("タグを作り、カードに付け、名前を変えて消せる", async
   await expect.poll(storedTitles).not.toHaveLength(0);
 });
 
+/// 打った名前のタグが無ければ、その場で作って付ける（#115、ADR 0026）。
+///
+/// 撮影用のシードは 1 枚目のカードに「設計」を付けているので、チップは
+/// 名前で絞って見る。
+test("カードの編集中に、打った名前のタグをその場で作って付けられる", async ({ page }) => {
+  await openBoard(page);
+  await openFirstCard(page);
+  const cardId = Number(
+    await page.locator(".column").first().locator(".card").first().getAttribute("data-card"),
+  );
+
+  await page.locator(".tags-input-field").fill("その場で作った");
+  await page.locator(".tags-input-field").press("Enter");
+  // 作られたタグは、保存する前からチップとして出る。
+  await expect(
+    page.locator(".tags-input-chip").filter({ hasText: "その場で作った" }),
+  ).toHaveCount(1);
+  await expect
+    .poll(async () => (await storedBoard()).tags.map((tag) => tag.name))
+    .toContain("その場で作った");
+
+  await page.locator(".save-card").click();
+
+  const tagId = (await storedBoard()).tags.find((tag) => tag.name === "その場で作った")?.id;
+  await expect
+    .poll(async () =>
+      (await storedBoard()).columns
+        .flatMap((column) => column.cards)
+        .find((card) => card.id === cardId)?.tagIds,
+    )
+    .toContain(tagId);
+});
+
+/// 同じ名前のタグを 2 つ作らない。大文字小文字と前後の空白は同じものとして扱う。
+test("既にある名前を打つと、タグは増えずに選ばれるだけ", async ({ page }) => {
+  await openBoard(page);
+  const before = (await storedBoard()).tags.length;
+
+  await openFirstCard(page);
+  // シードの「調査」は 1 枚目のカードには付いていない。表記を変えて打つ。
+  await page.locator(".tags-input-field").fill("  調査 ");
+  await page.locator(".tags-input-field").press("Enter");
+
+  await expect(page.locator(".tags-input-chip").filter({ hasText: "調査" })).toHaveCount(1);
+  await page.locator(".save-card").click();
+
+  // 打ってからひととおり通しても、タグは増えていない。
+  await expect.poll(async () => (await storedBoard()).tags.length).toBe(before);
+  await expect
+    .poll(async () => (await storedBoard()).tags.filter((tag) => tag.name === "調査").length)
+    .toBe(1);
+});
+
+/// チップの `✕` は「このカードから外す」。タグそのものは残る。
+test("チップの ✕ でカードからタグが外れ、ボードのタグは残る", async ({ page }) => {
+  await openBoard(page);
+  await openFirstCard(page);
+  const cardId = Number(
+    await page.locator(".column").first().locator(".card").first().getAttribute("data-card"),
+  );
+  // シードで「設計」が付いている 1 枚目。
+  await expect(page.locator(".tags-input-chip").filter({ hasText: "設計" })).toHaveCount(1);
+
+  await page.getByLabel("設計 を外す").click();
+  await expect(page.locator(".tags-input-chip").filter({ hasText: "設計" })).toHaveCount(0);
+  await page.locator(".save-card").click();
+
+  const tagId = (await storedBoard()).tags.find((tag) => tag.name === "設計")?.id;
+  await expect
+    .poll(async () =>
+      (await storedBoard()).columns
+        .flatMap((column) => column.cards)
+        .find((card) => card.id === cardId)?.tagIds,
+    )
+    .not.toContain(tagId);
+  await expect
+    .poll(async () => (await storedBoard()).tags.map((tag) => tag.name))
+    .toContain("設計");
+});
+
 test("カードのタグを押すと、そのタグで絞り込む", async ({ page }) => {
   await openBoard(page);
 
@@ -297,7 +475,7 @@ test("カードのタグを押すと、そのタグで絞り込む", async ({ pa
   await page.locator(".open-tag-panel").click();
 
   await openFirstCard(page);
-  await page.locator(".card-tag-picker").getByRole("button", { name: "絞り込み用" }).click();
+  await page.locator(".tag-suggestions").getByRole("button", { name: "絞り込み用" }).click();
   await page.locator(".save-card").click();
   await expect(page.locator(".card-panel")).toBeHidden();
 
@@ -476,6 +654,23 @@ test("ボードを足し、名前を変え、消せる", async ({ page }) => {
   await page.locator(".dialog").getByRole("button", { name: "削除" }).click();
 
   await expect(page.locator(".board-list")).not.toContainText("名前を変えたボード");
+});
+
+/// 一覧のボード名をダブルクリックしても名前を変えられる（#119）。開くのは
+/// `…` の「名前を変更」と同じダイアログ。
+test("ボード一覧の名前をダブルクリックすると、名前を変える画面が開く", async ({ page }) => {
+  await openBoard(page);
+  const name = await page.locator(".board-header .board-name").textContent();
+
+  await page.locator(".board-row").first().dblclick();
+  await expect(page.locator(".dialog")).toContainText("ボードの名前を変更");
+  await expect(page.locator(".dialog-input")).toHaveValue(name ?? "");
+
+  await page.locator(".dialog-input").fill("ダブルクリックで変えた");
+  await page.locator(".dialog-input").press("Enter");
+  await expect(page.locator(".dialog")).toHaveCount(0);
+  await expect(page.locator(".board-list")).toContainText("ダブルクリックで変えた");
+  await expect.poll(async () => (await storedBoard()).name).toBe("ダブルクリックで変えた");
 });
 
 test("空のボード名は受け付けない", async ({ page }) => {

@@ -36,7 +36,6 @@ export const tauriIpc: Ipc = {
   removeColumn: (columnId) => invoke<Snapshot>("remove_column", { columnId }),
   setColumnWipLimit: (columnId, wipLimit) =>
     invoke<Snapshot>("set_column_wip_limit", { columnId, wipLimit }),
-  sortColumnByDueDate: (columnId) => invoke<Snapshot>("sort_column_by_due_date", { columnId }),
   archiveColumn: (columnId) => invoke<Snapshot>("archive_column", { columnId }),
   addTag: (name, color) => invoke<Snapshot>("add_tag", { name, color }),
   renameTag: (tagId, name) => invoke<Snapshot>("rename_tag", { tagId, name }),

@@ -8,6 +8,10 @@
 // gpui 版が「先にカードを足して、タイトルが入るまで保存を保留する」形だったのは、
 // 下書きの置き場所がモデルの中にしか無かったからで、その経路はここで消えます。
 
+import { DndContext, PointerSensor, closestCenter, useSensor, useSensors } from "@dnd-kit/core";
+import type { DragEndEvent } from "@dnd-kit/core";
+import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { useState } from "react";
 
 import { useIpc } from "../ipc";
@@ -17,21 +21,27 @@ import type { Card } from "../ipc/types/Card";
 import type { Field } from "../ipc/types/Field";
 import type { Platform } from "../ipc/types/Platform";
 import type { Snapshot } from "../ipc/types/Snapshot";
+import type { Tag } from "../ipc/types/Tag";
 import { useAppActions } from "../shell/actions";
 import { Description } from "./Description";
 import type { Editing } from "../state/board";
 import {
+  checklistToSend,
   deleteChecklistItem,
   draftIsSavable,
   draftOf,
   emptyDraft,
   moveChecklistItem,
+  newChecklistItem,
   quickDueDates,
+  reorderChecklist,
   setChecklistText,
   toggleChecklistItem,
   toggleTag,
   type CardDraft,
+  type DraftChecklistItem,
 } from "./draft";
+import { DEFAULT_TAG_COLOR, findTagByName, suggestTags } from "./tags";
 
 interface Props {
   board: Board;
@@ -68,6 +78,12 @@ export function CardPanel({
   );
   const [failed, setFailed] = useState<AppError | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  // 押しただけでドラッグが始まらないよう、盤面と同じだけ動かしてから掴んだと
+  // 判定します。行には入力欄があるので、これが無いと文字を選ぶだけの操作が
+  // ドラッグになります。
+  const checklistSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+  );
 
   const savable = draftIsSavable(draft);
 
@@ -91,12 +107,30 @@ export function CardPanel({
             draft.description,
             draft.dueDate,
             draft.tagIds,
-            draft.checklist,
+            checklistToSend(draft.checklist),
           ),
     );
     setFailed(failure);
     // 断られた値は打ち直せるように残す。通ったときだけ閉じる。
     if (failure === null) onClose();
+  }
+
+  /// 打った名前のタグをその場で作り、この下書きに付ける（#115、ADR 0026）。
+  ///
+  /// 作った ID は `add_tag` が返すスナップショットから引きます。`run()` が返すのは
+  /// `Validation` の失敗だけなので、盤面そのものはクロージャの中で受け取ります。
+  /// 色は既定色で、整えるのはタグ整理パネルの仕事です。
+  async function createTag(name: string): Promise<void> {
+    const created: { id: number | null } = { id: null };
+    const failure = await run(async () => {
+      const snapshot = await ipc.addTag(name, DEFAULT_TAG_COLOR);
+      created.id = findTagByName(snapshot.board.tags, name)?.id ?? null;
+      return snapshot;
+    });
+    setFailed(failure);
+    const tagId = created.id;
+    if (failure !== null || tagId === null) return;
+    setDraft((current) => ({ ...current, tagIds: toggleTag(current.tagIds, tagId) }));
   }
 
   const columnName =
@@ -228,15 +262,22 @@ export function CardPanel({
             <label className="field-label" htmlFor="card-due-date">
               期限
             </label>
+            {/* カレンダーのポップアップは webview（＝OS）が出します（#120）。
+                日付選択のライブラリを足さないのは、3 つの webview で見た目と
+                操作を確かめる対象を増やさないため。`value` の形は `""` か
+                `"YYYY-MM-DD"` で、素の欄だったときと変わりません。読めるか
+                どうかの判定は Rust に 1 つだけ置いたままにします。 */}
             <input
               id="card-due-date"
+              type="date"
               className="field-input card-due-input"
               value={draft.dueDate}
-              placeholder="YYYY-MM-DD（空欄で期限なし）"
               onChange={(event) => {
                 setDraft({ ...draft, dueDate: event.target.value });
               }}
             />
+            {/* `type="date"` は placeholder を出さないので、案内は欄の脇に置く。 */}
+            <p className="field-note">空欄で期限なし</p>
             <FieldFailure failure={failed} field="dueDate" />
             <div className="button-row">
               {quickDueDates(today).map((quick) => (
@@ -264,113 +305,91 @@ export function CardPanel({
 
             <span className="field-label">チェックリスト</span>
             <FieldFailure failure={failed} field="checklistItem" />
-            {draft.checklist.map((item, index) => (
-              <div className="checklist-row" key={item.id ?? `new-${index}`}>
-                <button
-                  type="button"
-                  className="secondary checklist-toggle"
-                  aria-pressed={item.checked}
-                  aria-label={`${item.text} を${item.checked ? "外す" : "チェックする"}`}
-                  onClick={() => {
-                    setDraft({ ...draft, checklist: toggleChecklistItem(draft.checklist, index) });
-                  }}
-                >
-                  {item.checked ? "☑" : "□"}
-                </button>
-                <input
-                  className="field-input checklist-text"
-                  value={item.text}
-                  placeholder="項目"
-                  aria-label={`チェックリストの ${index + 1} 番目`}
-                  onChange={(event) => {
-                    setDraft({
-                      ...draft,
-                      checklist: setChecklistText(draft.checklist, index, event.target.value),
-                    });
-                  }}
-                />
-                <button
-                  type="button"
-                  className="ghost"
-                  aria-label="上へ"
-                  disabled={index === 0}
-                  onClick={() => {
-                    setDraft({
-                      ...draft,
-                      checklist: moveChecklistItem(draft.checklist, index, "up"),
-                    });
-                  }}
-                >
-                  ↑
-                </button>
-                <button
-                  type="button"
-                  className="ghost"
-                  aria-label="下へ"
-                  disabled={index + 1 >= draft.checklist.length}
-                  onClick={() => {
-                    setDraft({
-                      ...draft,
-                      checklist: moveChecklistItem(draft.checklist, index, "down"),
-                    });
-                  }}
-                >
-                  ↓
-                </button>
-                <button
-                  type="button"
-                  className="secondary"
-                  aria-label="項目を削除"
-                  onClick={() => {
-                    setDraft({ ...draft, checklist: deleteChecklistItem(draft.checklist, index) });
-                  }}
-                >
-                  削除
-                </button>
-                {item.text.trim() === "" && <FieldError message="項目名を入力してください" />}
-              </div>
-            ))}
+            {/* 掴んで並べ替える（#113）。盤面とは別の `DndContext` です——
+                パネルは盤面の外にあり、落とし先の候補が混ざる意味がありません。
+                **何番目に落ちたかを決めるのは `draft.ts`** で、ライブラリに
+                任せるのは掴む・追う・落とすまで（`docs/DESIGN.md`
+                「ドラッグ＆ドロップ」）。動かすのは下書きの配列だけなので、
+                落とした瞬間に Rust は呼びません。 */}
+            <DndContext
+              sensors={checklistSensors}
+              collisionDetection={closestCenter}
+              onDragEnd={(event: DragEndEvent) => {
+                if (event.over === null) return;
+                setDraft({
+                  ...draft,
+                  checklist: reorderChecklist(
+                    draft.checklist,
+                    String(event.active.id),
+                    String(event.over.id),
+                  ),
+                });
+              }}
+            >
+              <SortableContext
+                items={draft.checklist.map((item) => item.key)}
+                strategy={verticalListSortingStrategy}
+              >
+                {draft.checklist.map((item, index) => (
+                  <ChecklistRow
+                    key={item.key}
+                    item={item}
+                    index={index}
+                    count={draft.checklist.length}
+                    onToggle={() => {
+                      setDraft({
+                        ...draft,
+                        checklist: toggleChecklistItem(draft.checklist, index),
+                      });
+                    }}
+                    onChangeText={(text) => {
+                      setDraft({
+                        ...draft,
+                        checklist: setChecklistText(draft.checklist, index, text),
+                      });
+                    }}
+                    onMove={(direction) => {
+                      setDraft({
+                        ...draft,
+                        checklist: moveChecklistItem(draft.checklist, index, direction),
+                      });
+                    }}
+                    onDelete={() => {
+                      setDraft({
+                        ...draft,
+                        checklist: deleteChecklistItem(draft.checklist, index),
+                      });
+                    }}
+                  />
+                ))}
+              </SortableContext>
+            </DndContext>
             <div className="button-row">
               <button
                 type="button"
                 className="secondary add-checklist-item"
                 onClick={() => {
-                  // まだ保存していない項目は `id` を持ちません。`update_card` が
-                  // `null` を「新しい項目」として読みます。
-                  setDraft({
-                    ...draft,
-                    checklist: [...draft.checklist, { id: null, text: "", checked: false }],
-                  });
+                  // 名前を入れないままにした行は、保存のときに Rust が落とします
+                  // （#114）。消しにいかなくても保存できます。
+                  setDraft({ ...draft, checklist: [...draft.checklist, newChecklistItem()] });
                 }}
               >
                 ＋ 項目を追加
               </button>
             </div>
 
-            <span className="field-label">タグ</span>
-            <div className="button-row card-tag-picker">
-              {board.tags.length === 0 && (
-                <span className="field-note">タグはまだありません（タグ整理から追加）</span>
-              )}
-              {board.tags.map((tag) => {
-                const selected = draft.tagIds.includes(tag.id);
-                return (
-                  <button
-                    key={tag.id}
-                    type="button"
-                    className="secondary"
-                    aria-pressed={selected}
-                    onClick={() => {
-                      setDraft({ ...draft, tagIds: toggleTag(draft.tagIds, tag.id) });
-                    }}
-                  >
-                    {/* 色だけに意味を持たせない。選んであることは印でも書く。 */}
-                    {selected ? "✓ " : ""}
-                    {tag.name}
-                  </button>
-                );
-              })}
-            </div>
+            <span className="field-label" id="card-tags-label">
+              タグ
+            </span>
+            <TagsInput
+              tags={board.tags}
+              selected={draft.tagIds}
+              failure={failed}
+              onToggle={(tagId) => {
+                setDraft({ ...draft, tagIds: toggleTag(draft.tagIds, tagId) });
+              }}
+              onCreate={createTag}
+            />
           </>
         )}
       </div>
@@ -384,6 +403,211 @@ export function CardPanel({
         </button>
       </footer>
     </aside>
+  );
+}
+
+/// カードに付けるタグの欄。選んだタグのチップと、打ち込む欄（#115、ADR 0026）。
+///
+/// **打った名前が既にあるタグならそれを選び、無ければ作って選びます。** 大文字
+/// 小文字と前後の空白は無視して突き合わせるので、同じ名前のタグが 2 つできる
+/// ことはありません。作るところまでをここに置くのは、タグ整理パネルを開いて
+/// 戻ってくる往復が、カードを書いている最中には重すぎるからです。名前の変更・
+/// 色・削除は今までどおりタグ整理パネルにしか置きません。
+///
+/// チップの `✕` は「このカードから外す」で、タグそのものは残ります。
+function TagsInput({
+  tags,
+  selected,
+  failure,
+  onToggle,
+  onCreate,
+}: {
+  tags: readonly Tag[];
+  selected: readonly number[];
+  failure: AppError | null;
+  onToggle: (tagId: number) => void;
+  onCreate: (name: string) => Promise<void>;
+}) {
+  const [typed, setTyped] = useState("");
+  const chips = selected
+    .map((tagId) => tags.find((tag) => tag.id === tagId))
+    .filter((tag): tag is Tag => tag !== undefined);
+  const suggestions = suggestTags(tags, selected, typed);
+
+  /// 打った名前を確定する。既にあれば選ぶだけ、無ければ作る。
+  function commit() {
+    const name = typed.trim();
+    if (name === "") return;
+    const existing = findTagByName(tags, name);
+    setTyped("");
+    if (existing !== null) {
+      if (!selected.includes(existing.id)) onToggle(existing.id);
+      return;
+    }
+    void onCreate(name);
+  }
+
+  return (
+    <>
+      <div className="tags-input">
+        {chips.map((tag) => (
+          <span key={tag.id} className="tag-chip tags-input-chip" style={{ background: tag.color }}>
+            {tag.name}
+            <button
+              type="button"
+              className="tags-input-remove"
+              aria-label={`${tag.name} を外す`}
+              onClick={() => {
+                onToggle(tag.id);
+              }}
+            >
+              ✕
+            </button>
+          </span>
+        ))}
+        <input
+          className="tags-input-field"
+          value={typed}
+          placeholder={chips.length === 0 ? "タグを打って Enter（無ければ作ります）" : ""}
+          aria-labelledby="card-tags-label"
+          onChange={(event) => {
+            setTyped(event.target.value);
+          }}
+          onKeyDown={(event) => {
+            // 1 行の欄なので Enter で確定する（`docs/DESIGN.md`）。IME の変換を
+            // 確定する Enter でタグを作らないよう `isComposing` を見る。
+            if (event.key === "Enter" && !event.nativeEvent.isComposing) {
+              event.preventDefault();
+              commit();
+              return;
+            }
+            // 空の欄での Backspace は末尾のチップを外す。打ち間違えたタグを、
+            // チップまでポインタを運ばずに取り消せるようにする。
+            const last = chips[chips.length - 1];
+            if (event.key === "Backspace" && typed === "" && last !== undefined) {
+              event.preventDefault();
+              onToggle(last.id);
+            }
+          }}
+        />
+      </div>
+      <FieldFailure failure={failure} field="tagName" />
+      {/* どんなタグがあるかを見せる道は残す。打つと候補が絞られる。 */}
+      {suggestions.length > 0 && (
+        <div className="button-row tag-suggestions">
+          {suggestions.map((tag) => (
+            <button
+              key={tag.id}
+              type="button"
+              className="secondary"
+              onClick={() => {
+                setTyped("");
+                onToggle(tag.id);
+              }}
+            >
+              {tag.name}
+            </button>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
+/// チェックリストの 1 行。掴む場所（`⠿`）と、上下の矢印の両方を持ちます。
+///
+/// **矢印は残します**（#113）——キーボードだけで並べ替える道を消さないためです。
+/// 掴む場所を行全体にしないのは、行の中に入力欄があるからで、カラムのヘッダと
+/// カードで掴む場所を分けているのと同じ理由です。
+function ChecklistRow({
+  item,
+  index,
+  count,
+  onToggle,
+  onChangeText,
+  onMove,
+  onDelete,
+}: {
+  item: DraftChecklistItem;
+  index: number;
+  count: number;
+  onToggle: () => void;
+  onChangeText: (text: string) => void;
+  onMove: (direction: "up" | "down") => void;
+  onDelete: () => void;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    setActivatorNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: item.key });
+
+  return (
+    <div
+      ref={setNodeRef}
+      className="checklist-row"
+      data-dragging={isDragging || undefined}
+      style={{ transform: CSS.Translate.toString(transform), transition: transition ?? undefined }}
+    >
+      <button
+        type="button"
+        className="ghost checklist-handle"
+        ref={setActivatorNodeRef}
+        aria-label={`チェックリストの ${index + 1} 番目を掴んで並べ替える`}
+        title="掴んで並べ替える"
+        {...attributes}
+        {...listeners}
+      >
+        ⠿
+      </button>
+      <button
+        type="button"
+        className="secondary checklist-toggle"
+        aria-pressed={item.checked}
+        aria-label={`${item.text} を${item.checked ? "外す" : "チェックする"}`}
+        onClick={onToggle}
+      >
+        {item.checked ? "☑" : "□"}
+      </button>
+      <input
+        className="field-input checklist-text"
+        value={item.text}
+        placeholder="項目"
+        aria-label={`チェックリストの ${index + 1} 番目`}
+        onChange={(event) => {
+          onChangeText(event.target.value);
+        }}
+      />
+      <button
+        type="button"
+        className="ghost"
+        aria-label="上へ"
+        disabled={index === 0}
+        onClick={() => {
+          onMove("up");
+        }}
+      >
+        ↑
+      </button>
+      <button
+        type="button"
+        className="ghost"
+        aria-label="下へ"
+        disabled={index + 1 >= count}
+        onClick={() => {
+          onMove("down");
+        }}
+      >
+        ↓
+      </button>
+      <button type="button" className="secondary" aria-label="項目を削除" onClick={onDelete}>
+        削除
+      </button>
+    </div>
   );
 }
 

@@ -84,6 +84,13 @@ export function Sidebar({
                 onClick={() => {
                   onSwitch(board.id);
                 }}
+                // 名前をダブルクリックしたら名前変更（#119）。開くのは `…` の
+                // 「名前を変更」と同じダイアログで、入口だけを増やします。
+                // 1 回目のクリックでそのボードに切り替わるので、別の行を
+                // ダブルクリックしても切り替えたうえで開きます。
+                onDoubleClick={() => {
+                  onRename(board);
+                }}
                 title={collapsed ? board.name : undefined}
               >
                 {collapsed ? (

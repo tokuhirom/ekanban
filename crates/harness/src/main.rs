@@ -364,10 +364,6 @@ fn invoke(command: &str, args: Value, state: &AppState) -> Result<Value, AppErro
                 &a.wip_limit,
             )?)
         }
-        "sort_column_by_due_date" => ok(commands::sort_column_by_due_date(
-            state,
-            read::<ColumnId>(args)?.column_id,
-        )?),
         "archive_column" => ok(commands::archive_column(
             state,
             read::<ColumnId>(args)?.column_id,

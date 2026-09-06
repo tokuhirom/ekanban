@@ -339,9 +339,6 @@ fn adding_renaming_moving_sorting_and_removing_columns() {
     commands::set_column_wip_limit(&harness.state, column_id, "").expect("the limit is cleared");
     assert_eq!(harness.stored().columns[0].wip_limit, None);
 
-    commands::sort_column_by_due_date(&harness.state, harness.first_column())
-        .expect("the column is sorted");
-
     let removed = commands::remove_column(&harness.state, column_id).expect("removed");
     assert!(!removed.board.columns.iter().any(|c| c.id == column_id));
 }
@@ -661,7 +658,7 @@ fn quick_capture_writes_to_a_board_that_is_not_open() {
 fn quick_capture_falls_back_to_the_first_column_when_no_target_has_been_chosen() {
     let harness = Harness::open();
     // 決まっていないから足せない、にはしない。キャプチャは 1 行を放り込む
-    // ためのもので、そこで設定を求めると用が足りない（gpui 版と同じ既定）。
+    // ためのもので、そこで設定を求めると用が足りない。
     commands::capture_card(&harness.state, "行き先を決めていない").expect("the card is added");
 
     let stored = harness.stored();
@@ -671,6 +668,68 @@ fn quick_capture_falls_back_to_the_first_column_when_no_target_has_been_chosen()
             .last()
             .map(|card| card.title.as_str()),
         Some("行き先を決めていない")
+    );
+}
+
+/// 設定が無いときの既定は、開いているボードではなく**先頭のボード**（#117）。
+#[test]
+fn the_default_capture_target_is_the_first_board_whichever_board_is_open() {
+    let harness = Harness::open();
+    let first = harness.state.snapshot().expect("a snapshot").board;
+    let other = commands::create_board(&harness.state, "あとから足したボード")
+        .expect("a board is created")
+        .board;
+    assert_eq!(
+        commands::capture_target(&harness.state)
+            .expect("the target resolves")
+            .map(|target| target.board_id),
+        Some(first.id),
+        "2 つめのボードを開いていても、入れ先は先頭のボードのまま"
+    );
+
+    commands::capture_card(&harness.state, "先頭のボードへ").expect("the card is added");
+
+    let database = Database::open(&harness.path).expect("the database opens");
+    let written = database
+        .load_board_by_id(first.id)
+        .expect("the first board loads");
+    assert_eq!(
+        written.columns[0].cards.last().unwrap().title,
+        "先頭のボードへ"
+    );
+    let open_board = database
+        .load_board_by_id(other.id)
+        .expect("the open board loads");
+    assert!(
+        open_board
+            .columns
+            .iter()
+            .all(|column| column.cards.is_empty()),
+        "開いているボードには入らない"
+    );
+}
+
+/// 「⚡ クイックキャプチャ先」の印はアプリ全体で 1 か所にしか出ない（#117）。
+#[test]
+fn the_capture_mark_shows_on_one_board_only() {
+    let harness = Harness::open();
+    let first = harness.state.snapshot().expect("a snapshot").board;
+    let other = commands::create_board(&harness.state, "2 つめ")
+        .expect("a board is created")
+        .board;
+
+    let on_other = harness.state.snapshot().expect("a snapshot");
+    assert_eq!(on_other.board.id, other.id);
+    assert_eq!(
+        on_other.capture_column, None,
+        "先頭でないボードには印を出さない"
+    );
+
+    let on_first = commands::switch_board(&harness.state, first.id).expect("switched back");
+    assert_eq!(
+        on_first.capture_column,
+        on_first.board.columns.first().map(|column| column.id),
+        "先頭のボードの先頭カラムにだけ印が出る"
     );
 }
 

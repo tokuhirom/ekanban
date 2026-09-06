@@ -11,13 +11,44 @@
 import type { Card } from "../ipc/types/Card";
 import type { ChecklistItemDraft } from "../ipc/types/ChecklistItemDraft";
 
+/// 下書きの中だけのチェックリスト項目。
+///
+/// `ChecklistItemDraft`（`ts-rs` が Rust から起こす、IPC に載る形）に `key` を
+/// 足したものです。**`key` は画面の鍵で、Rust には渡りません**——`@dnd-kit` は
+/// 並べ替えのあいだ変わらない `id` を要るのに、まだ保存していない項目は `id` を
+/// 持たないためです。添字を鍵にすると、並べ替えた瞬間に鍵が入れ替わります。
+export interface DraftChecklistItem {
+  key: string;
+  id: number | null;
+  text: string;
+  checked: boolean;
+}
+
 export interface CardDraft {
   title: string;
   description: string;
   /** `"YYYY-MM-DD"` か空文字。読めるかどうかを決めるのは Rust。 */
   dueDate: string;
   tagIds: number[];
-  checklist: ChecklistItemDraft[];
+  checklist: DraftChecklistItem[];
+}
+
+/// 下書きの鍵を採番する。`key` は下書きの中でしか使わないので、通し番号で足りる。
+let nextChecklistKey = 0;
+
+/// まだ保存していない項目を 1 つ作る。
+///
+/// `id` は `null` で、`update_card` がこれを「新しい項目」として読みます。
+export function newChecklistItem(): DraftChecklistItem {
+  nextChecklistKey += 1;
+  return { key: `new-${nextChecklistKey}`, id: null, text: "", checked: false };
+}
+
+/// Rust に渡す形にする。**`key` はここで落とします。**
+export function checklistToSend(
+  checklist: readonly DraftChecklistItem[],
+): ChecklistItemDraft[] {
+  return checklist.map((item) => ({ id: item.id, text: item.text, checked: item.checked }));
 }
 
 /// 保存済みのカードから下書きを起こす。
@@ -28,6 +59,7 @@ export function draftOf(card: Card): CardDraft {
     dueDate: card.dueDate ?? "",
     tagIds: [...card.tagIds],
     checklist: card.checklistItems.map((item) => ({
+      key: `saved-${item.id}`,
       id: item.id,
       text: item.text,
       checked: item.checked,
@@ -45,14 +77,16 @@ export function emptyDraft(): CardDraft {
 
 /// 保存できる状態か。
 ///
-/// 見ているのは**空白かどうかだけ**です。期限の書式は Rust が読んで
+/// 見ているのは**タイトルが空白かどうかだけ**です。期限の書式は Rust が読んで
 /// `Validation` で返すので、ここでは判定しません。押せるのに断る操作は理由を
 /// 言わずにコントロールを無効にする、が `docs/DESIGN.md` の規則なので、
 /// 空白のタイトルでは保存ボタンを押せなくします。
+///
+/// **名前の入っていないチェックリスト項目は止めません**（#114）。保存のときに
+/// Rust が落とします。判定をこちらにもう 1 つ置くと、2 つがずれた日に画面と
+/// 保存が食い違います。
 export function draftIsSavable(draft: CardDraft): boolean {
-  return (
-    draft.title.trim() !== "" && !draft.checklist.some((item) => item.text.trim() === "")
-  );
+  return draft.title.trim() !== "";
 }
 
 export function toggleTag(tagIds: readonly number[], tagId: number): number[] {
@@ -62,24 +96,24 @@ export function toggleTag(tagIds: readonly number[], tagId: number): number[] {
 }
 
 export function setChecklistText(
-  checklist: readonly ChecklistItemDraft[],
+  checklist: readonly DraftChecklistItem[],
   index: number,
   text: string,
-): ChecklistItemDraft[] {
+): DraftChecklistItem[] {
   return checklist.map((item, at) => (at === index ? { ...item, text } : item));
 }
 
 export function toggleChecklistItem(
-  checklist: readonly ChecklistItemDraft[],
+  checklist: readonly DraftChecklistItem[],
   index: number,
-): ChecklistItemDraft[] {
+): DraftChecklistItem[] {
   return checklist.map((item, at) => (at === index ? { ...item, checked: !item.checked } : item));
 }
 
 export function deleteChecklistItem(
-  checklist: readonly ChecklistItemDraft[],
+  checklist: readonly DraftChecklistItem[],
   index: number,
-): ChecklistItemDraft[] {
+): DraftChecklistItem[] {
   return checklist.filter((_, at) => at !== index);
 }
 
@@ -88,11 +122,36 @@ export function deleteChecklistItem(
 /// `id` は保存済みの項目の ID で、`null` はまだ保存していない項目です。並び順
 /// そのものは配列の順で `update_card` に渡すので、`position` はここで触りません。
 export function moveChecklistItem(
-  checklist: readonly ChecklistItemDraft[],
+  checklist: readonly DraftChecklistItem[],
   index: number,
   direction: "up" | "down",
-): ChecklistItemDraft[] {
+): DraftChecklistItem[] {
   const to = direction === "up" ? index - 1 : index + 1;
+  return moveTo(checklist, index, to);
+}
+
+/// 掴んだ項目を、落とし先の項目のいた位置へ入れる（#113）。
+///
+/// **何番目に落ちたかを決めるのはこちらのコードです**（`docs/DESIGN.md`
+/// 「ドラッグ＆ドロップ」）。`@dnd-kit` に任せるのは掴む・追う・落とすまで。
+/// 鍵が見つからない、または落とし先が掴んだものと同じなら、並びは変わりません。
+export function reorderChecklist(
+  checklist: readonly DraftChecklistItem[],
+  fromKey: string,
+  toKey: string,
+): DraftChecklistItem[] {
+  const from = checklist.findIndex((item) => item.key === fromKey);
+  const to = checklist.findIndex((item) => item.key === toKey);
+  if (from === -1 || to === -1) return [...checklist];
+  return moveTo(checklist, from, to);
+}
+
+/// 配列の `index` 番目を `to` 番目へ移す。端の外なら動かさない。
+function moveTo(
+  checklist: readonly DraftChecklistItem[],
+  index: number,
+  to: number,
+): DraftChecklistItem[] {
   if (index < 0 || index >= checklist.length || to < 0 || to >= checklist.length) {
     return [...checklist];
   }

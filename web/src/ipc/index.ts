@@ -55,7 +55,6 @@ export interface Ipc {
   removeColumn(columnId: number): Promise<Snapshot>;
   /** 空文字で「上限なし」。読めない値は `Validation` で入力欄に返る。 */
   setColumnWipLimit(columnId: number, wipLimit: string): Promise<Snapshot>;
-  sortColumnByDueDate(columnId: number): Promise<Snapshot>;
   archiveColumn(columnId: number): Promise<Snapshot>;
 
   addTag(name: string, color: string): Promise<Snapshot>;

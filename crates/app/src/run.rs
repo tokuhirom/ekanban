@@ -152,7 +152,6 @@ pub fn run() {
             ipc::remove_column,
             ipc::move_column,
             ipc::set_column_wip_limit,
-            ipc::sort_column_by_due_date,
             ipc::archive_column,
             ipc::add_tag,
             ipc::rename_tag,

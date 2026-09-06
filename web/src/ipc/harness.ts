@@ -74,8 +74,6 @@ export function harnessIpc(base: string): Ipc {
     removeColumn: (columnId) => call<Snapshot>(base, "remove_column", { columnId }),
     setColumnWipLimit: (columnId, wipLimit) =>
       call<Snapshot>(base, "set_column_wip_limit", { columnId, wipLimit }),
-    sortColumnByDueDate: (columnId) =>
-      call<Snapshot>(base, "sort_column_by_due_date", { columnId }),
     archiveColumn: (columnId) => call<Snapshot>(base, "archive_column", { columnId }),
     addTag: (name, color) => call<Snapshot>(base, "add_tag", { name, color }),
     renameTag: (tagId, name) => call<Snapshot>(base, "rename_tag", { tagId, name }),
