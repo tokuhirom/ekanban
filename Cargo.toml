@@ -7,8 +7,7 @@
 resolver = "2"
 members = ["crates/app", "crates/core", "crates/harness"]
 # `cargo run` にアプリを選ばせる。これが無いと「どのバイナリか決められない」と
-# 断られます (`ekanban` と `ekanban-harness` の 2 つがあるため)。移行前は単一の
-# クレートだったので、`cargo run` がそのままアプリでした。そこを戻します。
+# 断られます (`ekanban` と `ekanban-harness` の 2 つがあるため)。
 #
 # **`--workspace` を省くと、ここに書いたものだけが対象になります。** `cargo test`
 # だけを打つと `ekanban-core` のテストが走りません。Makefile と CI は全部

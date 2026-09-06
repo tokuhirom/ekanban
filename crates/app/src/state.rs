@@ -68,7 +68,8 @@ impl AppState {
         T: Changed,
     {
         let mut board = self.lock();
-        // 失敗したときに戻す先。gpui 版と同じで、数百枚のカードを 1 回複製する。
+        // 失敗したときに戻す先。数百枚のカードを 1 回複製するだけなので、
+        // 操作ごとに差分を組み立てるより素直で速い。
         let before = board.clone();
 
         let value = match apply(&mut board) {
@@ -117,7 +118,7 @@ impl AppState {
 /// クイックキャプチャの入れ先が、このボードのどのカラムか。
 ///
 /// 設定が指しているカラムがこのボードにあればそれ、別のボードなら `None`。
-/// 設定が無ければ既定で、それは**先頭のボードの先頭カラム**です（#117、[ADR 0027]）
+/// 設定が無ければ既定で、それは**先頭のボードの先頭カラム**です（#117、[ADR 0028]）
 /// ——開いているボードから決めていたころは、設定していない状態でどのボードを
 /// 開いても「⚡ クイックキャプチャ先」が出ていました。入れ先はアプリ全体で
 /// 1 つなので、印も 1 か所にしか出ません。
@@ -125,9 +126,9 @@ impl AppState {
 /// 先頭のボードは `boards`（`load_boards_as_of` の順、`ORDER BY boards.id`）の
 /// 1 つめで、サイドバーの一番上と同じです。**スナップショットが既に読んで
 /// いる一覧をそのまま受けます**——ここでもう 1 回引くと、盤面を変えるたびに
-/// 同じクエリが 2 回走ります。
+/// 同じクエリが 2 回走ります。落とし方は `commands::capture_target` と揃えてあります。
 ///
-/// [ADR 0027]: ../../../docs/adr/0027-a-single-default-quick-capture-target.md
+/// [ADR 0028]: ../../../docs/adr/0028-a-single-default-quick-capture-target.md
 fn capture_column_of(
     board: &Board,
     database: &Database,

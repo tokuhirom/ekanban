@@ -26,7 +26,7 @@ pub(crate) const CAPTURE_WINDOW: &str = "capture";
 ///
 /// 登録できなかった理由は捨てずに返します。**起動のたび黙って失敗する状態を
 /// 作りません。** 設定そのものは消しません——ほかのアプリを閉じれば、次の起動
-/// では通るかもしれないからです（gpui 版と同じ）。
+/// では通るかもしれないからです。
 pub(crate) fn register_saved<R: Runtime>(
     app: &AppHandle<R>,
     saved: Option<&str>,

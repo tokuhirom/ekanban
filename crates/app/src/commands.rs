@@ -151,12 +151,11 @@ const TAG: &str = "タグを操作できませんでした";
 
 /// カードを 1 枚足す。**タイトルが決まってから 1 回だけ呼ばれます。**
 ///
-/// gpui 版は先にカードを足し、タイトルが入るまで保存を保留し、取り下げられたら
-/// 引っこめていました。下書きは webview のものになったので（`docs/DESIGN.md`「状態の持ち主」）その経路は
-/// 消え、「無題のカードを作らない」は**ここで断ればよくなりました**。
+/// 下書きは webview が持つので（`docs/DESIGN.md`「状態の持ち主」）、保存を
+/// 押すまで盤面には何も届きません。だから「無題のカードを作らない」は
+/// **ここで断るだけで守れます**——足してから引っこめる経路がありません。
 ///
-/// `Board::add_card` はタイトルを見ません（gpui 版が空文字で呼んでいたため）。
-/// その規則を保つのはこの層です。
+/// `Board::add_card` はタイトルを見ないので、その規則を保つのはこの層です。
 pub fn add_card(
     state: &AppState,
     column_id: ColumnId,
@@ -628,7 +627,7 @@ fn read_capture_target(database: &mut Database) -> Result<Option<CaptureTarget>,
     }
 }
 
-/// 設定が無いときの既定の入れ先。**先頭のボードの先頭カラム**（#117、[ADR 0027]）。
+/// 設定が無いときの既定の入れ先。**先頭のボードの先頭カラム**（#117、[ADR 0028]）。
 ///
 /// 開いているボードから決めていたころは、ボードを切り替えるだけで入れ先が動いて
 /// いました。「キャプチャ先はアプリ全体で 1 つ」（`docs/DESIGN.md`「クイック
@@ -637,7 +636,7 @@ fn read_capture_target(database: &mut Database) -> Result<Option<CaptureTarget>,
 /// 先頭のボードは `load_boards`（`ORDER BY boards.id`）の 1 つめで、サイドバーの
 /// 一番上と同じです。そのボードにカラムが 1 本も無ければ `None` です。
 ///
-/// [ADR 0027]: ../../../docs/adr/0027-a-single-default-quick-capture-target.md
+/// [ADR 0028]: ../../../docs/adr/0028-a-single-default-quick-capture-target.md
 fn default_capture_target(database: &Database) -> Result<Option<CaptureTarget>, AppError> {
     let Some(first) = database
         .load_boards()

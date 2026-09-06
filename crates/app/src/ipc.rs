@@ -297,8 +297,8 @@ pub async fn choose_save_path(
     state: State<'_, AppState>,
     file_name: String,
 ) -> Reply<Option<PathBuf>> {
-    // 最初に見せる場所はデータベースの隣。gpui 版と同じで、いちばん近い
-    // 「自分のファイルがあるところ」。
+    // 最初に見せる場所はデータベースの隣。書き出したものを、いちばん近い
+    // 「自分のファイルがあるところ」に置けるようにする。
     let directory = commands::database_location(&state)
         .parent()
         .map(Path::to_path_buf)

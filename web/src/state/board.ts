@@ -128,8 +128,7 @@ export function useBoardState(): BoardState {
   const [alert, setAlert] = useState<Alert | null>(null);
   const [requested, setRequested] = useState<Editing | null>(null);
   const [tagPanelOpen, setTagPanelOpen] = useState(false);
-  // 表示だけの状態なので、覚えません。次に開いたときは盤面から始めます
-  // （gpui 版と同じ）。
+  // 表示だけの状態なので、覚えません。次に開いたときは盤面から始めます。
   const [showArchived, setShowArchived] = useState(false);
   const [quickCaptureShortcut, setQuickCaptureShortcut] = useState<string | null>(null);
 
