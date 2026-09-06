@@ -14,6 +14,9 @@ export const tauriIpc: Ipc = {
   startupState: () => invoke<StartupState>("startup_state"),
   snapshot: () => invoke<Snapshot>("snapshot"),
   switchBoard: (boardId) => invoke<Snapshot>("switch_board", { boardId }),
+  moveCard: (cardId, toColumnId, toIndex) =>
+    invoke<Snapshot>("move_card", { cardId, toColumnId, toIndex }),
+  moveColumn: (columnId, toIndex) => invoke<Snapshot>("move_column", { columnId, toIndex }),
   filterCards: (query, tagId) => invoke<number[]>("filter_cards", { query, tagId }),
   setFilterState: async (filter) => {
     await invoke("set_filter_state", { filter });

@@ -19,6 +19,9 @@ export interface Ipc {
   /** いまの盤面。イベントで差し替えるときにも使う。 */
   snapshot(): Promise<Snapshot>;
   switchBoard(boardId: number): Promise<Snapshot>;
+  /** 落とした瞬間に 1 回だけ呼ぶ。ドラッグ中は webview の中で完結させる（§6）。 */
+  moveCard(cardId: number, toColumnId: number, toIndex: number): Promise<Snapshot>;
+  moveColumn(columnId: number, toIndex: number): Promise<Snapshot>;
   /** 検索語とタグに一致するカードの ID。打鍵ごとに呼ぶ（§5）。 */
   filterCards(query: string, tagId: number | null): Promise<number[]>;
   setFilterState(filter: FilterState): Promise<void>;

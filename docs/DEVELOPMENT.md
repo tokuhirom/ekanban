@@ -60,13 +60,16 @@ web/             画面。TypeScript + React + Vite（ADR 0019）
   src/
     ipc/          Rust を呼ぶ唯一の口。`types/` は ts-rs の生成物（手で書かない）
     state/        スナップショットの保持と、コマンドを呼んで差し替える 1 本の経路
-    board/        サイドバー、ヘッダ、カラム、カード
+    board/        サイドバー、ヘッダ、カラム、カード、D&D
+      dnd.ts        どこに落ちるかの計算。**ライブラリの外に置く**（ADR 0022）
+      keyboard.ts   矢印での選択と、修飾キー＋矢印での移動
     shell/        webview だから自分で切るもの（右クリック、拡大縮小、スワイプ）
     styles.css    色のトークンと骨組み
 ```
 
 - **`ekanban-core` に UI ツールキットを足しません。** gpui にも tauri にも依存しないことが、テストを GUI のランタイム無しで走らせ続ける条件であり、Tauri のアプリと開発用のハーネスが同じコードを使える条件でもあります（[Tauri 移行の設計](TAURI-MIGRATION.md) §1）。依存の依存から入り込むほうがありがちなので、解決した依存グラフを `script/check-core-independence` が CI で見ています
 - **`crates/app/src/commands.rs` に `tauri` は出てきません。** `ipc.rs` の `#[tauri::command]` は、その関数を呼ぶだけの包みです。開発用のハーネス（[Tauri 移行の設計](TAURI-MIGRATION.md) §10）が同じ関数を HTTP に出すので、**判断を包みの側に置かないことは設計そのもの**です
+- **D&D の挿入位置と、キーボードの割り当ては `web/src/board/dnd.ts` と `keyboard.ts` に置きます。** dnd-kit に渡すのは掴む・運ぶ・オートスクロールだけです（[ADR 0022](adr/0022-dnd-kit-core-for-drag-and-drop.md)）。盤面の意味を決めるところをライブラリに預けると、外せなくなります
 - **`crates/app` のコンパイルには `web/dist` が要ります。** `tauri::generate_context!` が画面を実行ファイルに埋め込むためです。checkout したてなら `npm --prefix web ci && npm --prefix web run build` を先に走らせてください（`make dev` と CI はそうしています）
 - **Tauri のアプリは `make dev` で起動します。** デバッグビルドには Vite の開発サーバの URL が焼き込まれているので、`cargo run -p ekanban-app` だけでは白い画面になります
 - **`crates/gpui` は凍結してあります。** 直すのは使えなくなる不具合だけです（[ADR 0017](adr/0017-moving-the-ui-to-tauri.md)）。中核のモジュールを `ekanban_core` から同じ名前で出し直しているので、`crate::db::…` と書いてある行はそのままです。移行が着地したらこのクレートごと消えます
