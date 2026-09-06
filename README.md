@@ -90,12 +90,18 @@ xattr -d com.apple.quarantine /Applications/Ekanban.app
 
 ### ソースからビルドする
 
-[Rust toolchain](https://www.rust-lang.org/tools/install) が必要です。SQLite は同梱されるので、別途の用意は要りません。
+[Rust toolchain](https://www.rust-lang.org/tools/install) と **Node.js 22 以降**が必要です。画面は TypeScript で書かれていて、ビルドに npm を使います。SQLite は同梱されるので、別途の用意は要りません。
+
+Linux では WebKitGTK の開発パッケージも要ります（Ubuntu / Debian なら次のとおり）。
+
+```sh
+sudo apt install libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1-dev libsoup-3.0-dev libgtk-3-dev
+```
 
 ```sh
 git clone https://github.com/tokuhirom/ekanban.git
 cd ekanban
-make run
+make dev
 ```
 
 macOS では `.app` にすると、Dock のアイコンとアプリ名が正しく出ます。
@@ -130,7 +136,7 @@ OS ごとの標準の場所に保存します。
 場所を忘れたときは、ヘルプメニューの「データベースの場所をFinderで開く」から開けます。別のファイルを使いたいときは `EKANBAN_DATABASE` に絶対パスを渡してください。
 
 ```sh
-EKANBAN_DATABASE=/tmp/試し.sqlite3 make run
+EKANBAN_DATABASE=/tmp/試し.sqlite3 make dev
 ```
 
 バックアップは、ヘルプメニューの「データベースをコピー…」から取れます。アプリを止めずに取っても壊れた控えにはなりません。
