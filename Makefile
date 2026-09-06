@@ -5,7 +5,7 @@ RELEASE_APP := $(BUNDLE)/macos/$(APP_NAME).app
 # 画面側の依存として入っている Tauri の CLI。別に入れる必要はない。
 TAURI := ../../web/node_modules/.bin/tauri
 
-.PHONY: help build release run dev web-install web-check e2e test types types-check fmt fmt-check lint deps-check check screenshots icon bundle bundle-debug open install install-linux uninstall-linux clean
+.PHONY: help build release dev web-install web-check e2e test types types-check fmt fmt-check lint deps-check check screenshots icon bundle bundle-debug open install install-linux uninstall-linux clean
 
 help: ## このヘルプを表示する
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -16,9 +16,6 @@ build: ## デバッグビルド
 
 release: ## リリースビルド
 	cargo build --workspace --release
-
-run: ## 出ていくほうのアプリ (gpui) をターミナルから直接起動する
-	cargo run -p ekanban --bin ekanban-gpui
 
 dev: web-install ## アプリを開発モードで起動する (Vite の開発サーバごと)
 	cd crates/app && $(TAURI) dev
@@ -32,8 +29,8 @@ web-check: web-install ## 画面側の型検査・lint・単体テスト
 	npm --prefix web run test
 
 e2e: web-install ## ハーネスを上げて Playwright を走らせる (Chromium と WebKit)
+	cargo build -p ekanban-harness --example manual_screenshot_seed
 	cargo build -p ekanban-harness
-	cargo build -p ekanban --example manual_screenshot_seed
 	npm --prefix web run e2e
 
 test: ## テストを実行する

@@ -12,25 +12,28 @@ set -euo pipefail
 repository=$(cd "$(dirname "$0")/.." && pwd)
 images=$repository/docs/images
 
-# 画面の大きさ。アプリの既定のウィンドウは 1200x800 で、仮想ディスプレイの中央に出る。
+# 仮想ディスプレイの大きさ。アプリの既定のウィンドウは 1200x800 で、そこに収まる。
 # ウィンドウマネージャを動かさないので飾り枠が付かず、撮れる絵はちょうど 1200x800 になる。
-window_width=1200
-window_height=800
 screen_width=1600
 screen_height=1200
-window_x=$(((screen_width - window_width) / 2))
-window_y=$(((screen_height - window_height) / 2))
+
+# **ウィンドウがどこに出るかは決め打ちできません。** ウィンドウマネージャが
+# いないので、置き場所を決めるのはアプリ（と X）です。起動してから読みます。
+window_x=0
+window_y=0
 
 # ウィンドウの中の位置を画面の位置に直す。Linux ではいちばん上にメニューバーの
-# 1 行が入るので、そのぶん中身が下にずれる。
-readonly MENU_BAR_HEIGHT=30
+# 1 行が入るので、そのぶん中身が下にずれる。高さは実機で測った値。
+readonly MENU_BAR_HEIGHT=25
 screen_point() { echo "$((window_x + $1)) $((window_y + MENU_BAR_HEIGHT + $2))"; }
 
+# ここから下はウィンドウの中の座標。撮る直前に `screen_point` で画面の座標に直す。
+#
 # カードやボタンに重ならないところ。撮る前にポインタをここへ逃がして、
 # たまたま下にあったカードが hover の色で写らないようにする。
-readonly PARK_POINT="$(screen_point 700 130)"
-# 「SQLite のスキーマを決める」カードのタイトル。押すと編集パネルが開く。
-readonly CARD_POINT="$(screen_point 700 231)"
+readonly PARK_POINT="700 130"
+# 「進行中」の 2 枚目のカード。ダブルクリックで編集パネルが開く。
+readonly CARD_POINT="700 231"
 
 display=:99
 work=$(mktemp -d)
@@ -53,8 +56,12 @@ for _ in $(seq 40); do
 done
 
 cd "$repository"
-cargo build -p ekanban --example manual_screenshot_seed
-cargo build -p ekanban
+cargo build -p ekanban-harness --example manual_screenshot_seed
+# デバッグの実行ファイルには Vite の開発サーバの URL が焼き込まれるので、
+# `cargo build` だけでは白い画面になる。`tauri build --debug` は画面を
+# 実行ファイルに埋め込むので、開発サーバなしで撮れる。
+npm --prefix web ci
+(cd crates/app && ../../web/node_modules/.bin/tauri build --debug --no-bundle)
 
 # 撮る 1 枚。名前は docs/images/<名前>.png と、seed に渡す画面の名前を兼ねる。
 shoot() {
@@ -68,6 +75,8 @@ shoot() {
 
   local window=
   for _ in $(seq 80); do
+    # `--class` は WM_CLASS を見る。Tauri（tao）は実行ファイルの名前から
+    # 作るので `ekanban` になる（`crates/core/src/lib.rs` の `WM_CLASS`）。
     window=$(DISPLAY=$display xdotool search --onlyvisible --class ekanban 2>/dev/null | head -1 || true)
     [ -n "$window" ] && break
     sleep 0.5
@@ -79,15 +88,23 @@ shoot() {
     return 1
   fi
 
+  # ウィンドウの位置を読む。ウィンドウマネージャがいないので、どこに出るかは
+  # アプリと X が決める（中央に出るとは限らない）。
+  eval "$(DISPLAY=$display xdotool getwindowgeometry --shell "$window")"
+  window_x=$X
+  window_y=$Y
+
   # 最初の描画とフォントの読み込みを待つ。
-  DISPLAY=$display xdotool mousemove $PARK_POINT
+  DISPLAY=$display xdotool mousemove $(screen_point $PARK_POINT)
   sleep 4
 
   # 保存されない状態（編集パネルなど）は、ここで実際に操作して作る。
+  # **カードはダブルクリックで開きます**——1 回のクリックは「選ぶ」と「掴む」を
+  # 兼ねているので、そこに「開く」も足すと掴もうとしただけでパネルが出ます。
   if [ $# -ge 2 ]; then
-    DISPLAY=$display xdotool mousemove "$1" "$2" click 1
+    DISPLAY=$display xdotool mousemove $(screen_point "$1" "$2") click --repeat 2 --delay 80 1
     sleep 3
-    DISPLAY=$display xdotool mousemove $PARK_POINT
+    DISPLAY=$display xdotool mousemove $(screen_point $PARK_POINT)
     sleep 1
   fi
 

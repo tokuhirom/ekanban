@@ -20,24 +20,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # 2 つの UI を抱えている間は、両方の依存が要ります。上の 11 行は gpui
-      # (X11 と Vulkan)、下の 4 行は Tauri (WebKitGTK) のものです。段階 10 で
-      # gpui を消したら上が要らなくなります。
+      # webview（WebKitGTK）を組むのに要るもの。
       - name: Install Linux dependencies
         run: |
           sudo apt-get update
           sudo apt-get install --yes \
-            libfontconfig1-dev \
-            libx11-xcb-dev \
-            libxkbcommon-x11-dev \
-            libxcb1-dev \
-            libxcb-render0-dev \
-            libxcb-shape0-dev \
-            libxcb-xfixes0-dev \
-            libxcb-xkb-dev \
-            libx11-dev \
-            libwayland-dev \
-            libvulkan-dev \
             libwebkit2gtk-4.1-dev \
             libjavascriptcoregtk-4.1-dev \
             libsoup-3.0-dev \
@@ -80,8 +67,8 @@ jobs:
       # （テストの中で `cargo run` を待つと、1 本目だけ長くかかります）。
       - name: Run the webview end-to-end tests
         run: |
+          cargo build -p ekanban-harness --example manual_screenshot_seed
           cargo build -p ekanban-harness
-          cargo build -p ekanban --example manual_screenshot_seed
           npm --prefix web run e2e
 
       - name: Cache Rust dependencies
@@ -111,7 +98,7 @@ jobs:
       - name: Check that the core crate stays free of UI toolkits
         run: script/check-core-independence
 
-  # macOS と Windows でしか通らないコード（`crates/gpui/src/menu.rs` のネイティブ
+  # macOS と Windows でしか通らないコード（`crates/app/src/menu.rs` の OS ごとの
   # メニューバー、`crates/core/src/paths.rs` と `crates/core/src/diagnostics.rs` の
   # cfg 分岐）は、ubuntu のジョブでは一度もコンパイルされない。ここで型検査と
   # テストだけ通す。

@@ -1,3 +1,0 @@
-fn main() {
-    ekanban::run();
-}

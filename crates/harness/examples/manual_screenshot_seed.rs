@@ -5,15 +5,16 @@
 //! 保存する。アプリを起動すればそのまま撮れる状態になる。
 //!
 //! ```sh
-//! EKANBAN_DATABASE=/tmp/manual.sqlite3 cargo run --example manual_screenshot_seed -- board-dark
+//! EKANBAN_DATABASE=/tmp/manual.sqlite3 \
+//!   cargo run -p ekanban-harness --example manual_screenshot_seed -- board-dark
 //! ```
 //!
 //! 盤面は SQL ではなくアプリ自身の API で組み立てる。撮った画面が、アプリが本当に
 //! 復元できる状態であることを、作り方の側で保証するため。
 
 use chrono::{Duration, Local, NaiveDate};
-use ekanban::db::{Database, FilterState};
-use ekanban::model::{Board, CardId, ColumnId, TagId};
+use ekanban_core::db::{Database, FilterState};
+use ekanban_core::model::{Board, CardId, ColumnId, TagId};
 
 /// 撮れる画面の名前と、それが何を見せているか。
 const SCREENS: &[(&str, &str)] = &[
@@ -41,7 +42,7 @@ fn main() {
         std::process::exit(2);
     }
 
-    let path = ekanban::database_path();
+    let path = ekanban_core::database_path();
     if let Err(error) = std::fs::remove_file(&path) {
         if error.kind() != std::io::ErrorKind::NotFound {
             eprintln!("{} を消せませんでした: {error}", path.display());
@@ -126,7 +127,7 @@ fn build_personal_board(board: &mut Board) -> Tags {
     // 初回のシード（`Board::first_run`）が作るのは空の 3 カラムだけなので、撮る
     // 盤面のカードはここで全部足す。中身は下の `edit` で埋める。
     let demo_todo = [
-        add(board, todo, "GPUI の画面を作る", ""),
+        add(board, todo, "画面の描画をひととおり通す", ""),
         add(board, todo, "ドラッグ＆ドロップを試す", ""),
     ];
     let demo_doing = add(board, doing, "SQLite のスキーマを決める", "");
@@ -135,8 +136,8 @@ fn build_personal_board(board: &mut Board) -> Tags {
     edit(
         board,
         demo_todo[0],
-        "GPUI の画面を作る",
-        "カラムとカードの描画をひととおり通す。",
+        "画面の描画をひととおり通す",
+        "カラムとカードが並ぶところまで。",
         day(-2),
         vec![tags.design],
     );

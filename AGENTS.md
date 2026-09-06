@@ -2,7 +2,7 @@
 
 ## Project Structure
 
-This is a local-first Rust desktop Kanban app built with GPUI Kit and SQLite. It is a Cargo workspace.
+This is a local-first Kanban app: a Rust core, a Tauri shell, and a TypeScript webview, with everything in one SQLite file. It is a Cargo workspace.
 
 - `crates/core/` is `ekanban-core`: the board model, SQLite, backups, file locations. **It depends on no UI toolkit** — neither gpui nor tauri — and `script/check-core-independence` fails CI if one gets pulled in. See `docs/TAURI-MIGRATION.md` §1 for why.
   - `crates/core/src/model.rs` defines `Board`, `Column`, `Card`, and board operations such as moving and reindexing.
@@ -15,9 +15,7 @@ This is a local-first Rust desktop Kanban app built with GPUI Kit and SQLite. It
   - Choosing where a file goes is the OS dialog (`ipc::choose_save_path`, an `async` command — a sync one runs on the main thread and freezes the window while the dialog is up); writing it is `commands`; saying it was written is a dialog inside the app (ADR 0016). The webview puts those three in order, so the harness can drive the same path with only the choosing replaced.
 - `crates/harness/` is `ekanban-harness`, **development and test only, never shipped**: it puts `crates/app`'s commands on HTTP under the same names so the same screen runs in an ordinary browser (`docs/TAURI-MIGRATION.md` §10). What answers is the real `ekanban-core`, which is the point — ADR 0021 forbids a fake backend written in TypeScript.
 - `web/` is the webview: TypeScript + React + Vite (ADR 0019). `src/ipc/` is the one door to Rust, `src/state/` holds the snapshot and the single path that replaces it (`run()` — nothing else calls `setSnapshot`, and it is what decides whether a failure goes to a field or to a dialog), `src/board/` draws the board, `src/panel/` the card and tag editing panels, `src/shell/` the dialogs, the menu actions (`actions.ts` — each part subscribes to the actions it owns, so "save" reaches the panel holding the draft), the theme, the export/backup flow (`files.ts`), and the things a webview must switch off by hand (§4). `src/panel/Description.tsx` lays a link layer behind the description textarea: **Rust finds the URLs** (`commands::description_links`, positions in UTF-16 units so they line up with JavaScript's string indices) and the layer only draws them. Drag-and-drop rides on `@dnd-kit/core` (ADR 0022), but **where a card lands is decided by our own `board/dnd.ts` and `board/keyboard.ts`** — the library carries, it does not decide, so it can be dropped. **Compiling `crates/app` needs `web/dist`**, so run `npm --prefix web ci && npm --prefix web run build` before `cargo build`/`cargo test` on a fresh checkout.
-- `web/e2e/` drives the real board through the harness with Playwright: `harness.ts` starts one database and one `ekanban-harness` per test, and its `invoke()` reads the saved board back so a test can check **both** what is on screen and what reached SQLite (the same split as the gpui `view_tests.rs`).
-- `crates/gpui/` is the `ekanban` binary drawn with GPUI Kit. `src/main.rs` is the entry point; `src/lib.rs` opens the database and the window; `src/views/` contains rendering, input handling, and drag-and-drop.
-  - **It is frozen** while the move to Tauri is under way (ADR 0017): fix only what stops it from being usable. It re-exports `ekanban_core`'s modules under their old names so the frozen code keeps reading `crate::db::…`, and it goes away when the migration lands.
+- `web/e2e/` drives the real board through the harness with Playwright: `harness.ts` starts one database and one `ekanban-harness` per test, and its `invoke()` reads the saved board back so a test can check **both** what is on screen and what reached SQLite.
 - `web/src/ipc/types/` holds the TypeScript types **generated from the Rust ones** by `ts-rs`. Never edit them by hand: `make types` rewrites them, and CI fails if the committed files differ from what the Rust types produce.
 - Tests are colocated with implementation modules under `#[cfg(test)]`; CI configuration is in `.github/workflows/ci.yml`.
 
@@ -27,7 +25,7 @@ The move from GPUI Kit to Tauri is designed in `docs/TAURI-MIGRATION.md`. Read i
 
 ## Build, Test, and Development Commands
 
-Run the Tauri app with `make dev` — a debug build has Tauri's `devUrl` baked in, so `cargo run -p ekanban-app` on its own shows a blank window with "Connection refused". Run the outgoing gpui app with `cargo run -p ekanban` (the workspace root has no package, so `cargo run` alone cannot pick a binary). It stores its database under the OS data directory resolved by `crates/core/src/paths.rs`; set `EKANBAN_DATABASE=/absolute/path/board.sqlite3` to use another file.
+Run the app with `make dev` — a debug build has Tauri's `devUrl` baked in, so `cargo run -p ekanban-app` on its own shows a blank window with "Connection refused"; a build that embeds the screen instead is `tauri build --debug --no-bundle`. It stores its database under the OS data directory resolved by `crates/core/src/paths.rs`; set `EKANBAN_DATABASE=/absolute/path/board.sqlite3` to use another file.
 
 - `cargo fmt --all -- --check` checks formatting.
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings` runs lint checks as errors.
@@ -56,7 +54,7 @@ Use Rust 2021 conventions and four-space indentation; let `rustfmt` determine la
 
 Name tests after observable behavior, for example `moves_card_to_another_column`. Add model tests for ordering and invalid IDs, and database tests using `tempfile` rather than the real `.ekanban.sqlite3`.
 
-View behavior is tested against a real window. `crates/gpui/src/views/board/view_tests.rs` uses GPUI's headless test platform through `#[gpui_kit::test]`: it opens a `BoardView` in a `TestAppContext` window, dispatches the actions and keystrokes a user would, and asserts on both the on-screen state and what reached SQLite. Wait with `run_until_parked()` rather than `sleep`, take the key bindings from `crate::menu::install` instead of redefining them, and read the saved result back through `Harness::stored_board`. See the テスト section of `docs/DEVELOPMENT.md` for the details.
+Screen behaviour is tested through the harness with Playwright (`web/e2e/`): drive the board the way a person would, then read the board back with `invoke()` and assert on both. Never `sleep` — use `expect.poll` and the locator waits. What the harness cannot show is the Tauri shell itself (the real menu bar, the OS save dialog, the global shortcut, window bounds); that is checked by hand on a virtual display. See the テスト section of `docs/DEVELOPMENT.md` for the details.
 
 Run formatting, Clippy, and all-feature tests before submitting changes.
 
