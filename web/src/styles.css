@@ -567,6 +567,26 @@ button.danger {
   font: inherit;
 }
 
+/* 期限の欄。外す × は入力に重ねず右へ並べる（#128）——`type="date"` が
+ * 右端に出すカレンダーアイコンの位置が webview ごとに違うため。 */
+.due-field {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.due-field > .card-due-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.due-clear {
+  flex: none;
+  padding: 4px 8px;
+  color: var(--color-muted-foreground);
+  line-height: 1;
+}
+
 .field-label {
   font-size: 12px;
   color: var(--color-muted-foreground);
