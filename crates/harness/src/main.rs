@@ -150,6 +150,9 @@ fn invoke(command: &str, args: Value, state: &AppState) -> Result<Value, AppErro
         column_id: i64,
         title: String,
         description: String,
+        due_date: String,
+        tag_ids: Vec<i64>,
+        checklist: Vec<ekanban_core::model::ChecklistItemDraft>,
     }
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
@@ -320,6 +323,9 @@ fn invoke(command: &str, args: Value, state: &AppState) -> Result<Value, AppErro
                 a.column_id,
                 &a.title,
                 &a.description,
+                &a.due_date,
+                a.tag_ids,
+                a.checklist,
             )?)
         }
         "update_card" => {

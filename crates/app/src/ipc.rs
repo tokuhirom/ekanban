@@ -59,13 +59,25 @@ pub fn switch_board(state: State<'_, AppState>, board_id: BoardId) -> Reply<Snap
 // ---------------------------------------------------------------- カード
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub fn add_card(
     state: State<'_, AppState>,
     column_id: ColumnId,
     title: String,
     description: String,
+    due_date: String,
+    tag_ids: Vec<TagId>,
+    checklist: Vec<ChecklistItemDraft>,
 ) -> Reply<Snapshot> {
-    commands::add_card(&state, column_id, &title, &description)
+    commands::add_card(
+        &state,
+        column_id,
+        &title,
+        &description,
+        &due_date,
+        tag_ids,
+        checklist,
+    )
 }
 
 #[tauri::command]
