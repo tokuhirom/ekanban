@@ -589,47 +589,6 @@ pub fn due_date_preview(value: &str) -> Option<DueDatePreview> {
 
 // ---------------------------------------------------------------- 説明のリンク
 
-/// 説明の中の URL の位置（[ADR 0002]）。
-///
-/// 位置は **UTF-16 の符号単位**で数えます。JavaScript の文字列がその単位なので、
-/// Rust の byte 位置をそのまま渡すと、日本語の説明で 1 文字ぶんずつずれます。
-///
-/// [ADR 0002]: ../../../docs/adr/0002-links-inside-the-description-field.md
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, ts_rs::TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct UrlSpan {
-    pub start: usize,
-    pub end: usize,
-    pub url: String,
-}
-
-/// 説明の中の URL を見つける。
-///
-/// 見つけ方は `ekanban_core::model::find_urls` のままです。**同じ判定を
-/// TypeScript にもう 1 つ持ちません**——拾う範囲（`http(s)://` だけ）も、末尾の
-/// 句読点を落とす規則も、2 か所に置いたら必ずずれます。
-pub fn description_links(text: &str) -> Vec<UrlSpan> {
-    let mut spans = Vec::new();
-    // byte 位置から UTF-16 の位置へ数え直すために、先頭から一度だけなぞる。
-    let mut cursor = 0usize;
-    let mut utf16 = 0usize;
-    for url in ekanban_core::model::find_urls(text) {
-        let start_byte = url.as_ptr() as usize - text.as_ptr() as usize;
-        utf16 += text[cursor..start_byte].encode_utf16().count();
-        let start = utf16;
-        let end = start + url.encode_utf16().count();
-        spans.push(UrlSpan {
-            start,
-            end,
-            url: url.to_string(),
-        });
-        utf16 = end;
-        cursor = start_byte + url.len();
-    }
-    spans
-}
-
 /// 開いてよい URL か。開けるなら、そのまま返す。
 ///
 /// 拾うのは `http(s)://` だけという [ADR 0002] の決めごとを、**開く側でも
@@ -883,40 +842,6 @@ mod tests {
             with_extension(Path::new("/tmp/board.txt"), "json"),
             PathBuf::from("/tmp/board.txt")
         );
-    }
-
-    /// 日本語の説明でも、位置が JavaScript の数え方と揃うこと。
-    ///
-    /// byte 位置をそのまま渡すと、1 文字あたり 2 つぶんずれてリンクが本文の
-    /// 途中から色づく。
-    #[test]
-    fn counts_link_positions_the_way_javascript_does() {
-        let text = "詳しくは https://example.com/a を見てください";
-        let spans = description_links(text);
-        assert_eq!(spans.len(), 1);
-        let span = &spans[0];
-        assert_eq!(span.url, "https://example.com/a");
-        let utf16: Vec<u16> = text.encode_utf16().collect();
-        let sliced = String::from_utf16(&utf16[span.start..span.end]).expect("a valid slice");
-        assert_eq!(sliced, span.url, "the span points at the URL itself");
-    }
-
-    #[test]
-    fn finds_every_link_in_order() {
-        let spans = description_links("http://a.example と https://b.example");
-        assert_eq!(
-            spans
-                .iter()
-                .map(|span| span.url.as_str())
-                .collect::<Vec<_>>(),
-            vec!["http://a.example", "https://b.example"]
-        );
-        assert!(spans[0].end <= spans[1].start, "the spans do not overlap");
-    }
-
-    #[test]
-    fn finds_no_link_in_plain_text() {
-        assert!(description_links("example.com は URL ではない").is_empty());
     }
 
     /// 説明はユーザーが打った文字列なので、開く前に確かめる（ADR 0002）。

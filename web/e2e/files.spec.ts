@@ -117,46 +117,63 @@ test("データベースをコピーすると、開けるファイルができ�
   expect(readFileSync(path).subarray(0, 15).toString("utf8")).toBe("SQLite format 3");
 });
 
-// ---------------------------------------------------------------- 説明のリンク
+// ---------------------------------------------------------------- 説明の Markdown
 
-test("説明の中の URL に色が付き、修飾キー＋クリックで開ける", async ({ page }) => {
+/// 説明は Markdown のエディタ（#129、ADR 0033）。**打ちながら整い、保存される
+/// のは Markdown の文字列**です。
+///
+/// 説明が空の新しいカードで打ちます。出来合いのカードには説明が入っていて、
+/// 選び直してから打つと、打ち始めの 1 文字と選択の入れ替わりが重なります。
+test("`**` で打った太字が、そのまま Markdown で保存される", async ({ page }) => {
   await openBoard(page);
-  await page.locator(".column").first().locator(".card").first().dblclick();
+  await page.locator(".column").first().locator(".add-card").click();
+  await page.locator(".card-title-input").fill("太字のカード");
 
-  await page
-    .locator(".card-description-input")
-    .fill("詳しくは https://example.com/a を見てください");
+  const description = page.locator(".card-description-input");
+  await description.click();
+  await page.keyboard.type("これは **太字** です");
 
-  // 色が付くのはリンクだけ。本文のほかの部分は素のまま（ADR 0002）。
-  const link = page.locator(".description-link");
-  await expect(link).toHaveText("https://example.com/a");
+  // 画面では太字。記法の `**` は残らない。
+  await expect(description.locator(".description-bold")).toHaveText("太字");
+  await expect(description).not.toContainText("**");
 
-  // 修飾キー無しのクリックでは開かない（文章のどこかを指すためのもの）。
-  // 開いたかどうかはブラウザからは見えないので、ここで見るのは「色の付いた
-  // 場所が本文と揃っていること」まで。
-  await expect(page.locator(".description-layer")).toContainText("詳しくは");
+  await page.locator(".save-card").click();
+  await expect
+    .poll(async () =>
+      (await storedBoard()).columns
+        .flatMap((column) => column.cards)
+        .find((card) => card.title === "太字のカード")?.description,
+    )
+    .toBe("これは **太字** です");
 });
 
-// 説明の文字は入力欄ではなく裏の表示層が描いています（ADR 0002）。入力欄は
-// 表示層より手前に描かれるので、そこに下地を塗ると層ごと覆って**説明が丸ごと
-// 消えます**。見えているかどうかはスクリーンショットを撮らないと分からないので、
-// ここでは「入力欄は塗らない、下地は枠が持つ」という置き方のほうを見ます。
-test("説明の入力欄は下地を塗らず、裏の表示層を覆わない", async ({ page }) => {
+test("打った URL がリンクになり、修飾キー無しでは開かない", async ({ page }) => {
   await openBoard(page);
-  await page.locator(".column").first().locator(".card").first().dblclick();
-  await page.locator(".card-description-input").fill("見えていてほしい説明");
+  await page.locator(".column").first().locator(".add-card").click();
+  await page.locator(".card-title-input").fill("リンクのカード");
 
-  const background = (selector: string) =>
-    page.locator(selector).evaluate((element) => getComputedStyle(element).backgroundColor);
+  const description = page.locator(".card-description-input");
+  await description.click();
+  await page.keyboard.type("詳しくは https://example.com/a を見てください");
 
-  await expect.poll(() => background(".card-description-input")).toBe("rgba(0, 0, 0, 0)");
-  await expect.poll(() => background(".description-field")).not.toBe("rgba(0, 0, 0, 0)");
+  const link = description.locator(".description-link");
+  await expect(link).toHaveText("https://example.com/a");
+  await expect(link).toHaveAttribute("href", "https://example.com/a");
+
+  // 修飾キー無しのクリックでは開かない（文章のどこかを指すためのもの）。
+  // 開く先は Rust の `open_url` で、開いてよい形かはあちらが決める。
+  await link.click();
+  await expect(description).toContainText("詳しくは");
 });
 
 test("URL でない文字列はリンクにしない", async ({ page }) => {
   await openBoard(page);
-  await page.locator(".column").first().locator(".card").first().dblclick();
-  await page.locator(".card-description-input").fill("example.com と ftp://example.com");
-  await expect(page.locator(".description-layer")).toContainText("example.com");
-  await expect(page.locator(".description-link")).toHaveCount(0);
+  await page.locator(".column").first().locator(".add-card").click();
+  await page.locator(".card-title-input").fill("リンクでないカード");
+
+  const description = page.locator(".card-description-input");
+  await description.click();
+  await page.keyboard.type("example.com と ftp://example.com");
+  await expect(description).toContainText("example.com");
+  await expect(description.locator(".description-link")).toHaveCount(0);
 });

@@ -374,11 +374,6 @@ pub fn due_date_preview(value: String) -> Option<commands::DueDatePreview> {
 
 // ---------------------------------------------------------------- 説明のリンク
 
-#[tauri::command]
-pub fn description_links(text: String) -> Vec<commands::UrlSpan> {
-    commands::description_links(&text)
-}
-
 /// 説明の中のリンクをブラウザで開く（[ADR 0002]）。
 ///
 /// 開いてよい形かどうかは `commands` が決めます。説明はユーザーが打った文字列

@@ -283,11 +283,6 @@ fn invoke(command: &str, args: Value, state: &AppState) -> Result<Value, AppErro
     }
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
-    struct Text {
-        text: String,
-    }
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
     struct DueText {
         value: String,
     }
@@ -461,7 +456,6 @@ fn invoke(command: &str, args: Value, state: &AppState) -> Result<Value, AppErro
         // 場所を開く相手（OS のファイル管理）がブラウザにはいない。押しても
         // 何も起きないことだけが本物と違う。
         "reveal_path" | "reveal_database" | "reveal_backups" => ok(()),
-        "description_links" => ok(commands::description_links(&read::<Text>(args)?.text)),
         "due_date_preview" => ok(commands::due_date_preview(&read::<DueText>(args)?.value)),
         "capture_target" => ok(commands::capture_target(state)?),
         "set_capture_column" => ok(commands::set_capture_column(

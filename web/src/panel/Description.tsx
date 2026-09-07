@@ -1,21 +1,43 @@
-// 説明の入力欄と、その裏に重ねたリンクの表示層（`docs/DESIGN.md`「画面の作り」、[ADR 0002]）。
+// 説明の欄。**Markdown のエディタです**（#129、[ADR 0033]）。
 //
-// 説明はプレーンテキストのままなので、`textarea` を捨てません。**同じ字送りの
-// 表示層を裏に敷き**、そこで URL に色と下線を付けます。入力欄の文字は透明に
-// してあり、見えているのは表示層のほうです。
+// 打ちながら整います——`**太字**`、`*斜体*`、`` `コード` ``、`# 見出し`、
+// `- 箇条書き`、`> 引用`。URL は打った瞬間にリンクになります。
 //
-// 押した場所がリンクかどうかは、`selectionStart`（クリックで動いたキャレットの
-// 位置）で決めます。**当たり判定を自分で持ちません**——文字の折り返しを数え直す
-// ことになり、表示層と 1 文字でもずれたら別のリンクが開きます。
+// **持っているのは Markdown の文字列だけ**です。`description` の形も、
+// データベースも、書き出しも変わりません。編集器の中の木は表示のためのもので、
+// 出入りするときに `@lexical/markdown` が文字列へ直します。
+//
+// 開くのは修飾キー＋クリックのままです（[ADR 0002] から引き継ぎ）。エディタの
+// 中では、素のクリックは「そこにカーソルを置く」操作だからです。**開いてよい形か
+// どうかを決めるのは Rust**（`commands::openable_url`）で、そこは動かしていません。
 //
 // [ADR 0002]: ../../../docs/adr/0002-links-inside-the-description-field.md
+// [ADR 0033]: ../../../docs/adr/0033-a-markdown-editor-for-the-description.md
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { CodeNode } from "@lexical/code";
+import { AutoLinkNode, LinkNode } from "@lexical/link";
+import { ListItemNode, ListNode } from "@lexical/list";
+import {
+  $convertFromMarkdownString,
+  $convertToMarkdownString,
+  TRANSFORMERS,
+} from "@lexical/markdown";
+import { AutoLinkPlugin } from "@lexical/react/LexicalAutoLinkPlugin";
+import { LexicalComposer } from "@lexical/react/LexicalComposer";
+import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
+import { ContentEditable } from "@lexical/react/LexicalContentEditable";
+import { LexicalErrorBoundary } from "@lexical/react/LexicalErrorBoundary";
+import { HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin";
+import { LinkPlugin } from "@lexical/react/LexicalLinkPlugin";
+import { MarkdownShortcutPlugin } from "@lexical/react/LexicalMarkdownShortcutPlugin";
+import { RichTextPlugin } from "@lexical/react/LexicalRichTextPlugin";
+import { HeadingNode, QuoteNode } from "@lexical/rich-text";
+import { type EditorState } from "lexical";
+import { useEffect, useRef } from "react";
 
 import { useIpc } from "../ipc";
 import type { Platform } from "../ipc/types/Platform";
-import type { UrlSpan } from "../ipc/types/UrlSpan";
-import { linkAt, opensLink, segments } from "./links";
+import { opensLink, urlAround } from "./links";
 
 interface Props {
   id: string;
@@ -31,48 +53,113 @@ interface Props {
   onCommit?: ((value: string) => void) | undefined;
 }
 
+/// 編集器が使うノード。**Markdown の変換が作るものと揃えます**——ここに無い
+/// ノードを変換が作ると、その場で例外になります。
+const NODES = [HeadingNode, QuoteNode, ListNode, ListItemNode, CodeNode, LinkNode, AutoLinkNode];
+
+/// クラス名は自分たちのものを当てます。リンクだけは、これまでと同じ
+/// `description-link`——見た目も、テストが見ている名前も変えません。
+const THEME = {
+  link: "description-link",
+  paragraph: "description-paragraph",
+  text: {
+    bold: "description-bold",
+    italic: "description-italic",
+    code: "description-code",
+  },
+};
+
 export function Description({ id, value, platform, onChange, onCommit }: Props) {
   const ipc = useIpc();
-  const [links, setLinks] = useState<readonly UrlSpan[]>([]);
-  // IME の変換中かどうか。変換中の文字は入力欄の中にしかなく、表示層には
-  // 出てこないので、その間だけ見せる層を入れ替えます（`styles.css`）。
-  const [composing, setComposing] = useState(false);
-  const input = useRef<HTMLTextAreaElement>(null);
+  const modifier = platform === "macos" ? "Cmd" : "Ctrl";
+  // いま画面に出ている Markdown。**外から来た値と突き合わせる**のに使います
+  // ——自分が出した値がそのまま戻ってきたときに、編集器を作り直さないため。
+  const shownRef = useRef(value);
 
-  // 打った分だけ枠が伸びます（#89）。**`scrollHeight` を読む前に高さを捨てます**
-  // ——縮めるときは、いまの高さのままでは `scrollHeight` がそれより小さくならず、
-  // 一度伸びた枠が戻らなくなります。
-  //
-  // 表示層は `inset: 0` でこの枠に付いてくるので、こちらだけを測れば足ります。
-  useLayoutEffect(() => {
-    const element = input.current;
-    if (element === null) return;
-    element.style.height = "auto";
-    element.style.height = `${String(element.scrollHeight)}px`;
-  }, [value]);
+  return (
+    <LexicalComposer
+      initialConfig={{
+        namespace: "description",
+        theme: THEME,
+        nodes: NODES,
+        // 読めない Markdown で編集器が固まるより、素のまま出したい。
+        onError: (error: Error) => {
+          void ipc.logFrontendError(`description editor: ${error.message}`);
+        },
+        editorState: () => {
+          $convertFromMarkdownString(value, TRANSFORMERS);
+        },
+      }}
+    >
+      <div
+        className="description-field"
+        // 欄を離れたら確定（#141）。打ち止まって 1 秒のほうは下の見張りが呼びます。
+        onBlur={() => {
+          onCommit?.(shownRef.current);
+        }}
+      >
+        <RichTextPlugin
+          contentEditable={
+            <ContentEditable
+              id={id}
+              className="field-input card-description-input"
+              aria-label="説明"
+              title={`${modifier} を押しながらクリックすると、リンクを開きます`}
+            />
+          }
+          placeholder={<p className="description-placeholder">説明（任意）</p>}
+          ErrorBoundary={LexicalErrorBoundary}
+        />
+        {/* 打ちながら整える。`**` や `# ` を打った時点で変わります。 */}
+        <MarkdownShortcutPlugin transformers={TRANSFORMERS} />
+        <HistoryPlugin />
+        <LinkPlugin />
+        <AutoLinkPlugin matchers={MATCHERS} />
+        <MarkdownValue value={value} shownRef={shownRef} onChange={onChange} onCommit={onCommit} />
+        <OpenLink platform={platform} />
+      </div>
+    </LexicalComposer>
+  );
+}
 
-  // 打つたびに Rust に聞きます。**見つけ方を 2 か所に持たない**ためで、往復
-  // するのは位置の配列だけです（絞り込みと同じ考え方、`docs/DESIGN.md`「絞り込みと検索」）。返事が 1 打鍵ぶん
-  // 遅れても、遅れて色が付くだけです。
+/// 打った Markdown を外へ出し、外から来た Markdown を編集器へ入れる。
+///
+/// **自分が出した値が戻ってきたときは何もしません。** 入れ直すと、打っている
+/// 途中でカーソルが先頭へ飛びます。
+function MarkdownValue({
+  value,
+  shownRef,
+  onChange,
+  onCommit,
+}: {
+  value: string;
+  shownRef: { current: string };
+  onChange: (value: string) => void;
+  onCommit: ((value: string) => void) | undefined;
+}) {
+  const [editor] = useLexicalComposerContext();
+
   useEffect(() => {
-    let cancelled = false;
-    ipc
-      .descriptionLinks(value)
-      .then((found) => {
-        if (!cancelled) setLinks(found);
-      })
-      .catch(() => {
-        // 色が付かないだけなので、打つ手を止めない。
-        if (!cancelled) setLinks([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [ipc, value]);
+    if (value === shownRef.current) return;
+    shownRef.current = value;
+    editor.update(() => {
+      $convertFromMarkdownString(value, TRANSFORMERS);
+    });
+  }, [editor, shownRef, value]);
+
+  useEffect(
+    () =>
+      editor.registerUpdateListener(({ editorState }: { editorState: EditorState }) => {
+        const markdown = editorState.read(() => $convertToMarkdownString(TRANSFORMERS));
+        if (markdown === shownRef.current) return;
+        shownRef.current = markdown;
+        onChange(markdown);
+      }),
+    [editor, onChange, shownRef],
+  );
 
   // 打ち止まって 1 秒で確定します（#141）。**打鍵のたびには確定しません**
   // ——1 文字ごとに `update_card` を呼ぶと、Undo が 1 文字ずつ積まれます。
-  // 変換中は待ちません（`value` は確定した文字しか来ないため）。
   const committed = useRef(value);
   useEffect(() => {
     if (onCommit === undefined || value === committed.current) return;
@@ -85,54 +172,47 @@ export function Description({ id, value, platform, onChange, onCommit }: Props) 
     };
   }, [onCommit, value]);
 
-  const modifier = platform === "macos" ? "Cmd" : "Ctrl";
+  return null;
+}
 
-  return (
-    <div className={composing ? "description-field composing" : "description-field"}>
-      <div className="description-layer" aria-hidden="true">
-        {segments(value, links).map((piece, index) => (
-          <span
-            // 本文を切った順番がそのまま鍵になる。同じ文字列が並ぶことがあるので
-            // 中身は使えない。
-            key={index}
-            className={piece.url === null ? undefined : "description-link"}
-          >
-            {piece.text}
-          </span>
-        ))}
-        {/* 末尾の改行だけだと表示層の高さが 1 行ぶん足りない。 */}
-        {"\n"}
-      </div>
-      <textarea
-        id={id}
-        ref={input}
-        className="field-input card-description-input"
-        aria-label="説明"
-        value={value}
-        placeholder="説明（任意）"
-        rows={4}
-        title={`${modifier} を押しながらクリックすると、リンクを開きます`}
-        onChange={(event) => {
-          onChange(event.target.value);
-        }}
-        // 欄を離れたら確定（#141）。打ち止まって 1 秒のほうは下の見張りが呼びます。
-        onBlur={() => {
-          onCommit?.(value);
-        }}
-        onCompositionStart={() => {
-          setComposing(true);
-        }}
-        onCompositionEnd={() => {
-          setComposing(false);
-        }}
-        onClick={(event) => {
-          if (!opensLink(event.nativeEvent, platform)) return;
-          const link = linkAt(links, event.currentTarget.selectionStart);
-          if (link === null) return;
-          event.preventDefault();
-          void ipc.openUrl(link.url);
-        }}
-      />
-    </div>
-  );
+/// 打った URL をリンクにする。
+///
+/// 拾う形（`http(s)://` だけ、末尾の句読点は落とす）は `links.ts` の 1 か所に
+/// 置き、`AutoLinkPlugin` にはその結果を渡します。**打っている途中の伸び縮みは
+/// プラグインに任せます**——自分で節を差し替えると、1 文字打つたびに途中まで
+/// のリンクが固まります。
+const MATCHERS = [
+  (text: string) => {
+    const span = urlAround(text);
+    if (span === null) return null;
+    const url = text.slice(span.start, span.end);
+    return { index: span.start, length: span.end - span.start, text: url, url };
+  },
+];
+
+/// 修飾キー＋クリックでリンクを開く（ADR 0002 から引き継ぎ）。
+function OpenLink({ platform }: { platform: Platform }) {
+  const ipc = useIpc();
+  const [editor] = useLexicalComposerContext();
+
+  useEffect(() => {
+    const root = editor.getRootElement();
+    if (root === null) return;
+    const onClick = (event: MouseEvent) => {
+      if (!opensLink(event, platform)) return;
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) return;
+      const anchor = target.closest("a");
+      const url = anchor?.getAttribute("href");
+      if (url === null || url === undefined) return;
+      event.preventDefault();
+      void ipc.openUrl(url);
+    };
+    root.addEventListener("click", onClick);
+    return () => {
+      root.removeEventListener("click", onClick);
+    };
+  }, [editor, ipc, platform]);
+
+  return null;
 }

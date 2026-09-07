@@ -1,7 +1,7 @@
 # 0002. 説明の URL を、入力欄の中でリンクとして描く
 
 - 日付: 2026-09-05
-- 状態: 有効
+- 状態: 置き換えられた（→ [0033](0033-a-markdown-editor-for-the-description.md)）
 - 関連: [#71](https://github.com/tokuhirom/ekanban/issues/71) [#72](https://github.com/tokuhirom/ekanban/pull/72)、[0001](0001-links-in-the-description.md) を置き換える
 
 ## 状況
