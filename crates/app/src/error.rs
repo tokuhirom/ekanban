@@ -105,7 +105,7 @@ fn field_for(error: &BoardError) -> Option<(Field, &'static str, Option<String>)
         BoardError::EmptyCardTitle => (Field::CardTitle, "タイトルを入力してください", None),
         BoardError::InvalidDueDate(value) => (
             Field::DueDate,
-            "YYYY-MM-DD 形式で入力してください（空欄で期限なし）",
+            "日付として読めません。9/12、明日、金、+3 のように入力してください（空欄で期限なし）",
             Some(value.clone()),
         ),
         BoardError::EmptyColumnName => (Field::ColumnName, "カラム名を入力してください", None),
@@ -142,7 +142,7 @@ fn board_detail(error: &BoardError) -> String {
         BoardError::EmptyCardTitle => "タイトルを入力してください".to_string(),
         BoardError::EmptyColumnName => "カラム名を入力してください".to_string(),
         BoardError::InvalidDueDate(value) => {
-            format!("期限「{value}」は YYYY-MM-DD 形式で入力してください")
+            format!("期限「{value}」を日付として読めません。9/12、明日、金、+3 のように入力してください")
         }
         BoardError::InvalidWipLimit(value) => {
             format!("WIP 上限「{value}」は正の整数、または空欄で入力してください")

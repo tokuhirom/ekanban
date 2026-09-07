@@ -15,6 +15,7 @@ import type { QuickCaptureStatus } from "./types/QuickCaptureStatus";
 import type { Snapshot } from "./types/Snapshot";
 import type { StartupState } from "./types/StartupState";
 import type { ThemePreference } from "./types/ThemePreference";
+import type { DueDatePreview } from "./types/DueDatePreview";
 import type { UrlSpan } from "./types/UrlSpan";
 
 /// 画面が呼べるコマンド。Rust の `crates/app/src/commands.rs` に 1 対 1。
@@ -73,7 +74,11 @@ export interface Ipc {
   removeTag(tagId: number): Promise<Snapshot>;
   /** 落とした瞬間に 1 回だけ呼ぶ。ドラッグ中は webview の中で完結させる
    * （`docs/DESIGN.md`「ドラッグ＆ドロップ」）。 */
-  moveCard(cardId: number, toColumnId: number, toIndex: number): Promise<Snapshot>;
+  moveCard(
+    cardId: number,
+    toColumnId: number,
+    toIndex: number,
+  ): Promise<Snapshot>;
   moveColumn(columnId: number, toIndex: number): Promise<Snapshot>;
   /** 検索語とタグに一致するカードの ID。打鍵ごとに呼ぶ（`docs/DESIGN.md`「絞り込みと検索」）。 */
   filterCards(query: string, tagId: number | null): Promise<number[]>;
@@ -104,6 +109,8 @@ export interface Ipc {
   revealBackups(): Promise<void>;
   /** 説明の中の URL の位置。**見つけ方は Rust に 1 つだけ**（ADR 0002）。 */
   descriptionLinks(text: string): Promise<UrlSpan[]>;
+  /** 期限として打った文字を、Rust がどう読んだか。読めなければ `null`（ADR 0031）。 */
+  dueDatePreview(value: string): Promise<DueDatePreview | null>;
   /** 説明の中のリンクをブラウザで開く。 */
   openUrl(url: string): Promise<void>;
   /** クイックキャプチャの入れ先。設定が無ければ既定（先頭カラム）が返る。 */

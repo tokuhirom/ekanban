@@ -580,6 +580,11 @@ button.danger {
   min-width: 0;
 }
 
+/* 打った文字をどう読んだか（#134）。欄のすぐ下に、控えめに出す。 */
+.due-preview {
+  font-variant-numeric: tabular-nums;
+}
+
 .due-clear {
   flex: none;
   padding: 4px 8px;
