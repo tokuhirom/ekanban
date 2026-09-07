@@ -107,8 +107,9 @@ export function Description({ id, value, platform, onChange, onCommit }: Props) 
         id={id}
         ref={input}
         className="field-input card-description-input"
+        aria-label="説明"
         value={value}
-        placeholder="任意。詳しいことがあれば"
+        placeholder="説明（任意）"
         rows={4}
         title={`${modifier} を押しながらクリックすると、リンクを開きます`}
         onChange={(event) => {

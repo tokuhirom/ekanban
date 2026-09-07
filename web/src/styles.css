@@ -609,6 +609,57 @@ button.danger {
   font: inherit;
 }
 
+/* パネルは「カードを大きくしたもの」（#144）。タイトルは見出し無しの大きい欄で、
+ * 期限とタグはその直下の 1 行。枠は触っているときだけ出す。 */
+.card-title-input {
+  padding: 4px 0;
+  border: 0;
+  background: transparent;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.card-title-input:focus {
+  outline: 2px solid var(--color-border);
+  outline-offset: 2px;
+}
+
+.card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.card-meta > .due-field {
+  flex: 0 1 auto;
+}
+
+.card-meta > .due-field > .card-due-input {
+  /* パネルは 340px。タグと 1 行に並ぶ幅にする（#144）。 */
+  width: 7.5em;
+  min-width: 0;
+  /* タイトルや説明と同じく、枠は触っているあいだだけ。 */
+  border-color: transparent;
+  background: transparent;
+  padding-left: 0;
+}
+
+.card-meta > .due-field > .card-due-input:focus {
+  border-color: var(--color-border);
+  background: var(--color-input-background);
+  padding-left: 8px;
+}
+
+.card-meta > .tags-input {
+  flex: 1 1 120px;
+  min-width: 0;
+}
+
+.checklist {
+  display: contents;
+}
+
 /* 期限の欄。外す × は入力に重ねず右へ並べる（#128）——`type="date"` が
  * 右端に出すカレンダーアイコンの位置が webview ごとに違うため。 */
 .due-field {
@@ -843,6 +894,34 @@ button.danger {
  * あるので、不透明な色で塗ると下の文字が隠れます。 */
 .description-field > .card-description-input::selection {
   background: var(--color-selection);
+}
+
+/* パネルの中では、説明も枠なしにする（#144）。触っているあいだだけ枠が出る。
+ * 下地は `.description-field` が持っているので、そちらも透かす。 */
+.panel-body > .description-field {
+  background: transparent;
+}
+
+.panel-body > .description-field > .card-description-input {
+  border-color: transparent;
+  padding-left: 0;
+}
+
+.panel-body > .description-field > .description-layer {
+  padding-left: 0;
+}
+
+.panel-body > .description-field:focus-within {
+  background: var(--color-input-background);
+}
+
+.panel-body > .description-field:focus-within > .card-description-input {
+  border-color: var(--color-border);
+  padding-left: 8px;
+}
+
+.panel-body > .description-field:focus-within > .description-layer {
+  padding-left: 8px;
 }
 
 .description-layer {
