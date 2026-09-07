@@ -387,7 +387,6 @@ export function CardPanel({
                 key={item.key}
                 item={item}
                 index={index}
-                count={draft.checklist.length}
                 onToggle={() => {
                   setDraft({
                     ...draft,
@@ -623,7 +622,6 @@ function TagsInput({
 function ChecklistRow({
   item,
   index,
-  count,
   onToggle,
   onChangeText,
   onMove,
@@ -635,7 +633,6 @@ function ChecklistRow({
 }: {
   item: DraftChecklistItem;
   index: number;
-  count: number;
   onToggle: () => void;
   onChangeText: (text: string) => void;
   onMove: (direction: "up" | "down") => void;
@@ -712,8 +709,16 @@ function ChecklistRow({
         onFocus={onFocused}
         // 箇条書きと同じ流れで打てるようにします（#138）。**変換中の
         // `Enter` は取りません**——確定しただけで行が増えます（ADR 0029）。
+        // 並べ替えは `Alt+↑` / `Alt+↓`（#137）。`↑` `↓` のボタンを畳んでも、
+        // キーボードだけで並べ替える道は残ります（#113）。
+        aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
         onKeyDown={(event) => {
           if (isComposing(event.nativeEvent)) return;
+          if (event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
+            event.preventDefault();
+            onMove(event.key === "ArrowUp" ? "up" : "down");
+            return;
+          }
           if (event.key === "Enter") {
             event.preventDefault();
             onSplit();
@@ -725,35 +730,17 @@ function ChecklistRow({
           }
         }}
       />
+      {/* 消すのは行末の `✕` 1 つに畳みます（#137）。`⠿` と同じく、乗せたときと
+          この行にフォーカスがあるときだけ見えます——見えない的にフォーカスが
+          当たらないよう、消すのは見た目だけで要素は残します。 */}
       <button
         type="button"
-        className="ghost"
-        aria-label="上へ"
-        disabled={index === 0}
-        onClick={() => {
-          onMove("up");
-        }}
-      >
-        ↑
-      </button>
-      <button
-        type="button"
-        className="ghost"
-        aria-label="下へ"
-        disabled={index + 1 >= count}
-        onClick={() => {
-          onMove("down");
-        }}
-      >
-        ↓
-      </button>
-      <button
-        type="button"
-        className="secondary"
-        aria-label="項目を削除"
+        className="ghost checklist-remove"
+        aria-label={`チェックリストの ${index + 1} 番目を削除`}
+        title="項目を削除"
         onClick={onDelete}
       >
-        削除
+        ✕
       </button>
     </div>
   );
