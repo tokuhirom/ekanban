@@ -1,4 +1,4 @@
-// 押されているキーを、その場に映すための組み立て（`docs/DESIGN.md`「クイックキャプチャ」、[ADR 0029]）。
+// 押されているキーを、その場に映すための組み立て（`docs/DESIGN.md`「クイックキャプチャ」、[ADR 0030]）。
 //
 // **表記だけを持ちます。** どの組み合わせを受け付けるかも、保存の形も Rust の
 // `shortcut.rs` が決めていて、ここはその両方を人が読む形に直すだけです。判定を
@@ -7,7 +7,7 @@
 // 修飾キーの並び順は、保存の形（`ctrl-alt-shift-cmd-n`）と同じにしてあります。
 // macOS で慣用の ⌃⌥⇧⌘ と同じ順なので、どちらの OS でも並べ替えは要りません。
 //
-// [ADR 0029]: ../../../docs/adr/0029-capturing-a-shortcut-needs-the-menu-out-of-the-way.md
+// [ADR 0030]: ../../../docs/adr/0030-capturing-a-shortcut-needs-the-menu-out-of-the-way.md
 
 import type { Platform } from "../ipc/types/Platform";
 

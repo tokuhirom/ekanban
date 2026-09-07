@@ -1,10 +1,10 @@
-// クイックキャプチャの割り当てを記録するダイアログ（`docs/DESIGN.md`「クイックキャプチャ」、ADR 0012、[ADR 0029]）。
+// クイックキャプチャの割り当てを記録するダイアログ（`docs/DESIGN.md`「クイックキャプチャ」、ADR 0012、[ADR 0030]）。
 //
 // 押されたキーをそのまま割り当てにします。**組み合わせは Rust が組み立てます**
 // （`shortcut.rs`）——受け付けられる修飾キーとキーの範囲は、登録する側にしか
 // 分からないからです。ここが送るのは `KeyboardEvent` の中身だけです。
 //
-// **押されているキーをその場に映します**（[ADR 0029]）。映さないと、押したのに
+// **押されているキーをその場に映します**（[ADR 0030]）。映さないと、押したのに
 // 何も起きないとき、キーが届いていないのか、届いて断られたのかが分かりません。
 // 同じ理由で、**割り当てたあともダイアログを閉じません**——閉じてしまうと、
 // 何が登録されたのかを読む間がありません。
@@ -18,7 +18,7 @@
 // ところに理由を出さない、という [ADR 0016] の分け方のとおりです。
 //
 // [ADR 0016]: ../../../docs/adr/0016-where-the-app-says-things.md
-// [ADR 0029]: ../../../docs/adr/0029-capturing-a-shortcut-needs-the-menu-out-of-the-way.md
+// [ADR 0030]: ../../../docs/adr/0030-capturing-a-shortcut-needs-the-menu-out-of-the-way.md
 
 import { useEffect, useRef, useState } from "react";
 
@@ -26,6 +26,7 @@ import { useIpc, type Ipc } from "../ipc";
 import { describeFailure } from "../ipc/error";
 import type { KeyPress } from "../ipc/types/KeyPress";
 import type { Platform } from "../ipc/types/Platform";
+import { isComposing } from "./ime";
 import {
   describeHeld,
   describeStored,
@@ -141,7 +142,7 @@ export function ShortcutDialog({
           setHeld((previous) => heldOnKeyUp(previous, event.nativeEvent));
         }}
         onKeyDown={(event) => {
-          if (event.nativeEvent.isComposing) return;
+          if (isComposing(event.nativeEvent)) return;
           // 修飾キーなしの Escape は「やめる」。割り当てにはしない。
           if (event.key === "Escape" && !(event.ctrlKey || event.altKey || event.metaKey)) {
             event.stopPropagation();

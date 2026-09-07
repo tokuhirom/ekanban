@@ -12,6 +12,7 @@ function press(init: Partial<KeyboardEvent>): KeyboardEvent {
   return {
     key: "z",
     isComposing: false,
+    keyCode: 0,
     ctrlKey: false,
     metaKey: false,
     altKey: false,

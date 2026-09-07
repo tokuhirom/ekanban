@@ -511,14 +511,14 @@ pub fn build<R: Runtime>(app_handle: &AppHandle<R>) -> tauri::Result<Menu<R>> {
 /// メニューに付いているキーの割り当てを、付け外しする。
 ///
 /// **クイックキャプチャの割り当てを捕まえている間は外します**（`docs/DESIGN.md`
-/// 「クイックキャプチャ」、[ADR 0029]）。メニューのアクセラレータは webview より
+/// 「クイックキャプチャ」、[ADR 0030]）。メニューのアクセラレータは webview より
 /// 先に押されたキーを取るので、付いたままだと `Cmd+N` のような組み合わせが
 /// `keydown` として画面に届かず、**押しても何も起きないダイアログ**になります。
 ///
 /// 触るのは自分で持っている項目だけです。[`Predefined`] の項目（`Cmd+Q`、
 /// `Cmd+W`、`Cmd+C` など）は OS のもので、そこに割り当てるものでもありません。
 ///
-/// [ADR 0029]: ../../../docs/adr/0029-capturing-a-shortcut-needs-the-menu-out-of-the-way.md
+/// [ADR 0030]: ../../../docs/adr/0030-capturing-a-shortcut-needs-the-menu-out-of-the-way.md
 pub fn set_accelerators_active<R: Runtime>(app: &AppHandle<R>, active: bool) -> tauri::Result<()> {
     let Some(menu) = app.menu() else {
         // メニューを組んでいなければ、外すものも戻すものもない。
@@ -678,7 +678,7 @@ mod tests {
     ///
     /// **ここが落ちるのは id が重なったとき**で、そうなると片方の項目が
     /// 割り当ての無いまま、押せないまま残ります（`docs/DESIGN.md`
-    /// 「クイックキャプチャ」、ADR 0029）。
+    /// 「クイックキャプチャ」、ADR 0030）。
     #[test]
     fn every_menu_item_can_be_put_back_by_its_id() {
         let built: Vec<(&str, Option<&str>, bool)> = sections()

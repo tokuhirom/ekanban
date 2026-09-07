@@ -52,8 +52,22 @@ export default [
       "@typescript-eslint/no-floating-promises": "error",
       // 数を文字列に混ぜるのは日常の書き方で、危なくない。
       "@typescript-eslint/restrict-template-expressions": ["error", { allowNumber: true }],
+      // IME の変換中かは `shell/ime.ts` の `isComposing()` だけが決める。
+      // `isComposing` を直に読むと、WebKit が `compositionend` を先に出す
+      // ぶん、変換を確定する `Enter` を取りこぼす（#124）。
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "MemberExpression[property.name='isComposing']",
+          message:
+            "IME の変換中かは `shell/ime.ts` の `isComposing()` で判定してください（`isComposing` を直に読むと WebKit の確定 Enter を取りこぼします）。",
+        },
+      ],
     },
   },
+
+  // 判定そのものを書いている場所。ここだけが `isComposing` を直に読む。
+  { files: ["src/shell/ime.ts"], rules: { "no-restricted-syntax": "off" } },
 
   { files: ["eslint.config.js"], ...tseslint.configs.disableTypeChecked },
 ];

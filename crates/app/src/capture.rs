@@ -29,11 +29,11 @@ pub(crate) const CAPTURE_WINDOW: &str = "capture";
 /// 保存されている割り当てが、いま効いているかどうか。
 ///
 /// **登録に失敗した理由を捨てません**（`docs/DESIGN.md`「クイックキャプチャ」、
-/// [ADR 0029]）。保存されているだけで登録できていない割り当ては、設定を見ても
+/// [ADR 0030]）。保存されているだけで登録できていない割り当ては、設定を見ても
 /// 効いているようにしか見えないので、押しても何も起きない理由が誰にも分かり
 /// ません。ここに残して、割り当てのダイアログがその場で読みます。
 ///
-/// [ADR 0029]: ../../../docs/adr/0029-capturing-a-shortcut-needs-the-menu-out-of-the-way.md
+/// [ADR 0030]: ../../../docs/adr/0030-capturing-a-shortcut-needs-the-menu-out-of-the-way.md
 #[derive(Default)]
 pub struct Registration(Mutex<Option<String>>);
 

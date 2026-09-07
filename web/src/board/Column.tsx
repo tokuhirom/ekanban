@@ -9,6 +9,7 @@ import type { Column as ColumnData } from "../ipc/types/Column";
 import type { DueStatus } from "../ipc/types/DueStatus";
 import type { Snapshot } from "../ipc/types/Snapshot";
 import type { Tag } from "../ipc/types/Tag";
+import { isComposing } from "../shell/ime";
 import { Card } from "./Card";
 import { handleId } from "./dnd";
 
@@ -256,7 +257,7 @@ function ColumnEditor({
     <div
       className="column-editor"
       onKeyDown={(event) => {
-        if (event.nativeEvent.isComposing) return;
+        if (isComposing(event.nativeEvent)) return;
         // 1 行の欄なので Enter で確定し、Escape で取り消す（`docs/DESIGN.md`）。
         if (event.key === "Enter") {
           event.preventDefault();

@@ -109,7 +109,7 @@ test("押しているキーがその場に出て、割り当てを記録して�
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
 
-  // 押している途中のキーがそのまま出る（ADR 0029）。出さないと、押したのに
+  // 押している途中のキーがそのまま出る（ADR 0030）。出さないと、押したのに
   // 何も起きないとき、キーが届いていないのか断られたのかが分からない。
   const pressed = dialog.locator(".pressed-keys");
   await expect(pressed).toContainText("キーが押されていません");
