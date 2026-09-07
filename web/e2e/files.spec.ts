@@ -147,6 +147,62 @@ test("`**` で打った太字が、そのまま Markdown で保存される", as
     .toBe("これは **太字** です");
 });
 
+test("箇条書きは、何も打たずに `Enter` を押すと終わる", async ({ page }) => {
+  await openBoard(page);
+  await page.locator(".column").first().locator(".add-card").click();
+  await page.locator(".card-title-input").fill("箇条書きのカード");
+
+  const description = page.locator(".card-description-input");
+  await description.click();
+  await page.keyboard.type("- ひとつめ");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("ふたつめ");
+  // 何も打っていない項目で押すと、そこで箇条書きが終わります。
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("ここは段落");
+
+  await expect(description.locator("li")).toHaveCount(2);
+  await expect(description.locator("p").last()).toHaveText("ここは段落");
+
+  await page.locator(".save-card").click();
+  await expect
+    .poll(async () =>
+      (await storedBoard()).columns
+        .flatMap((column) => column.cards)
+        .find((card) => card.title === "箇条書きのカード")?.description,
+    )
+    .toBe("- ひとつめ\n- ふたつめ\n\nここは段落");
+});
+
+test("`- [ ]` はチェック項目になり、印を押すと `- [x]` で保存される", async ({ page }) => {
+  await openBoard(page);
+  await page.locator(".column").first().locator(".add-card").click();
+  await page.locator(".card-title-input").fill("チェックのカード");
+
+  const description = page.locator(".card-description-input");
+  await description.click();
+  await page.keyboard.type("- [ ] 買い物");
+
+  // 記法は残らず、印そのものになります。
+  const item = description.locator("li[role=checkbox]");
+  await expect(item).toHaveText("買い物");
+  await expect(item).toHaveAttribute("aria-checked", "false");
+
+  // 押すのは印の上だけ。文字のところを押すと、そこにカーソルが入ります。
+  await item.click({ position: { x: 5, y: 8 } });
+  await expect(item).toHaveAttribute("aria-checked", "true");
+
+  await page.locator(".save-card").click();
+  await expect
+    .poll(async () =>
+      (await storedBoard()).columns
+        .flatMap((column) => column.cards)
+        .find((card) => card.title === "チェックのカード")?.description,
+    )
+    .toBe("- [x] 買い物");
+});
+
 test("打った URL がリンクになり、修飾キー無しでは開かない", async ({ page }) => {
   await openBoard(page);
   await page.locator(".column").first().locator(".add-card").click();

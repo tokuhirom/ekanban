@@ -899,6 +899,56 @@ button.danger {
   padding-left: 1.5em;
 }
 
+/* `- [ ]` で打つチェック項目。**印は自分で描きます**——`li` の中に入力欄を
+ * 置くと、そこに文字カーソルが入り、押しても消しても本文が動いてしまいます。
+ * 中黒の代わりに枠を出すので、この箇条書きだけ行頭の印を落とします。 */
+.description-field .description-checklist {
+  padding-left: 0;
+  list-style: none;
+}
+
+.description-field .description-checked,
+.description-field .description-unchecked {
+  position: relative;
+  padding-left: 1.5em;
+  outline: none;
+}
+
+.description-field .description-checked::before,
+.description-field .description-unchecked::before {
+  content: "";
+  position: absolute;
+  top: 0.25em;
+  left: 0;
+  width: 0.9em;
+  height: 0.9em;
+  box-sizing: border-box;
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  background: var(--color-input-background);
+  cursor: pointer;
+}
+
+/* 済んだ項目は、色だけでなく `✓` でも分かるようにします
+ * （色だけに意味を持たせない、`docs/DESIGN.md`）。 */
+.description-field .description-checked::after {
+  content: "";
+  position: absolute;
+  top: 0.35em;
+  left: 0.28em;
+  width: 0.28em;
+  height: 0.55em;
+  border: solid var(--color-info);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+  pointer-events: none;
+}
+
+.description-field .description-checked {
+  color: var(--color-muted-foreground);
+  text-decoration: line-through;
+}
+
 .description-field blockquote {
   margin: 0;
   padding-left: 8px;

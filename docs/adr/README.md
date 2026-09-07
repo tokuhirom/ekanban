@@ -114,3 +114,6 @@
 | [0032](0032-committing-a-card-field-by-field.md) | 編集パネルは欄ごとに確定する | 2026-09-07 | 有効 |
 | [0033](0033-a-markdown-editor-for-the-description.md) | 説明は Markdown のエディタで書く | 2026-09-07 | 有効 |
 | [0034](0034-dropping-the-wip-limit.md) | WIP 上限をやめる | 2026-09-07 | 有効 |
+| [0035](0035-a-browser-build-of-the-real-core.md) | ブラウザで試せる版は、中核を wasm に組み直して作る | 2026-09-07 | 有効 |
+| [0036](0036-one-model-two-places-to-put-it.md) | モデルは 1 つ、置き場所は 2 つ | 2026-09-07 | 有効 |
+| [0037](0037-a-list-that-ends-where-you-stop-typing.md) | 箇条書きは打ち止めたところで終わる | 2026-09-07 | 有効 |
