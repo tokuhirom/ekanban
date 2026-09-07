@@ -84,6 +84,8 @@ export function harnessIpc(base: string): Ipc {
     restoreCard: (cardId) => call<Snapshot>(base, "restore_card", { cardId }),
     setCardTags: (cardId, tagIds) =>
       call<Snapshot>(base, "set_card_tags", { cardId, tagIds }),
+    setCardDueDate: (cardId, dueDate) =>
+      call<Snapshot>(base, "set_card_due_date", { cardId, dueDate }),
     addColumn: (name) => call<Snapshot>(base, "add_column", { name }),
     renameColumn: (columnId, name) =>
       call<Snapshot>(base, "rename_column", { columnId, name }),

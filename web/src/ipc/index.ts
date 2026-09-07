@@ -60,6 +60,8 @@ export interface Ipc {
   restoreCard(cardId: number): Promise<Snapshot>;
   /** 右クリックメニューからタグだけを付け外しする。パネルを開かずに済ませるため。 */
   setCardTags(cardId: number, tagIds: number[]): Promise<Snapshot>;
+  /** 右クリックメニューから期限だけを当て外しする（#132）。`""` で期限なし。 */
+  setCardDueDate(cardId: number, dueDate: string): Promise<Snapshot>;
 
   addColumn(name: string): Promise<Snapshot>;
   renameColumn(columnId: number, name: string): Promise<Snapshot>;

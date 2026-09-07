@@ -5,6 +5,7 @@ import type { Card as CardData } from "../ipc/types/Card";
 import type { DueStatus } from "../ipc/types/DueStatus";
 import type { Tag } from "../ipc/types/Tag";
 import { handleId } from "./dnd";
+import { dueChoices } from "./due";
 
 /// 「9/4」。年をまたぐものだけ年を出す。カードの面は狭いので、いまの年は落とす。
 ///
@@ -253,11 +254,15 @@ export interface MenuProps {
   card: CardData;
   tags: readonly Tag[];
   at: { x: number; y: number };
+  /** `due_statuses` を出した日。期限の候補はここから数える（ブラウザの時計ではなく）。 */
+  today: string;
   onClose: () => void;
   onCopy: () => void;
   onArchive: () => void;
   onDelete: () => void;
   onToggleTag: (tagId: number) => void;
+  /** 期限をその場で当て外しする（#132）。`""` で期限なし。 */
+  onSetDueDate: (dueDate: string) => void;
 }
 
 /// カードの右クリックメニュー。
@@ -274,11 +279,13 @@ export function CardMenu({
   card,
   tags,
   at,
+  today,
   onClose,
   onCopy,
   onArchive,
   onDelete,
   onToggleTag,
+  onSetDueDate,
 }: MenuProps) {
   return (
     <div
@@ -299,6 +306,35 @@ export function CardMenu({
         }}
       >
         コピー
+      </button>
+      {/* 期限は、パネルを開かずに当て外しできるようにします（#132）。
+          当てるのは `set_card_due_date` の 1 コマンドなので、Undo も 1 手。 */}
+      <span className="menu-label">期限</span>
+      {dueChoices(today).map((choice) => (
+        <button
+          key={choice.label}
+          type="button"
+          className="ghost"
+          onClick={() => {
+            onClose();
+            onSetDueDate(choice.date);
+          }}
+        >
+          {/* 色だけに意味を持たせない。当たっている日付は印で書く。 */}
+          {card.dueDate === choice.date ? "✓ " : "□ "}
+          {choice.label}
+        </button>
+      ))}
+      <button
+        type="button"
+        className="ghost"
+        onClick={() => {
+          onClose();
+          onSetDueDate("");
+        }}
+      >
+        {card.dueDate === null ? "✓ " : "□ "}
+        なし
       </button>
       <span className="menu-label">タグ</span>
       {tags.map((tag) => (
