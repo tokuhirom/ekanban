@@ -33,6 +33,7 @@ import { useBoardState } from "../state/board";
 import { CardFace, CardMenu } from "./Card";
 import { Column } from "./Column";
 import { droppableKind, handleId, locateCard, parseHandle } from "./dnd";
+import { firstDueCard, type DueKind } from "./dueOrder";
 import {
   arrowDirection,
   boardShortcutsDisabled,
@@ -326,6 +327,37 @@ export function Board() {
     });
   }
 
+  /// ボード一覧の件数から、その状態の先頭カードへ辿る（#136）。
+  ///
+  /// **絞り込みも減光もしません。** 動かすのは選択と、そこまでのスクロール
+  /// だけです。ほかのボードの件数なら、まず切り替えて、返ってきた盤面から
+  /// 目当てのカードを引きます——切り替えは非同期なので、こちらの `board` は
+  /// まだ古いままです（`CardPanel` がタグを作るときと同じ形）。
+  async function jumpToDue(boardId: number, kind: DueKind) {
+    let target = firstDueCard(openBoard, state.dueStatuses, kind);
+    if (boardId !== openBoard.id) {
+      const found: { id: number | null } = { id: null };
+      const failure = await run(async () => {
+        const fresh = await ipc.switchBoard(boardId);
+        const statuses = new Map(fresh.dueStatuses.map((entry) => [entry.cardId, entry.status]));
+        found.id = firstDueCard(fresh.board, statuses, kind);
+        return fresh;
+      });
+      if (failure !== null) return;
+      target = found.id;
+    }
+    if (target === null) return;
+    selectCard(target);
+    // 選んだだけでは画面の外にいることがある。描き直しを 1 枚待ってから送る。
+    // `nearest` なので、既に見えているカードでは盤面が動かない。
+    requestAnimationFrame(() => {
+      document.querySelector(`[data-card="${String(target)}"]`)?.scrollIntoView({
+        block: "nearest",
+        inline: "nearest",
+      });
+    });
+  }
+
   function askCreateBoard() {
     setPrompt({
       title: "ボードを追加",
@@ -371,6 +403,9 @@ export function Board() {
         onCreate={askCreateBoard}
         onRename={askRenameBoard}
         onDelete={askDeleteBoard}
+        onJumpDue={(boardId, kind) => {
+          void jumpToDue(boardId, kind);
+        }}
       />
       <main className="board">
         <header className="board-header">
