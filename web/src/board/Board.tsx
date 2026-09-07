@@ -36,9 +36,11 @@ import { droppableKind, handleId, locateCard, parseHandle } from "./dnd";
 import {
   arrowDirection,
   boardShortcutsDisabled,
+  deletesSelectedCard,
   keyboardMove,
   movesSelectedCard,
   nextSelection,
+  selectionAfterDelete,
 } from "./keyboard";
 import { Sidebar } from "./Sidebar";
 
@@ -202,6 +204,20 @@ export function Board() {
       }
 
       if (boardShortcutsDisabled(event)) return;
+
+      // 選んでいるカードを消す（#143）。確認は出しません——`docs/DESIGN.md`
+      // 「確認ダイアログは Undo の代わりではない」で、カード 1 枚の削除は
+      // Undo で戻ります。右クリックからの削除も確認していないので揃います。
+      if (deletesSelectedCard(event) && selectedCard !== null) {
+        event.preventDefault();
+        // 消す前に行き先を決める。消えたあとの盤面には、その手がかりが無い。
+        const next = selectionAfterDelete(board, selectedCard);
+        void run(() => ipc.deleteCard(selectedCard)).then(() => {
+          selectCard(next);
+        });
+        return;
+      }
+
       const direction = arrowDirection(event.key);
       if (direction === null) {
         // 選んでいるカードを開く。1 回のクリックでは開かないので
@@ -235,7 +251,7 @@ export function Board() {
     return () => {
       document.removeEventListener("keydown", onKeyDown);
     };
-  }, [board, moveCard, openCard, platform, redo, selectCard, selectedCard, undo]);
+  }, [board, ipc, moveCard, openCard, platform, redo, run, selectCard, selectedCard, undo]);
 
   // 掴んだと判定するまでに少し動かす。押しただけでドラッグが始まると、
   // カードを選ぶだけのつもりが動いてしまう。

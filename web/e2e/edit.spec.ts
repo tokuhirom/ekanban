@@ -325,6 +325,37 @@ test("× を押すと期限が外れる", async ({ page }) => {
     .toBeNull();
 });
 
+// ---------------------------------------------------------------- キーで消す
+
+/// 選んだカードは `Delete` / `Backspace` で消せる（#143）。確認は出さない
+/// ——`docs/DESIGN.md`「確認ダイアログは Undo の代わりではない」。
+test("選んだカードを Delete で消して、Undo 1 回で戻せる", async ({ page }) => {
+  await openBoard(page);
+  const before = await storedTitles();
+  const card = page.locator(".column").first().locator(".card").first();
+  const title = await card.locator(".card-title").innerText();
+
+  await card.click();
+  await page.keyboard.press("Delete");
+  await expect.poll(storedTitles).not.toContain(title);
+  // 消したあとは隣のカードが選ばれ、そのまま次を消せる。
+  await expect(page.locator(".card[data-selected]")).toHaveCount(1);
+
+  await page.keyboard.press("ControlOrMeta+z");
+  await expect.poll(storedTitles).toEqual(before);
+});
+
+test("検索欄にいる間は、Backspace でカードが消えない", async ({ page }) => {
+  await openBoard(page);
+  const before = await storedTitles();
+
+  await page.locator(".column").first().locator(".card").first().click();
+  await page.locator("input.search").fill("あ");
+  await page.keyboard.press("Backspace");
+  await expect(page.locator("input.search")).toHaveValue("");
+  expect(await storedTitles()).toEqual(before);
+});
+
 // ---------------------------------------------------------------- チェックリスト
 
 test("チェックリストの項目を足し、並べ替え、チェックできる", async ({ page }) => {

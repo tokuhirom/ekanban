@@ -107,6 +107,35 @@ export function movesSelectedCard(event: KeyboardEvent, platform: Platform): boo
   return secondary && event.altKey && !event.shiftKey && !other;
 }
 
+/// 選んでいるカードを消す割り当てか（#143）。
+///
+/// 修飾キーの付いたものは取りません。矢印と同じ扱いで、別の割り当てに譲ります。
+export function deletesSelectedCard(event: KeyboardEvent): boolean {
+  if (event.key !== "Delete" && event.key !== "Backspace") return false;
+  return !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey;
+}
+
+/// カードを消したあとに選ぶカード。
+///
+/// **連打で消せるように、選択を隣へ送ります。** 同じカラムの次のカード、
+/// 無ければ 1 つ前、カラムが空になったら隣のカラムの先頭、どこにも無ければ
+/// 選択なし。選択の決め方はこのファイルに 1 つだけ置きます。
+export function selectionAfterDelete(board: Board, cardId: number): number | null {
+  const at = locateCard(board, cardId);
+  if (at === null) return null;
+  const cards = board.columns[at.columnIndex]?.cards ?? [];
+  const sibling = cards[at.cardIndex + 1] ?? cards[at.cardIndex - 1];
+  if (sibling !== undefined) return sibling.id;
+  // このカラムは空になる。左右で近いほうから、カードのあるカラムを探す。
+  for (let step = 1; step < board.columns.length; step += 1) {
+    for (const index of [at.columnIndex - step, at.columnIndex + step]) {
+      const found = board.columns[index]?.cards[0];
+      if (found !== undefined) return found.id;
+    }
+  }
+  return null;
+}
+
 export function arrowDirection(key: string): Direction | null {
   switch (key) {
     case "ArrowUp":

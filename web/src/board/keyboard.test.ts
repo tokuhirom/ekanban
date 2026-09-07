@@ -10,7 +10,13 @@ import { describe, expect, it } from "vitest";
 import type { Board } from "../ipc/types/Board";
 import type { Card } from "../ipc/types/Card";
 import type { Column } from "../ipc/types/Column";
-import { keyboardMove, movesSelectedCard, nextSelection } from "./keyboard";
+import {
+  deletesSelectedCard,
+  keyboardMove,
+  movesSelectedCard,
+  nextSelection,
+  selectionAfterDelete,
+} from "./keyboard";
 
 function card(id: number): Card {
   return {
@@ -127,5 +133,55 @@ describe("movesSelectedCard", () => {
     expect(
       movesSelectedCard(press({ ctrlKey: true, altKey: true, metaKey: true }), "linux"),
     ).toBe(false);
+  });
+});
+
+describe("deletesSelectedCard", () => {
+  function press(init: Partial<KeyboardEvent>): KeyboardEvent {
+    return {
+      ctrlKey: false,
+      metaKey: false,
+      altKey: false,
+      shiftKey: false,
+      ...init,
+    } as KeyboardEvent;
+  }
+
+  it("Delete と Backspace のどちらでも消す", () => {
+    expect(deletesSelectedCard(press({ key: "Delete" }))).toBe(true);
+    expect(deletesSelectedCard(press({ key: "Backspace" }))).toBe(true);
+    expect(deletesSelectedCard(press({ key: "Enter" }))).toBe(false);
+  });
+
+  /// 修飾キーの付いたものは、矢印と同じく別の割り当てに譲る。
+  it("修飾キーが付いていたら取らない", () => {
+    expect(deletesSelectedCard(press({ key: "Backspace", metaKey: true }))).toBe(false);
+    expect(deletesSelectedCard(press({ key: "Delete", shiftKey: true }))).toBe(false);
+  });
+});
+
+describe("selectionAfterDelete", () => {
+  const b = board(column(10, [1, 2, 3]), column(20, [4]), column(30, [5, 6]));
+
+  it("同じカラムの次のカードへ送る", () => {
+    expect(selectionAfterDelete(b, 1)).toBe(2);
+    expect(selectionAfterDelete(b, 2)).toBe(3);
+  });
+
+  it("末尾を消したときは 1 つ前へ", () => {
+    expect(selectionAfterDelete(b, 3)).toBe(2);
+  });
+
+  /// カラムが空になるときは、近いカラムの先頭へ。左右で同じ距離なら左が先。
+  it("カラムが空になるときは、隣のカラムの先頭へ", () => {
+    expect(selectionAfterDelete(b, 4)).toBe(1);
+  });
+
+  it("1 枚しかない盤面では選択なしになる", () => {
+    expect(selectionAfterDelete(board(column(10, [1])), 1)).toBeNull();
+  });
+
+  it("盤面にないカードには行き先が無い", () => {
+    expect(selectionAfterDelete(b, 999)).toBeNull();
   });
 });
