@@ -854,83 +854,100 @@ button.danger {
  * **2 つは同じ字送りでなければなりません。** 余白・行の高さ・折り返しのどれか
  * 1 つでも違うと、色が本文からずれます。同じ値を使うために、どちらにも
  * `.field-input` を当てず、この枠の中でまとめて決めます。 */
+/* 説明は Markdown のエディタ（#129、ADR 0033）。中身は `contenteditable` で、
+ * 打った分だけ自然に伸びます——高さを測る必要が無くなりました。
+ *
+ * タイトルや期限と同じく、**枠は触っているあいだだけ**出します（#144）。 */
 .description-field {
   position: relative;
-  /* 下地を塗るのはこの枠です。**入力欄には塗らせません**——入力欄は表示層より
-   * 後ろに書いてあるぶん手前に描かれるので、そこに背景があると裏の層をそのまま
-   * 覆い、説明の文字が消えます。 */
-  background: var(--color-input-background);
+  background: transparent;
   border-radius: 6px;
 }
 
-.description-field > .card-description-input,
-.description-layer {
-  box-sizing: border-box;
-  width: 100%;
-  margin: 0;
-  padding: 5px 8px;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  font: inherit;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+.description-field:focus-within {
+  background: var(--color-input-background);
 }
 
 .description-field > .card-description-input {
-  position: relative;
-  /* インラインのままだと行の下がりぶんだけ枠が高くなり、下地が入力欄の下から
-   * はみ出します。 */
   display: block;
-  border-color: var(--color-border);
-  /* 下地は枠が持つ（すぐ上）。ここで塗ると裏の表示層を覆う。 */
+  box-sizing: border-box;
+  width: 100%;
+  min-height: calc(1.5em * 4 + 10px);
+  margin: 0;
+  padding: 5px 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
   background: transparent;
-  /* 見えている文字は下の層のもの。ここは当たり判定とキャレットだけを持つ。 */
-  color: transparent;
-  caret-color: var(--color-foreground);
-}
-
-/* 選ぶと文字が消えないように、選択の色は透かします。入力欄は表示層の手前に
- * あるので、不透明な色で塗ると下の文字が隠れます。 */
-.description-field > .card-description-input::selection {
-  background: var(--color-selection);
-}
-
-/* パネルの中では、説明も枠なしにする（#144）。触っているあいだだけ枠が出る。
- * 下地は `.description-field` が持っているので、そちらも透かす。 */
-.panel-body > .description-field {
-  background: transparent;
-}
-
-.panel-body > .description-field > .card-description-input {
-  border-color: transparent;
-  padding-left: 0;
-}
-
-.panel-body > .description-field > .description-layer {
-  padding-left: 0;
-}
-
-.panel-body > .description-field:focus-within {
-  background: var(--color-input-background);
-}
-
-.panel-body > .description-field:focus-within > .card-description-input {
-  border-color: var(--color-border);
-  padding-left: 8px;
-}
-
-.panel-body > .description-field:focus-within > .description-layer {
-  padding-left: 8px;
-}
-
-.description-layer {
-  position: absolute;
-  inset: 0;
   color: var(--color-foreground);
-  /* クリックは入力欄に通す。押した場所は `selectionStart` で分かる。 */
+  font: inherit;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  outline: none;
+}
+
+.description-field:focus-within > .card-description-input {
+  padding: 5px 8px;
+  border-color: var(--color-border);
+}
+
+/* 空のときだけ出る案内。入力欄の上に重ねるので、クリックは下へ通す。 */
+.description-placeholder {
+  position: absolute;
+  top: 5px;
+  left: 1px;
+  margin: 0;
+  color: var(--color-muted-foreground);
+  line-height: 1.5;
   pointer-events: none;
-  overflow: hidden;
+  user-select: none;
+}
+
+.description-field:focus-within > .description-placeholder {
+  left: 9px;
+}
+
+/* 段落の間は 1 行ぶん。見出しと箇条書きは編集器が作るので、素の余白だけ整える。 */
+.description-field .description-paragraph {
+  margin: 0;
+}
+
+.description-field .description-paragraph + .description-paragraph {
+  margin-top: 0.5em;
+}
+
+.description-field h1,
+.description-field h2,
+.description-field h3 {
+  margin: 0.4em 0 0.2em;
+  font-size: 1.1em;
+}
+
+.description-field ul,
+.description-field ol {
+  margin: 0;
+  padding-left: 1.5em;
+}
+
+.description-field blockquote {
+  margin: 0;
+  padding-left: 8px;
+  border-left: 2px solid var(--color-border);
+  color: var(--color-muted-foreground);
+}
+
+.description-bold {
+  font-weight: 600;
+}
+
+.description-italic {
+  font-style: italic;
+}
+
+.description-code {
+  padding: 0 2px;
+  border-radius: 4px;
+  background: var(--color-accent);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 /* 直書きの色ではなくトークン。リンクであることは色だけでなく下線でも示す
@@ -938,18 +955,6 @@ button.danger {
 .description-link {
   color: var(--color-info);
   text-decoration: underline;
-}
-
-/* IME の変換中だけは、入力欄の文字をそのまま見せます。変換中の文字は入力欄の
- * 中にしかなく（`onChange` はまだ来ていないので表示層は前の本文のまま）、
- * 透明にしたままでは打っている本人に何も見えません。入力欄を出し入れは
- * しません——変換中に差し替えるのが ADR 0002 で避けた事故です。 */
-.description-field.composing > .card-description-input {
-  color: var(--color-foreground);
-}
-
-.description-field.composing > .description-layer {
-  visibility: hidden;
 }
 
 /* ---------------------------------------------------------------- アーカイブ */

@@ -1,49 +1,77 @@
-// 説明欄の中のリンク（[ADR 0002]）。
+// 説明の中の URL（#129、[ADR 0033]）。
 //
-// 説明はプレーンテキストのままです。Markdown は描かず、拾うのは `http(s)://`
-// だけ——**その見つけ方は Rust に 1 つだけ**あり（`commands::description_links`）、
-// ここが受け取るのはその結果です。同じ規則（末尾の句読点を落とす、括弧の対応を
-// 見る）を TypeScript にもう 1 つ書くと、必ずずれます。
+// **見つけ方はここにあります。** ADR 0002 のころは Rust の `description_links`
+// が位置を返し、こちらは色を塗るだけでしたが、Markdown のエディタでは「どこが
+// リンクか」は編集器の中のノードそのものです。外から位置で塗る作りには戻せない
+// ので、拾う規則をこちらに持ちます（[ADR 0033]）。
 //
-// 位置は UTF-16 の符号単位で届きます。JavaScript の文字列の数え方そのものなので、
-// `slice` にそのまま渡せます。
+// **開いてよい形かどうかは Rust が決めたままです**（`commands::openable_url`）。
+// ここが決めるのは「打った文字のどこからどこまでが URL か」だけです。
 //
-// [ADR 0002]: ../../../docs/adr/0002-links-inside-the-description-field.md
+// [ADR 0033]: ../../../docs/adr/0033-a-markdown-editor-for-the-description.md
 
 import type { Platform } from "../ipc/types/Platform";
-import type { UrlSpan } from "../ipc/types/UrlSpan";
 
-/// 表示層に並べる一片。`url` が入っているところがリンク。
-export interface Segment {
-  text: string;
-  url: string | null;
+/** 見つけた URL の位置。`text.slice(start, end)` がその URL。 */
+export interface UrlSpan {
+  start: number;
+  end: number;
 }
 
-/// 本文を、リンクとそれ以外に切り分ける。
-export function segments(text: string, links: readonly UrlSpan[]): Segment[] {
-  const pieces: Segment[] = [];
-  let at = 0;
-  for (const link of links) {
-    // 打っている途中の本文に、1 つ前の本文で見つけた位置が届くことがある。
-    // はみ出したものは捨てる——ずれた位置で色を付けるより、色が付かないほうがよい。
-    if (link.start < at || link.end > text.length) continue;
-    if (link.start > at) pieces.push({ text: text.slice(at, link.start), url: null });
-    pieces.push({ text: text.slice(link.start, link.end), url: link.url });
-    at = link.end;
-  }
-  if (at < text.length) pieces.push({ text: text.slice(at), url: null });
-  return pieces;
-}
+const SCHEMES = ["https://", "http://"];
 
-/// その位置にリンクがあるなら、それ。
+/// 末尾に付いてきた句読点や閉じ括弧。URL の一部ではない。
+const TAIL = [
+  ".", ",", ";", ":", "!", "?", '"', "'", "]", "}", ">",
+  "。", "、", "！", "？", "」", "』", "】", "）", ")",
+];
+
+/// 閉じ括弧に対応する開き括弧。対応が取れているなら URL の一部として残す。
+const OPENING: Record<string, string> = { ")": "(", "）": "（", "]": "[", "}": "{" };
+
+/// 打った文字の中の、最初の `http(s)://` の URL。無ければ `null`。
 ///
-/// 端も含めます。`https` の `h` の上や、末尾の 1 文字の後ろで押しても開ける
-/// ようにするため。
-export function linkAt(links: readonly UrlSpan[], offset: number): UrlSpan | null {
-  return links.find((link) => offset >= link.start && offset <= link.end) ?? null;
+/// 拾うのは `http://` と `https://` だけです。裸の `example.com` や `ftp://` まで
+/// 拾うと、URL でない文字列がリンクになります。
+export function urlAround(text: string): UrlSpan | null {
+  const start = SCHEMES.map((scheme) => text.indexOf(scheme))
+    .filter((at) => at !== -1)
+    .sort((a, b) => a - b)[0];
+  if (start === undefined) return null;
+
+  const rest = text.slice(start);
+  const space = rest.search(/\s/u);
+  const end = start + (space === -1 ? rest.length : space);
+  const url = trimTail(text.slice(start, end));
+  // スキームだけのものは URL として扱わない。
+  if (SCHEMES.some((scheme) => url === scheme || url.length <= scheme.length)) return null;
+  return { start, end: start + url.length };
 }
 
-/// リンクを開く押し方か（[ADR 0002] の「修飾キーを要求する」）。
+/// URL の末尾に付いてきた句読点や閉じ括弧を落とす。
+///
+/// 「詳しくは https://example.com/a 。」の `。` は URL ではない。ただし `)` は、
+/// 対応する `(` が URL の中にあるなら残す——`https://ja.wikipedia.org/wiki/Rust_(プログラミング言語)`
+/// のようなアドレスを壊さないため。
+function trimTail(url: string): string {
+  let trimmed = url;
+  for (;;) {
+    const last = Array.from(trimmed).at(-1);
+    if (last === undefined || !TAIL.includes(last)) return trimmed;
+    const opening = OPENING[last];
+    if (opening !== undefined) {
+      const body = trimmed.slice(0, -last.length);
+      if (count(body, opening) > count(body, last)) return trimmed;
+    }
+    trimmed = trimmed.slice(0, -last.length);
+  }
+}
+
+function count(text: string, character: string): number {
+  return Array.from(text).filter((each) => each === character).length;
+}
+
+/// リンクを開く押し方か（ADR 0002 の「修飾キーを要求する」を引き継ぐ）。
 ///
 /// macOS は Cmd、ほかは Ctrl。修飾キー無しのクリックは、文章のどこかを指す
 /// ためのものです——押すたびにブラウザが開いたら、説明を直せません。

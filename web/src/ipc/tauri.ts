@@ -15,7 +15,6 @@ import type { QuickCaptureStatus } from "./types/QuickCaptureStatus";
 import type { Snapshot } from "./types/Snapshot";
 import type { StartupState } from "./types/StartupState";
 import type { DueDatePreview } from "./types/DueDatePreview";
-import type { UrlSpan } from "./types/UrlSpan";
 
 export const tauriIpc: Ipc = {
   startupState: () => invoke<StartupState>("startup_state"),
@@ -116,7 +115,6 @@ export const tauriIpc: Ipc = {
   revealBackups: async () => {
     await invoke("reveal_backups");
   },
-  descriptionLinks: (text) => invoke<UrlSpan[]>("description_links", { text }),
   dueDatePreview: (value) =>
     invoke<DueDatePreview | null>("due_date_preview", { value }),
   openUrl: async (url) => {

@@ -16,7 +16,6 @@ import type { QuickCaptureStatus } from "./types/QuickCaptureStatus";
 import type { Snapshot } from "./types/Snapshot";
 import type { StartupState } from "./types/StartupState";
 import type { DueDatePreview } from "./types/DueDatePreview";
-import type { UrlSpan } from "./types/UrlSpan";
 
 /// ハーネスの居場所。`?harness=http://127.0.0.1:1421` で差し替えられます。
 export function harnessUrl(): string | null {
@@ -154,8 +153,6 @@ export function harnessIpc(base: string): Ipc {
     revealBackups: async () => {
       await call(base, "reveal_backups");
     },
-    descriptionLinks: (text) =>
-      call<UrlSpan[]>(base, "description_links", { text }),
     dueDatePreview: (value) =>
       call<DueDatePreview | null>(base, "due_date_preview", { value }),
     openUrl: async (url) => {

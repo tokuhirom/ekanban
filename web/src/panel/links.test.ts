@@ -1,78 +1,66 @@
-// 説明の中のリンク（ADR 0002、`docs/DESIGN.md`「テスト」の「部品」）。
+// 説明の中の URL を見つける規則のテスト（`docs/DESIGN.md`「テスト」の「部品」）。
 //
-// **見つけ方はここにありません**——それは Rust の `description_links` で、ここが
-// 確かめるのは、返ってきた位置をどう描き、どこで押されたら開くかです。
+// **拾う規則はここにあります**（#129、ADR 0033）。Markdown のエディタでは
+// 「どこがリンクか」が編集器の中のノードなので、Rust から位置を受け取る形には
+// 戻せません。以前 Rust の `find_urls` が守っていた振る舞いを、そのままここで
+// 書き下しています。
 
 import { describe, expect, it } from "vitest";
 
-import type { UrlSpan } from "../ipc/types/UrlSpan";
-import { linkAt, opensLink, segments } from "./links";
+import { opensLink, urlAround } from "./links";
 
-function span(start: number, end: number, url: string): UrlSpan {
-  return { start, end, url };
+function found(text: string): string | null {
+  const span = urlAround(text);
+  return span === null ? null : text.slice(span.start, span.end);
 }
 
-describe("segments", () => {
-  it("本文をリンクとそれ以外に切り分ける", () => {
-    const text = "詳しくは https://example.com/a を見てください";
-    const start = text.indexOf("https://");
-    const links = [span(start, start + "https://example.com/a".length, "https://example.com/a")];
-    expect(segments(text, links)).toEqual([
-      { text: "詳しくは ", url: null },
-      { text: "https://example.com/a", url: "https://example.com/a" },
-      { text: " を見てください", url: null },
-    ]);
+describe("urlAround", () => {
+  it("http と https だけを拾う", () => {
+    expect(found("詳しくは https://example.com/a を見てください")).toBe("https://example.com/a");
+    expect(found("改行のあと\nhttp://example.com/plain")).toBe("http://example.com/plain");
   });
 
-  it("リンクが無ければ本文ひとつ", () => {
-    expect(segments("ただの説明", [])).toEqual([{ text: "ただの説明", url: null }]);
+  it("URL でない文字列は拾わない", () => {
+    expect(found("example.com は URL ではない")).toBeNull();
+    expect(found("ftp://example.com も拾わない")).toBeNull();
+    expect(found("スキームだけの https:// は URL ではない")).toBeNull();
   });
 
-  it("空の本文からは何も出さない", () => {
-    expect(segments("", [])).toEqual([]);
+  it("末尾に付いた句読点は URL に含めない", () => {
+    expect(found("詳しくは https://example.com/a 。")).toBe("https://example.com/a");
+    expect(found("(https://example.com/b) を見る")).toBe("https://example.com/b");
   });
 
-  /// 打っている途中は、1 つ前の本文で見つけた位置が届くことがある。ずれた位置で
-  /// 色を付けるより、その一片を捨てて色が付かないほうがよい。
-  it("本文からはみ出した位置は捨てる", () => {
-    expect(segments("短い", [span(0, 40, "https://example.com")])).toEqual([
-      { text: "短い", url: null },
-    ]);
-  });
-});
-
-describe("linkAt", () => {
-  const links = [span(4, 25, "https://example.com/a")];
-
-  it("端も含めて当たる", () => {
-    // `https` の `h` の上と、末尾の 1 文字の後ろでも開ける。
-    expect(linkAt(links, 4)?.url).toBe("https://example.com/a");
-    expect(linkAt(links, 25)?.url).toBe("https://example.com/a");
-    expect(linkAt(links, 12)?.url).toBe("https://example.com/a");
+  /// 対応する開き括弧が中にあるなら、閉じ括弧は URL の一部。
+  it("対応の取れた閉じ括弧は残す", () => {
+    expect(found("https://ja.wikipedia.org/wiki/Rust_(プログラミング言語)")).toBe(
+      "https://ja.wikipedia.org/wiki/Rust_(プログラミング言語)",
+    );
   });
 
-  it("外なら当たらない", () => {
-    expect(linkAt(links, 3)).toBeNull();
-    expect(linkAt(links, 26)).toBeNull();
+  it("いちばん先に出てくる 1 つを返す", () => {
+    expect(found("https://a.example と https://b.example")).toBe("https://a.example");
   });
 });
 
 describe("opensLink", () => {
-  function click(init: Partial<MouseEvent>): MouseEvent {
+  function press(init: Partial<MouseEvent>): MouseEvent {
     return { metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, ...init } as MouseEvent;
   }
 
   it("macOS は Cmd、ほかは Ctrl", () => {
-    expect(opensLink(click({ metaKey: true }), "macos")).toBe(true);
-    expect(opensLink(click({ ctrlKey: true }), "linux")).toBe(true);
-    expect(opensLink(click({ ctrlKey: true }), "windows")).toBe(true);
-    expect(opensLink(click({ ctrlKey: true }), "macos")).toBe(false);
+    expect(opensLink(press({ metaKey: true }), "macos")).toBe(true);
+    expect(opensLink(press({ ctrlKey: true }), "macos")).toBe(false);
+    expect(opensLink(press({ ctrlKey: true }), "linux")).toBe(true);
+    expect(opensLink(press({ metaKey: true }), "windows")).toBe(false);
   });
 
-  /// 修飾キー無しのクリックは、文章のどこかを指すためのもの（ADR 0002）。
-  it("修飾キーが無ければ開かない", () => {
-    expect(opensLink(click({}), "linux")).toBe(false);
-    expect(opensLink(click({ shiftKey: true }), "linux")).toBe(false);
-    expect(opensLink(click({ ctrlKey: true, altKey: true }), "linux")).toBe(false);
+  it("修飾キー無しのクリックでは開かない", () => {
+    expect(opensLink(press({}), "linux")).toBe(false);
+  });
+
+  it("ほかの修飾キーが混ざっていたら開かない", () => {
+    expect(opensLink(press({ ctrlKey: true, shiftKey: true }), "linux")).toBe(false);
+    expect(opensLink(press({ metaKey: true, altKey: true }), "macos")).toBe(false);
   });
 });

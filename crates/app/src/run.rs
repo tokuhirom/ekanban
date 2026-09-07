@@ -176,7 +176,6 @@ pub fn run() {
             ipc::reveal_path,
             ipc::reveal_database,
             ipc::reveal_backups,
-            ipc::description_links,
             ipc::due_date_preview,
             ipc::open_url,
             ipc::capture_card,

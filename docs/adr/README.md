@@ -81,7 +81,7 @@
 | # | 決定 | 日付 | 状態 |
 | --- | --- | --- | --- |
 | [0001](0001-links-in-the-description.md) | 説明の URL を、説明欄の下に一覧で出す | 2026-09-05 | 置き換えられた（→ 0002） |
-| [0002](0002-links-inside-the-description-field.md) | 説明の URL を、入力欄の中でリンクとして描く | 2026-09-05 | 有効 |
+| [0002](0002-links-inside-the-description-field.md) | 説明の URL を、入力欄の中でリンクとして描く | 2026-09-05 | 置き換えられた（→ 0033） |
 | [0003](0003-daily-backup-generations.md) | 自動バックアップの世代を、起動ごとではなく日ごとに刻む | 2026-09-05 | 有効 |
 | [0004](0004-one-process-per-database.md) | 1 つのデータベースを開けるのは 1 プロセスだけにする | 2026-09-05 | 有効 |
 | [0005](0005-in-app-menu-without-a-menu-bar.md) | ネイティブのメニューバーが無い環境では、画面の中にメニューを出す | 2026-09-05 | 置き換えられた（→ 0015） |
@@ -110,3 +110,6 @@
 | [0028](0028-a-single-default-quick-capture-target.md) | クイックキャプチャの既定の入れ先を、先頭のボードに固定する | 2026-09-06 | 有効 |
 | [0029](0029-detecting-ime-composition.md) | IME の変換中かは 1 か所で判定し、`keyCode` も見る | 2026-09-07 | 有効 |
 | [0030](0030-capturing-a-shortcut-needs-the-menu-out-of-the-way.md) | 割り当てを捕まえている間はメニューのアクセラレータを外し、押されているキーをその場に映す | 2026-09-07 | 有効 |
+| [0031](0031-typing-a-due-date.md) | 期限は文字で打つ | 2026-09-07 | 有効 |
+| [0032](0032-committing-a-card-field-by-field.md) | 編集パネルは欄ごとに確定する | 2026-09-07 | 有効 |
+| [0033](0033-a-markdown-editor-for-the-description.md) | 説明は Markdown のエディタで書く | 2026-09-07 | 有効 |
