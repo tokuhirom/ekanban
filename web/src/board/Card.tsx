@@ -7,29 +7,47 @@ import type { Tag } from "../ipc/types/Tag";
 import { handleId } from "./dnd";
 
 /// 「9/4」。年をまたぐものだけ年を出す。カードの面は狭いので、いまの年は落とす。
-export function shortDate(due: string): string {
+///
+/// **今年かどうかは `today` で決めます**（#133）。ブラウザの時計を読むと、
+/// 年末年始に Rust の判定と食い違います（`docs/DESIGN.md`「絞り込みと検索」）。
+export function shortDate(due: string, today: string): string {
   const [year = "", month = "", day = ""] = due.split("-");
-  const thisYear = String(new Date().getFullYear());
   const short = `${Number(month)}/${Number(day)}`;
-  return year === thisYear ? short : `${year}/${month}/${day}`;
+  return year === today.slice(0, 4) ? short : `${year}/${month}/${day}`;
 }
 
 /// 期限の見出し。色も文言も `DueStatus` から作る。今日を基準にした判定は
 /// Rust の `due_statuses` が済ませてあるので、ここでは時計を見ない。
 ///
+/// **4 つの状態を同じ形で書きます**（#133）——「印 + 日付 + 補足」。語順が
+/// 状態ごとに変わると、読み手が毎回読み方を切り替えることになります。印は
+/// ボード一覧（`Sidebar.tsx`）の `⚠` `◷` と同じもので、盤面と一覧で読み方を
+/// 変えません。先のものほど補足を落とし、日付だけにします。
+///
 /// **`*-foreground` を素の面の文字色に使わない。** あれは対応する背景の上に
 /// 載せるための色で、カードの面では背景と同化して読めない（`docs/DESIGN.md`）。
 /// ここでは背景用の `danger` / `warning` / `info` のほうを文字色に使う。
-export function dueBadge(status: DueStatus, due: string): { tone: string; text: string } | null {
+export function dueBadge(
+  status: DueStatus,
+  due: string,
+  today: string,
+): { tone: string; text: string } | null {
   switch (status.kind) {
     case "overdue":
-      return { tone: "danger", text: `期限切れ ${status.days}日 (${shortDate(due)})` };
+      return {
+        tone: "danger",
+        text: `⚠ ${shortDate(due, today)}（${status.days}日超過）`,
+      };
+    // 今日の日付はカードを見なくても分かるので、いちばん短い形にする。
     case "today":
-      return { tone: "warning", text: `期限 今日 (${shortDate(due)})` };
+      return { tone: "warning", text: "◷ 今日" };
     case "soon":
-      return { tone: "info", text: `期限 あと ${status.days}日 (${shortDate(due)})` };
+      return {
+        tone: "info",
+        text: `${shortDate(due, today)}（あと${status.days}日）`,
+      };
     case "upcoming":
-      return { tone: "muted", text: `期限 ${shortDate(due)}` };
+      return { tone: "muted", text: shortDate(due, today) };
     case "none":
       return null;
   }
@@ -39,6 +57,8 @@ interface FaceProps {
   card: CardData;
   tags: readonly Tag[];
   due: DueStatus | undefined;
+  /** `due_statuses` を出した日。年を出すかどうかをここから決める（時計ではなく）。 */
+  today: string;
   /** 絞り込んでいるタグ。押されているチップに印を付けるのに使う。 */
   activeTag?: number | null | undefined;
   /** タグのチップが押された。ゴースト（`DragOverlay`）では渡さない。 */
@@ -50,13 +70,25 @@ interface FaceProps {
 ///
 /// **高さを中身で変えすぎない**規則は残します。落とす位置が見て分かること
 /// （`docs/DESIGN.md`「ドラッグ＆ドロップ」の受け入れ条件）は、掴んでいる間に周りの高さが動かないことで決まります。
-export function CardFace({ card, tags, due, activeTag, onToggleTagFilter }: FaceProps) {
+export function CardFace({
+  card,
+  tags,
+  due,
+  today,
+  activeTag,
+  onToggleTagFilter,
+}: FaceProps) {
   const cardTags = card.tagIds
     .map((id) => tags.find((tag) => tag.id === id))
     .filter((tag): tag is Tag => tag !== undefined);
-  const badge = due !== undefined && card.dueDate !== null ? dueBadge(due, card.dueDate) : null;
+  const badge =
+    due !== undefined && card.dueDate !== null
+      ? dueBadge(due, card.dueDate, today)
+      : null;
   const checked = card.checklistItems.filter((item) => item.checked).length;
-  const progress = card.checklistItems.map((item) => (item.checked ? "■" : "□")).join("");
+  const progress = card.checklistItems
+    .map((item) => (item.checked ? "■" : "□"))
+    .join("");
 
   return (
     <>
@@ -87,7 +119,11 @@ export function CardFace({ card, tags, due, activeTag, onToggleTagFilter }: Face
             );
             if (onToggleTagFilter === undefined) {
               return (
-                <span key={tag.id} className="tag-chip" style={{ background: tag.color }}>
+                <span
+                  key={tag.id}
+                  className="tag-chip"
+                  style={{ background: tag.color }}
+                >
                   {chip}
                 </span>
               );
@@ -99,7 +135,11 @@ export function CardFace({ card, tags, due, activeTag, onToggleTagFilter }: Face
                 className="tag-chip"
                 style={{ background: tag.color }}
                 aria-pressed={active}
-                title={active ? `${tag.name} の絞り込みを解除` : `${tag.name} で絞り込む`}
+                title={
+                  active
+                    ? `${tag.name} の絞り込みを解除`
+                    : `${tag.name} で絞り込む`
+                }
                 // カードの選択とドラッグに取られないようにする。押した先は
                 // 絞り込みで、カードを掴む操作ではない。
                 onPointerDown={(event) => {
@@ -119,7 +159,9 @@ export function CardFace({ card, tags, due, activeTag, onToggleTagFilter }: Face
           })}
         </div>
       )}
-      {card.description.trim() !== "" && <div className="card-description">{card.description}</div>}
+      {card.description.trim() !== "" && (
+        <div className="card-description">{card.description}</div>
+      )}
     </>
   );
 }
@@ -139,6 +181,7 @@ export function Card({
   card,
   tags,
   due,
+  today,
   activeTag,
   onToggleTagFilter,
   dimmed,
@@ -147,7 +190,14 @@ export function Card({
   onOpen,
   onContextMenu,
 }: Props) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({
     id: handleId({ kind: "card", id: card.id }),
   });
 
@@ -161,7 +211,10 @@ export function Card({
       // 掴んでいる間、元の場所は空きとして残す。周りが詰まってしまうと、
       // どこに戻るのかが読めなくなる（条件 2）。
       data-placeholder={isDragging || undefined}
-      style={{ transform: CSS.Translate.toString(transform), transition: transition ?? undefined }}
+      style={{
+        transform: CSS.Translate.toString(transform),
+        transition: transition ?? undefined,
+      }}
       {...attributes}
       {...listeners}
       // dnd-kit の `listeners` にも `onPointerDown` がある。React は**あとに
@@ -188,6 +241,7 @@ export function Card({
         card={card}
         tags={tags}
         due={due}
+        today={today}
         activeTag={activeTag}
         onToggleTagFilter={onToggleTagFilter}
       />
@@ -216,7 +270,16 @@ export interface MenuProps {
 /// あり、`transform` を持つ要素は `position: fixed` の基準になります。画面の
 /// 座標で置いたメニューが、掴んだ量だけずれることになるので、`Board` が盤面の
 /// 外側で描きます。
-export function CardMenu({ card, tags, at, onClose, onCopy, onArchive, onDelete, onToggleTag }: MenuProps) {
+export function CardMenu({
+  card,
+  tags,
+  at,
+  onClose,
+  onCopy,
+  onArchive,
+  onDelete,
+  onToggleTag,
+}: MenuProps) {
   return (
     <div
       className="menu card-menu"

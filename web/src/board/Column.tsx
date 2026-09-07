@@ -17,6 +17,8 @@ interface Props {
   column: ColumnData;
   tags: readonly Tag[];
   dueStatuses: ReadonlyMap<number, DueStatus>;
+  /** `due_statuses` を出した日。カード表面の期限表示がここから年を決める。 */
+  today: string;
   matched: ReadonlySet<number> | null;
   /** 絞り込んでいるタグ。カード上のチップに印を付ける。 */
   activeTag: number | null;
@@ -43,6 +45,7 @@ export function Column({
   column,
   tags,
   dueStatuses,
+  today,
   matched,
   activeTag,
   onToggleTagFilter,
@@ -188,6 +191,7 @@ export function Column({
               card={card}
               tags={tags}
               due={dueStatuses.get(card.id)}
+              today={today}
               activeTag={activeTag}
               onToggleTagFilter={onToggleTagFilter}
               // 隠さず減光する。隠すと挿入位置が動いてしまう（条件 4）。

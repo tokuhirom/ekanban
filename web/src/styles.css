@@ -439,6 +439,14 @@ textarea {
   color: var(--color-muted-foreground);
 }
 
+/* 期限は 1 行に固定する（#133）。折り返すとカードの高さが変わり、掴んでいる
+ * 間に周りが動く（`docs/DESIGN.md`「ドラッグ＆ドロップ」）。 */
+.card-due {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .card-description {
   overflow: hidden;
   text-overflow: ellipsis;
