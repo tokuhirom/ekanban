@@ -1,5 +1,12 @@
 # Changelog
 
+## [v0.2.2](https://github.com/tokuhirom/ekanban/compare/v0.2.1...v0.2.2) - 2026-09-07
+
+### 変更
+- Give the due date and the tags a row of their own by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/175
+- ブラウザだけで動く版を、本物の中核のまま GitHub Pages に置く by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/177
+- End the bullet list where you stop typing by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/178
+
 ## [v0.2.1](https://github.com/tokuhirom/ekanban/compare/v0.2.0...v0.2.1) - 2026-09-07
 
 ### 変更
