@@ -10,7 +10,10 @@
     />
   </head>
   <body>
-    <div id="root"></div>
+    <!-- wasm を読み込むあいだ、ここが出ています。React が差し替えます。
+         **白い画面のままにしません**——初回は 1 MB 弱を落とすので、回線に
+         よっては数秒かかります（ADR 0036）。 -->
+    <div id="root"><p class="loading">読み込んでいます…</p></div>
     <script type="module" src="./main.tsx"></script>
   </body>
 </html>

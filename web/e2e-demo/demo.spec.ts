@@ -14,9 +14,9 @@
 
 import { expect, test, type Page } from "@playwright/test";
 
-/// `localStorage` に置いてあるデータベース（base64）の大きさ。
+/// `localStorage` に置いてある盤面（JSON）の大きさ。
 async function storedSize(page: Page): Promise<number> {
-  return page.evaluate(() => localStorage.getItem("ekanban:database")?.length ?? 0);
+  return page.evaluate(() => localStorage.getItem("ekanban:board")?.length ?? 0);
 }
 
 async function openDemo(page: Page): Promise<void> {
@@ -61,13 +61,18 @@ test("ブラウザにできないことは、消さずに灰色にする", async
   const help = page.getByRole("menu", { name: "ヘルプ" });
   // 消すと「この機能はこのアプリに無い」に見えます（`crates/app/src/menu.rs`）。
   await expect(help.getByRole("menuitem", { name: /データベースの場所/ })).toBeDisabled();
-  // ダウンロードはブラウザにもある。ここまで灰色にしない。
-  await expect(help.getByRole("menuitem", { name: "データベースをコピー…" })).toBeEnabled();
+  // ブラウザ版に SQLite のファイルはありません（ADR 0036）。
+  await expect(help.getByRole("menuitem", { name: /データベースをコピー/ })).toBeDisabled();
 });
 
 test("書き出しは、ダウンロードとして受け取れる", async ({ page }) => {
   await openDemo(page);
   await page.getByRole("menuitem", { name: "ファイル" }).click();
+
+  // 置き場所が JSON になっても、持ち出しは残ります（ADR 0036）。
+  await expect(
+    page.getByRole("menuitem", { name: "ボードを書き出す（Markdown）" }),
+  ).toBeEnabled();
 
   const download = page.waitForEvent("download");
   await page.getByRole("menuitem", { name: "ボードを書き出す（Markdown）" }).click();

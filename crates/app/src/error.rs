@@ -9,8 +9,8 @@
 //! 拒否・キャンセル・変更なしは、いまと同じく**何も言いません**。だからこれらは
 //! `AppError` にならず、`Ok` のまま返ります。
 
-use ekanban_core::db::DbError;
 use ekanban_core::model::BoardError;
+use ekanban_core::store::StoreError;
 use serde::Serialize;
 use ts_rs::TS;
 
@@ -86,11 +86,11 @@ impl AppError {
     }
 
     /// 保存に失敗した。盤面への変更は捨ててあるので、画面は何も戻さなくてよい。
-    pub fn from_save(error: &DbError) -> Self {
+    pub fn from_save(error: &StoreError) -> Self {
         Self::new(ErrorKind::Save, "保存に失敗しました", db_detail(error))
     }
 
-    pub fn from_db(kind: ErrorKind, title: &str, error: &DbError) -> Self {
+    pub fn from_db(kind: ErrorKind, title: &str, error: &StoreError) -> Self {
         Self::new(kind, title, db_detail(error))
     }
 }
@@ -153,13 +153,19 @@ fn board_detail(error: &BoardError) -> String {
     }
 }
 
-/// SQLite の失敗を、使う人が手を打てる言葉にする。
+/// 置き場所の失敗を、使う人が手を打てる言葉にする。
 ///
 /// エラーコードごとに「次に何をすればよいか」を書くのが要点で、`rusqlite` の
 /// 文言をそのまま出さない。
-fn db_detail(error: &DbError) -> String {
+///
+/// **SQLite の枝は SQLite を積んでいるときだけ**あります（[ADR 0036]）。
+/// ブラウザ版の置き場所は JSON なので、ディスクや権限の話が出てきません。
+///
+/// [ADR 0036]: ../../../docs/adr/0036-one-model-two-places-to-put-it.md
+fn db_detail(error: &StoreError) -> String {
     match error {
-        DbError::Sqlite(error) => match error {
+        #[cfg(feature = "shell")]
+        StoreError::Sqlite(error) => match error {
             rusqlite::Error::SqliteFailure(sqlite_error, message) => {
                 let reason = message.as_deref().unwrap_or("詳細情報なし");
                 match sqlite_error.code {
@@ -185,12 +191,15 @@ fn db_detail(error: &DbError) -> String {
             }
             _ => format!("SQLite の処理に失敗しました（{error}）"),
         },
-        DbError::NoBoard => "ボードが見つかりません。画面を更新してください".to_string(),
-        DbError::LastBoard => "最後のボードは削除できません".to_string(),
-        DbError::EmptyBoardName => "ボード名を入力してください".to_string(),
-        DbError::InvalidAppState => {
+        StoreError::NoBoard => "ボードが見つかりません。画面を更新してください".to_string(),
+        StoreError::LastBoard => "最後のボードは削除できません".to_string(),
+        StoreError::EmptyBoardName => "ボード名を入力してください".to_string(),
+        StoreError::AlreadyOpen => {
+            "盤面の置き場所を二重に開きました。開き直してください".to_string()
+        }
+        StoreError::InvalidAppState => {
             "保存されたアプリ状態を読み取れません。ボードを選び直してください".to_string()
         }
-        DbError::Json(error) => format!("ボードデータの変換に失敗しました（{error}）"),
+        StoreError::Json(error) => format!("ボードデータの変換に失敗しました（{error}）"),
     }
 }

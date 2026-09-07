@@ -4,13 +4,20 @@
 //! ランタイム無しで走り、Tauri のアプリと開発用のハーネスが同じコードを使える
 //! （`docs/DESIGN.md`「層の分け方」）。
 
+// 日ごとの控えは SQLite のファイルを写すもの。置き場所が JSON のときは
+// 相手がいません（ブラウザ版、[ADR 0036]）。
+//
+// [ADR 0036]: ../../docs/adr/0036-one-model-two-places-to-put-it.md
+#[cfg(feature = "sqlite")]
 pub mod backup;
+#[cfg(feature = "sqlite")]
 pub mod db;
 pub mod diagnostics;
 pub mod export;
 pub mod instance;
 pub mod model;
 pub mod paths;
+pub mod store;
 
 use std::path::PathBuf;
 
@@ -85,9 +92,12 @@ mod tests {
             ("Column", model::Column::inline(&config)),
             ("DueCounts", model::DueCounts::inline(&config)),
             ("DueStatus", model::DueStatus::inline(&config)),
-            ("FilterState", db::FilterState::inline(&config)),
+            ("FilterState", store::FilterState::inline(&config)),
             ("Tag", model::Tag::inline(&config)),
-            ("WindowBoundsState", db::WindowBoundsState::inline(&config)),
+            (
+                "WindowBoundsState",
+                store::WindowBoundsState::inline(&config),
+            ),
         ];
         for (name, declaration) in declarations {
             assert!(

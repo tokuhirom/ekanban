@@ -1,9 +1,13 @@
 //! ブラウザだけで動く ekanban（[ADR 0035]）。
 //!
-//! `crates/app` のコマンドを `wasm32-unknown-unknown` の上で動かし、SQLite の
-//! ファイルをメモリ上の VFS に置いて、**その中身をまるごと `localStorage` に
-//! 写します**。答えているのは本物の `ekanban-core` なので、[ADR 0021] の
+//! `crates/app` のコマンドを `wasm32-unknown-unknown` の上で動かし、盤面を
+//! **JSON にして `localStorage` に置きます**（`ekanban_core::store::JsonStore`、
+//! [ADR 0036]）。答えているのは本物の `ekanban-core` なので、[ADR 0021] の
 //! 「偽物のバックエンドを TypeScript で書かない」がブラウザでも成り立ちます。
+//!
+//! **SQLite はここに積みません。** `wasm32-unknown-unknown` に組んだ SQLite
+//! だけで 2.1 MB あり、こちらのコード全部より 5 倍大きい。置き場所を差し替え
+//! られるようにしたのはそのためです（[ADR 0036]）。
 //!
 //! ページからは 2 つだけ見えます。
 //!
@@ -17,31 +21,32 @@
 //!
 //! [ADR 0021]: ../../../docs/adr/0021-two-layer-testing-for-the-webview.md
 //! [ADR 0035]: ../../../docs/adr/0035-a-browser-build-of-the-real-core.md
+//! [ADR 0036]: ../../../docs/adr/0036-one-model-two-places-to-put-it.md
 
 // ネイティブでは中身を持ちません。ワークスペースの `cargo build` / `cargo test`
 // は、ここを空のライブラリとして通ります。
 #![cfg(target_family = "wasm")]
 
 use std::cell::RefCell;
-use std::path::Path;
+use std::sync::{Arc, Mutex};
 
-use base64::engine::general_purpose::STANDARD as BASE64;
-use base64::Engine as _;
 use ekanban_app::commands::{self, ExportFormat};
 use ekanban_app::error::{AppError, ErrorKind};
+use ekanban_app::state::Source;
 use ekanban_app::{dispatch, menu, AppState, Platform, QuickCaptureStatus};
+use ekanban_core::store::JsonStore;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use wasm_bindgen::prelude::*;
 
-/// メモリ上の VFS に置くデータベースの名前。
-///
-/// `Connection::open` に渡した文字列がそのままファイル名になります（memvfs の
-/// `xFullPathname` は名前を写すだけです）。ここを [`export`] と揃えます。
-const DATABASE_NAME: &str = "ekanban.sqlite3";
-
 /// `localStorage` の鍵。
-const STORAGE_KEY: &str = "ekanban:database";
+///
+/// **中身は JSON です**（[ADR 0036]）。前の版は SQLite のファイルを base64 に
+/// して同じ鍵に置いていたので、そちらは読めません——読めないものは捨てて
+/// 新しい盤面から始めます（[`restore`]）。
+///
+/// [ADR 0036]: ../../../docs/adr/0036-one-model-two-places-to-put-it.md
+const STORAGE_KEY: &str = "ekanban:board";
 
 /// 画面に出すデータベースの居場所。
 ///
@@ -51,6 +56,8 @@ const STORAGE_KEY: &str = "ekanban:database";
 const DATABASE_LOCATION: &str = "このブラウザの localStorage";
 
 thread_local! {
+    /// 置き場所。ページに 1 つです。`AppState` と、書き出すときの両方から見ます。
+    static STORE: RefCell<Option<Arc<Mutex<JsonStore>>>> = const { RefCell::new(None) };
     /// 開いている盤面。ページに 1 つです。
     ///
     /// wasm はシングルスレッドなので、`AppState` の中の `Mutex` が競ることは
@@ -75,12 +82,15 @@ pub fn start(platform: &str) -> Result<JsValue, JsValue> {
     // パニックが「unreachable executed」だけになると、原因を追う手段が無くなる。
     console_error_panic_hook::set_once();
 
-    restore().map_err(to_js)?;
+    let store = Arc::new(Mutex::new(restore()));
+    STORE.with_borrow_mut(|slot| *slot = Some(Arc::clone(&store)));
 
-    let (state, mut startup) =
-        commands::load_startup_state(Path::new(DATABASE_NAME)).map_err(to_js)?;
+    let source = Source::Json {
+        store,
+        place: DATABASE_LOCATION.to_string(),
+    };
+    let (state, mut startup) = commands::load_startup_state(source).map_err(to_js)?;
     startup.platform = parse_platform(platform);
-    startup.database_path = DATABASE_LOCATION.to_string();
 
     STATE.with_borrow_mut(|slot| *slot = Some(state));
     // 種を蒔いたばかりのデータベースを、この時点で 1 度書いておく。ここで
@@ -135,7 +145,7 @@ const READ_ONLY: &[&str] = &[
     "capture_target",
     "quick_capture_status",
     "export_board_contents",
-    "database_bytes",
+    "stored_board",
     "menu_sections",
     "open_url",
     "log_frontend_error",
@@ -158,9 +168,9 @@ fn host(command: &str, args: Value, state: &AppState) -> Result<Value, AppError>
             state,
             read::<Format>(args)?.format,
         )?),
-        // データベースの控え。中身をそのまま返し、ページがファイルとして
-        // 受け取ります。
-        "database_bytes" => ok(export()?),
+        // 盤面まるごとの控え。**SQLite のファイルではありません**（[ADR 0036]）
+        // ——置いてあるのが JSON なので、そのままページに渡します。
+        "stored_board" => ok(encoded_store()?),
         "database_location" => ok(DATABASE_LOCATION),
         // ファイル管理を開く相手がいません。メニューでは灰色にしてあるので、
         // ここには届かない見込みですが、届いても何も起きないようにします。
@@ -187,38 +197,26 @@ fn host(command: &str, args: Value, state: &AppState) -> Result<Value, AppError>
 
 // ---------------------------------------------------------------- 保存
 
-/// メモリ上の VFS のデータベースを、そのままバイト列で取り出す。
-fn export() -> Result<Vec<u8>, AppError> {
-    memvfs()
-        .export_db(DATABASE_NAME)
-        .map_err(|error| storage_error("控えを取り出せませんでした", &error.to_string()))
-}
-
-/// `localStorage` の中身を、メモリ上の VFS に戻す。
+/// `localStorage` にあった盤面。読めなければ空の置き場所。
 ///
-/// 何も入っていなければ何もしません。**壊れていても起動を止めません**——
-/// 読めなかったぶんは捨てて、新しいデータベースから始めます。読めない文字列を
-/// 抱えたまま起動を断ると、ページを開くことすらできなくなります。
-fn restore() -> Result<(), AppError> {
-    let Some(stored) = storage()?.get_item(STORAGE_KEY).ok().flatten() else {
-        return Ok(());
-    };
-    let Ok(bytes) = BASE64.decode(stored) else {
-        return Ok(());
-    };
-    if memvfs().import_db(DATABASE_NAME, &bytes).is_err() {
-        return Ok(());
-    }
-    Ok(())
+/// **読めなくても起動を止めません。** 読めない文字列を抱えて起動を断ると、
+/// ページを開くことすらできなくなります。前の版が置いた SQLite の base64 も
+/// ここで捨てられます。
+fn restore() -> JsonStore {
+    storage()
+        .ok()
+        .and_then(|storage| storage.get_item(STORAGE_KEY).ok().flatten())
+        .and_then(|stored| JsonStore::decode(&stored))
+        .unwrap_or_default()
 }
 
-/// いまのデータベースを `localStorage` に写す。
+/// いまの盤面を `localStorage` に写す。
 ///
 /// **書けなかったことを黙って飲み込みません。** 置き場所が一杯になったら
 /// （`localStorage` は数 MB で埋まります）、次に開いたときに変更が消えます。
 /// 気づけるのはその場だけなので、失敗をそのまま画面へ返します。
 fn save() -> Result<(), JsValue> {
-    let encoded = BASE64.encode(export().map_err(to_js)?);
+    let encoded = encoded_store().map_err(to_js)?;
     let unchanged = SAVED.with_borrow(|saved| saved.as_deref() == Some(encoded.as_str()));
     if unchanged {
         return Ok(());
@@ -236,8 +234,21 @@ fn save() -> Result<(), JsValue> {
     Ok(())
 }
 
-fn memvfs() -> sqlite_wasm_rs::MemVfsUtil<sqlite_wasm_rs::WasmOsCallback> {
-    sqlite_wasm_rs::MemVfsUtil::new()
+/// 置いてある形の文字列。持ち出し（「盤面をコピー…」）にも使います。
+fn encoded_store() -> Result<String, AppError> {
+    STORE.with_borrow(|slot: &Option<Arc<Mutex<JsonStore>>>| {
+        let Some(store) = slot.as_ref() else {
+            return Err(storage_error(
+                "保存できませんでした",
+                "まだ起動していません",
+            ));
+        };
+        store
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .encode()
+            .map_err(|error| storage_error("保存できませんでした", &error.to_string()))
+    })
 }
 
 fn storage() -> Result<web_sys::Storage, AppError> {

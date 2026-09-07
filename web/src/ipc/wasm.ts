@@ -7,6 +7,8 @@
 //
 // 本物と違うのは、環境に無いものだけです。
 //
+// - **SQLite がありません。** 置き場所は `ekanban_core::store::JsonStore` で、
+//   盤面は JSON 1 つとして `localStorage` に入ります（[ADR 0036]）
 // - **保存ダイアログがありません。** 名前を決めて、そのままダウンロードにします
 // - **ファイル管理を開けません。** `canRevealPaths` が `false` で、書き出しの
 //   知らせに「場所を開く」が出ません
@@ -15,6 +17,7 @@
 //
 // [ADR 0021]: ../../../docs/adr/0021-two-layer-testing-for-the-webview.md
 // [ADR 0035]: ../../../docs/adr/0035-a-browser-build-of-the-real-core.md
+// [ADR 0036]: ../../../docs/adr/0036-one-model-two-places-to-put-it.md
 
 import type { Ipc } from "./index";
 import type { AppAction } from "./types/AppAction";
@@ -163,8 +166,11 @@ export const wasmIpc: Ipc = {
     return destination;
   },
   backupDatabase: async (destination) => {
-    const bytes = await call<number[]>("database_bytes");
-    download(destination, new Uint8Array(bytes), "application/vnd.sqlite3");
+    // ブラウザ版に SQLite のファイルはありません（ADR 0036）。置いてあるのは
+    // 盤面の JSON なので、それをそのまま渡します。メニューでは灰色にして
+    // あるので、ここへ来る導線はありません。
+    const stored = await call<string>("stored_board");
+    download(destination, stored, "application/json");
     return destination;
   },
   databaseLocation: () => call<string>("database_location"),

@@ -161,7 +161,6 @@ fn dispatch(command: &str, args: Value, state: &AppState) -> Result<Option<Value
             state,
             read::<Format>(args)?.format,
         ))?,
-        "database_location" => json(commands::database_location(state))?,
         "due_date_preview" => json(commands::due_date_preview(&read::<DueText>(args)?.value))?,
         "capture_target" => json(commands::capture_target(state)?)?,
         "set_capture_column" => json(commands::set_capture_column(
@@ -314,7 +313,7 @@ struct Filter {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Filtering {
-    filter: ekanban_core::db::FilterState,
+    filter: ekanban_core::store::FilterState,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]

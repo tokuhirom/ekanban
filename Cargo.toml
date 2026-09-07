@@ -26,17 +26,14 @@ license = "MIT"
 # **既定を外してあります。** ブラウザ向けの組み立て (`crates/web`、ADR 0035) が
 # Tauri の殻を外して使うので、要る側が `features = ["shell"]` と書きます。
 ekanban-app = { path = "crates/app", default-features = false }
-ekanban-core = { path = "crates/core" }
-# ブラウザ向けの組み立て (`crates/web`、ADR 0035)。SQLite のファイルを
-# `localStorage` に置くので、バイト列を文字列にする道が要ります。
-base64 = "0.23.1"
+# **既定を外してあります。** ブラウザ版 (`crates/web`、ADR 0036) が SQLite を
+# 積まずに使うので、要る側が `features = ["sqlite"]` と書きます。
+ekanban-core = { path = "crates/core", default-features = false }
+# ブラウザ向けの組み立て (`crates/web`、ADR 0035)。
 console_error_panic_hook = "0.1.7"
 js-sys = "0.3"
 wasm-bindgen = "0.2"
 web-sys = "0.3"
-# `rusqlite` が wasm で使う SQLite そのもの。バージョンは rusqlite が決めるので、
-# ここで釣り合わせます (食い違うと `links = "wsqlite3"` がぶつかります)。
-sqlite-wasm-rs = "0.5.5"
 # `serde` は期限 (`NaiveDate`) のためです。chrono の実装が "YYYY-MM-DD" の
 # 文字列に落とすので、`docs/DESIGN.md`「境界を越える値」の決めごとがそのまま出ます。
 chrono = { version = "0.4.45", features = ["clock", "serde"] }

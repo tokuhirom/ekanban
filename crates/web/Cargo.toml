@@ -27,16 +27,22 @@ crate-type = ["cdylib", "rlib"]
 # `#![cfg(target_family = "wasm")]`）。
 [target.'cfg(target_family = "wasm")'.dependencies]
 ekanban-app.workspace = true
-base64.workspace = true
+ekanban-core.workspace = true
 console_error_panic_hook.workspace = true
 js-sys.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-# `rusqlite` が `wasm32-unknown-unknown` で内側に使っているもの。**メモリ上の
-# VFS に置いたデータベースを、バイト列として出し入れするため**に直接触ります。
-sqlite-wasm-rs.workspace = true
 wasm-bindgen.workspace = true
 web-sys = { workspace = true, features = ["Storage", "Window"] }
 
 [lints]
 workspace = true
+
+# wasm-pack が最後に通す wasm-opt を使いません。
+#
+# **binaryen を 1 つ落としてくる手間に見合わなくなりました。** SQLite を外して
+# から（ADR 0036）縮むのは 1 割ほどで、代わりに、組み立てがネットワークと
+# binaryen の版に依存します——手元にある古い wasm-opt は、この wasm を壊します。
+# 大きさが問題になったら、そのときに測ってから戻します。
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false

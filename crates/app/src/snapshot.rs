@@ -6,8 +6,8 @@
 //! 差分に落とします。
 
 use chrono::NaiveDate;
-use ekanban_core::db::WindowBoundsState;
 use ekanban_core::model::{due_status, Board, BoardId, BoardSummary, CardId, ColumnId, DueStatus};
+use ekanban_core::store::WindowBoundsState;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -191,7 +191,7 @@ pub struct StartupState {
     pub snapshot: Snapshot,
     /// 動いている OS。キーの割り当てを決めるのに使います。
     pub platform: Platform,
-    pub filter: ekanban_core::db::FilterState,
+    pub filter: ekanban_core::store::FilterState,
     pub window_bounds: Option<WindowBoundsState>,
     pub theme: ThemePreference,
     pub sidebar_collapsed: bool,

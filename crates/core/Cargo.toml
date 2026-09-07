@@ -11,13 +11,23 @@ license.workspace = true
 # （`docs/DESIGN.md`「層の分け方」）。`make deps-check` が見張っている。
 [dependencies]
 chrono.workspace = true
-rusqlite.workspace = true
+rusqlite = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 ts-rs.workspace = true
 
 [features]
+default = ["sqlite"]
+# SQLite の置き場所 (`db/mod.rs`)。**配るアプリはこれです。**
+#
+# 外せるようにしてあるのは、ブラウザ版が JSON の置き場所を使うためです
+# (`store::JsonStore`、ADR 0036)。`wasm32-unknown-unknown` に組んだ SQLite は
+# それだけで 2.1 MB あり、こちらのコード全部より 5 倍大きい。
+#
+# **モデルはこの feature の外にあります。** 分かれているのは「どう置くか」だけ
+# で、盤面の判断は `model.rs` の 1 つのままです。
+sqlite = ["dep:rusqlite"]
 # テスト用のボード (`Board::fixture`)。ほかのクレートからも使うので、
 # crate をまたいで見えるようにこの feature で出す。実行ファイルには入らない。
 test-fixtures = []

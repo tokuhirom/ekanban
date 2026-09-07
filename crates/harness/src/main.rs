@@ -22,6 +22,7 @@ use ekanban_app::commands::{self, ExportFormat};
 use ekanban_app::dispatch;
 use ekanban_app::error::{AppError, ErrorKind};
 use ekanban_app::shortcut::{KeyPress, Shortcut};
+use ekanban_app::state::Source;
 use ekanban_app::{AppState, QuickCaptureStatus};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -40,14 +41,15 @@ fn main() {
     if let Some(parent) = database_path.parent() {
         std::fs::create_dir_all(parent).expect("データベースの置き場所を作れません");
     }
-    let (state, _) = commands::load_startup_state(&database_path).unwrap_or_else(|error| {
-        eprintln!(
-            "{} を開けませんでした: {}",
-            database_path.display(),
-            error.detail
-        );
-        std::process::exit(1);
-    });
+    let (state, _) = commands::load_startup_state(Source::Sqlite(database_path.clone()))
+        .unwrap_or_else(|error| {
+            eprintln!(
+                "{} を開けませんでした: {}",
+                database_path.display(),
+                error.detail
+            );
+            std::process::exit(1);
+        });
 
     let address = SocketAddrV4::new(Ipv4Addr::LOCALHOST, port);
     let server = Server::http(address).expect("ポートを開けません");
@@ -184,6 +186,7 @@ fn invoke(command: &str, args: Value, state: &AppState) -> Result<Value, AppErro
             state,
             &read::<Destination>(args)?.destination,
         )?),
+        "database_location" => ok(commands::database_location(state)),
         // 場所を開く相手（OS のファイル管理）がブラウザにはいない。押しても
         // 何も起きないことだけが本物と違う。
         "reveal_path" | "reveal_database" | "reveal_backups" => ok(()),

@@ -19,7 +19,7 @@ publish = false
 [dependencies]
 # 殻の側のもの（クイックキャプチャの割り当ての変換）まで使うので `shell` 付き。
 ekanban-app = { workspace = true, features = ["shell"] }
-ekanban-core.workspace = true
+ekanban-core = { workspace = true, features = ["sqlite"] }
 serde.workspace = true
 serde_json.workspace = true
 tiny_http.workspace = true
@@ -28,7 +28,7 @@ tiny_http.workspace = true
 # マニュアルのスクリーンショット用の盤面を組む example が使います
 # （`examples/manual_screenshot_seed.rs`）。
 chrono.workspace = true
-ekanban-core = { workspace = true, features = ["test-fixtures"] }
+ekanban-core = { workspace = true, features = ["sqlite", "test-fixtures"] }
 
 [lints]
 workspace = true

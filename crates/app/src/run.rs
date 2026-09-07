@@ -13,6 +13,7 @@ use crate::commands;
 use crate::events;
 use crate::ipc;
 use crate::menu::{self, Action, WindowAction};
+use crate::state::Source;
 use crate::window::BoundsSaver;
 
 /// 盤面のウィンドウのラベル。`tauri.conf.json` と揃えてあります。
@@ -67,7 +68,7 @@ pub fn run() {
         }
     };
 
-    let (state, startup) = match commands::load_startup_state(&path) {
+    let (state, startup) = match commands::load_startup_state(Source::Sqlite(path.clone())) {
         Ok(loaded) => loaded,
         Err(error) => {
             diagnostics::report_fatal(&format!(

@@ -1,66 +1,31 @@
+//! SQLite の置き場所。**配るアプリはこれです**（`docs/DESIGN.md`「層の分け方」）。
+//!
+//! 口は `store::Store` にあり、ブラウザ版は同じ口の裏で JSON を使います
+//! （[ADR 0036]）。ここに残っているのは SQL とスキーマ移行だけです。
+//!
+//! [ADR 0036]: ../../../docs/adr/0036-one-model-two-places-to-put-it.md
+
 use std::path::Path;
 
 use chrono::{Local, NaiveDate, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
-use serde::{Deserialize, Serialize};
-use serde_json::json;
-use thiserror::Error;
-use ts_rs::TS;
 
 use crate::model::{
     Board, BoardId, BoardSummary, Card, ChecklistItem, Column, ColumnId, DueCounts, Tag,
 };
+pub use crate::store::{FilterState, WindowBoundsState};
+
+use crate::store::{
+    board_scoped_id, StoreError, StoredCardEvent, CAPTURE_BOARD_STATE_KEY,
+    CAPTURE_COLUMN_STATE_KEY, FILTER_SEARCH_STATE_KEY, FILTER_TAG_STATE_KEY, LAST_BOARD_STATE_KEY,
+    NEXT_BOARD_STATE_KEY, QUICK_CAPTURE_SHORTCUT_STATE_KEY, SIDEBAR_COLLAPSED_STATE_KEY,
+    THEME_PREFERENCE_STATE_KEY, WINDOW_BOUNDS_STATE_KEY,
+};
 
 const CURRENT_SCHEMA_VERSION: i64 = 11;
 
-const LAST_BOARD_STATE_KEY: &str = "last_board_id";
-const NEXT_BOARD_STATE_KEY: &str = "next_board_id";
-const WINDOW_BOUNDS_STATE_KEY: &str = "window_bounds";
-const FILTER_SEARCH_STATE_KEY: &str = "filter_search";
-const FILTER_TAG_STATE_KEY: &str = "filter_tag_id";
-const THEME_PREFERENCE_STATE_KEY: &str = "theme_preference";
-const SIDEBAR_COLLAPSED_STATE_KEY: &str = "sidebar_collapsed";
-const QUICK_CAPTURE_SHORTCUT_STATE_KEY: &str = "quick_capture_shortcut";
-const CAPTURE_BOARD_STATE_KEY: &str = "capture_board_id";
-const CAPTURE_COLUMN_STATE_KEY: &str = "capture_column_id";
-const BOARD_ID_NAMESPACE_SHIFT: u32 = 32;
-
-#[derive(Debug, Error)]
-pub enum DbError {
-    #[error("SQLite error: {0}")]
-    Sqlite(#[from] rusqlite::Error),
-    #[error("no board exists in the database")]
-    NoBoard,
-    #[error("cannot delete the last board")]
-    LastBoard,
-    #[error("a board name cannot be empty")]
-    EmptyBoardName,
-    #[error("invalid saved application state")]
-    InvalidAppState,
-    #[error("could not encode board export: {0}")]
-    Json(#[from] serde_json::Error),
-}
-
 pub struct Database {
     connection: Connection,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct WindowBoundsState {
-    pub x: f32,
-    pub y: f32,
-    pub width: f32,
-    pub height: f32,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct FilterState {
-    pub search: String,
-    pub tag_id: Option<i64>,
 }
 
 /// Opens the database on the caller's thread and persists a board snapshot.
@@ -68,13 +33,13 @@ pub struct FilterState {
 /// Keeping this small operation separate from [`Database`] lets the UI hand a
 /// detached board clone to a background executor without moving the SQLite
 /// connection that is used during startup.
-pub fn save_board_snapshot(path: impl AsRef<Path>, mut board: Board) -> Result<(), DbError> {
+pub fn save_board_snapshot(path: impl AsRef<Path>, mut board: Board) -> Result<(), StoreError> {
     let mut database = Database::open(path)?;
     database.save_board(&mut board)
 }
 
 impl Database {
-    pub fn open(path: impl AsRef<Path>) -> Result<Self, DbError> {
+    pub fn open(path: impl AsRef<Path>) -> Result<Self, StoreError> {
         let connection = Connection::open(path)?;
         connection.pragma_update(None, "foreign_keys", "ON")?;
         connection.pragma_update(None, "journal_mode", journal_mode())?;
@@ -85,11 +50,11 @@ impl Database {
         Ok(database)
     }
 
-    pub fn load_board(&self) -> Result<Board, DbError> {
+    pub fn load_board(&self) -> Result<Board, StoreError> {
         if let Some(board_id) = self.load_last_board_id()? {
             match self.load_board_by_id(board_id) {
                 Ok(board) => return Ok(board),
-                Err(DbError::NoBoard) => {}
+                Err(StoreError::NoBoard) => {}
                 Err(error) => return Err(error),
             }
         }
@@ -99,12 +64,12 @@ impl Database {
                 row.get(0)
             })
             .optional()?
-            .ok_or(DbError::NoBoard)?;
+            .ok_or(StoreError::NoBoard)?;
 
         self.load_board_by_id(id)
     }
 
-    pub fn load_boards(&self) -> Result<Vec<BoardSummary>, DbError> {
+    pub fn load_boards(&self) -> Result<Vec<BoardSummary>, StoreError> {
         self.load_boards_as_of(Local::now().date_naive())
     }
 
@@ -116,7 +81,7 @@ impl Database {
     ///
     /// 期限は `'YYYY-MM-DD'` の `TEXT` なので、文字列の大小がそのまま日付の前後に
     /// なる。アーカイブ済みのカードは数えない。
-    pub fn load_boards_as_of(&self, today: NaiveDate) -> Result<Vec<BoardSummary>, DbError> {
+    pub fn load_boards_as_of(&self, today: NaiveDate) -> Result<Vec<BoardSummary>, StoreError> {
         let today = today.format("%Y-%m-%d").to_string();
         let mut statement = self.connection.prepare(
             "SELECT boards.id, boards.name, boards.created_at, boards.updated_at,
@@ -144,11 +109,11 @@ impl Database {
                 })
             })?
             .collect::<Result<Vec<_>, _>>()
-            .map_err(DbError::from);
+            .map_err(StoreError::from);
         summaries
     }
 
-    pub fn load_last_board_id(&self) -> Result<Option<BoardId>, DbError> {
+    pub fn load_last_board_id(&self) -> Result<Option<BoardId>, StoreError> {
         let value = self
             .connection
             .query_row(
@@ -161,12 +126,12 @@ impl Database {
             .map(|value| {
                 value
                     .parse::<BoardId>()
-                    .map_err(|_| DbError::InvalidAppState)
+                    .map_err(|_| StoreError::InvalidAppState)
             })
             .transpose()
     }
 
-    pub fn set_last_board_id(&self, board_id: BoardId) -> Result<(), DbError> {
+    pub fn set_last_board_id(&self, board_id: BoardId) -> Result<(), StoreError> {
         self.connection.execute(
             "INSERT INTO app_state (key, value) VALUES (?1, ?2)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -175,7 +140,7 @@ impl Database {
         Ok(())
     }
 
-    pub fn load_window_bounds(&self) -> Result<Option<WindowBoundsState>, DbError> {
+    pub fn load_window_bounds(&self) -> Result<Option<WindowBoundsState>, StoreError> {
         let value = self.load_app_state(WINDOW_BOUNDS_STATE_KEY)?;
         value
             .map(|value| {
@@ -183,7 +148,7 @@ impl Database {
                     .split(',')
                     .map(str::parse::<f32>)
                     .collect::<Result<Vec<_>, _>>()
-                    .map_err(|_| DbError::InvalidAppState)?;
+                    .map_err(|_| StoreError::InvalidAppState)?;
                 match values.as_slice() {
                     [x, y, width, height] if *width > 0.0 && *height > 0.0 => {
                         Ok(WindowBoundsState {
@@ -193,13 +158,13 @@ impl Database {
                             height: *height,
                         })
                     }
-                    _ => Err(DbError::InvalidAppState),
+                    _ => Err(StoreError::InvalidAppState),
                 }
             })
             .transpose()
     }
 
-    pub fn set_window_bounds(&self, bounds: WindowBoundsState) -> Result<(), DbError> {
+    pub fn set_window_bounds(&self, bounds: WindowBoundsState) -> Result<(), StoreError> {
         self.set_app_state(
             WINDOW_BOUNDS_STATE_KEY,
             format!(
@@ -209,18 +174,22 @@ impl Database {
         )
     }
 
-    pub fn load_filter_state(&self) -> Result<FilterState, DbError> {
+    pub fn load_filter_state(&self) -> Result<FilterState, StoreError> {
         let search = self
             .load_app_state(FILTER_SEARCH_STATE_KEY)?
             .unwrap_or_default();
         let tag_id = self
             .load_app_state(FILTER_TAG_STATE_KEY)?
-            .map(|value| value.parse::<i64>().map_err(|_| DbError::InvalidAppState))
+            .map(|value| {
+                value
+                    .parse::<i64>()
+                    .map_err(|_| StoreError::InvalidAppState)
+            })
             .transpose()?;
         Ok(FilterState { search, tag_id })
     }
 
-    pub fn set_filter_state(&self, state: &FilterState) -> Result<(), DbError> {
+    pub fn set_filter_state(&self, state: &FilterState) -> Result<(), StoreError> {
         self.set_app_state(FILTER_SEARCH_STATE_KEY, state.search.clone())?;
         match state.tag_id {
             Some(tag_id) => self.set_app_state(FILTER_TAG_STATE_KEY, tag_id.to_string())?,
@@ -229,36 +198,36 @@ impl Database {
         Ok(())
     }
 
-    pub fn load_theme_preference(&self) -> Result<Option<String>, DbError> {
+    pub fn load_theme_preference(&self) -> Result<Option<String>, StoreError> {
         self.load_app_state(THEME_PREFERENCE_STATE_KEY)
     }
 
-    pub fn set_theme_preference(&self, preference: &str) -> Result<(), DbError> {
+    pub fn set_theme_preference(&self, preference: &str) -> Result<(), StoreError> {
         if !matches!(preference, "system" | "light" | "dark") {
-            return Err(DbError::InvalidAppState);
+            return Err(StoreError::InvalidAppState);
         }
         self.set_app_state(THEME_PREFERENCE_STATE_KEY, preference)
     }
 
-    pub fn load_sidebar_collapsed(&self) -> Result<bool, DbError> {
+    pub fn load_sidebar_collapsed(&self) -> Result<bool, StoreError> {
         Ok(self
             .load_app_state(SIDEBAR_COLLAPSED_STATE_KEY)?
             .is_some_and(|value| value == "1"))
     }
 
-    pub fn set_sidebar_collapsed(&self, collapsed: bool) -> Result<(), DbError> {
+    pub fn set_sidebar_collapsed(&self, collapsed: bool) -> Result<(), StoreError> {
         self.set_app_state(
             SIDEBAR_COLLAPSED_STATE_KEY,
             if collapsed { "1" } else { "0" },
         )
     }
 
-    pub fn load_quick_capture_shortcut(&self) -> Result<Option<String>, DbError> {
+    pub fn load_quick_capture_shortcut(&self) -> Result<Option<String>, StoreError> {
         self.load_app_state(QUICK_CAPTURE_SHORTCUT_STATE_KEY)
     }
 
     /// クイックキャプチャの割り当てを保存する。`None` で解除する。
-    pub fn set_quick_capture_shortcut(&self, shortcut: Option<&str>) -> Result<(), DbError> {
+    pub fn set_quick_capture_shortcut(&self, shortcut: Option<&str>) -> Result<(), StoreError> {
         match shortcut {
             Some(shortcut) => self.set_app_state(QUICK_CAPTURE_SHORTCUT_STATE_KEY, shortcut),
             None => self.delete_app_state(QUICK_CAPTURE_SHORTCUT_STATE_KEY),
@@ -266,7 +235,7 @@ impl Database {
     }
 
     /// クイックキャプチャの入れ先。ボードとカラムの組で持つ。
-    pub fn load_capture_target(&self) -> Result<Option<(BoardId, ColumnId)>, DbError> {
+    pub fn load_capture_target(&self) -> Result<Option<(BoardId, ColumnId)>, StoreError> {
         let Some(board_id) = self.load_app_state(CAPTURE_BOARD_STATE_KEY)? else {
             return Ok(None);
         };
@@ -281,7 +250,10 @@ impl Database {
     }
 
     /// キャプチャ先を保存する。`None` で既定（開いているボードの先頭カラム）に戻す。
-    pub fn set_capture_target(&self, target: Option<(BoardId, ColumnId)>) -> Result<(), DbError> {
+    pub fn set_capture_target(
+        &self,
+        target: Option<(BoardId, ColumnId)>,
+    ) -> Result<(), StoreError> {
         match target {
             Some((board_id, column_id)) => {
                 self.set_app_state(CAPTURE_BOARD_STATE_KEY, board_id.to_string())?;
@@ -301,7 +273,7 @@ impl Database {
         &self,
         board_id: BoardId,
         column_id: ColumnId,
-    ) -> Result<Option<String>, DbError> {
+    ) -> Result<Option<String>, StoreError> {
         self.connection
             .query_row(
                 "SELECT name FROM columns WHERE id = ?1 AND board_id = ?2",
@@ -309,114 +281,40 @@ impl Database {
                 |row| row.get::<_, String>(0),
             )
             .optional()
-            .map_err(DbError::from)
+            .map_err(StoreError::from)
     }
 
-    pub fn export_board_json(&self, board: &Board) -> Result<String, DbError> {
-        let mut event_statement = self.connection.prepare(
+    /// 保存してあるカードの履歴。書き出しの JSON に載る。
+    pub(crate) fn card_events(
+        &self,
+        board_id: BoardId,
+    ) -> Result<Vec<StoredCardEvent>, StoreError> {
+        let mut statement = self.connection.prepare(
             "SELECT id, card_id, kind, from_column_id, to_column_id, at
              FROM card_events WHERE board_id = ?1 ORDER BY id",
         )?;
-        let events = event_statement
-            .query_map(params![board.id], |row| {
-                Ok(json!({
-                    "id": row.get::<_, i64>(0)?,
-                    "board_id": board.id,
-                    "card_id": row.get::<_, i64>(1)?,
-                    "kind": row.get::<_, String>(2)?,
-                    "from_column_id": row.get::<_, Option<i64>>(3)?,
-                    "to_column_id": row.get::<_, Option<i64>>(4)?,
-                    "at": row.get::<_, i64>(5)?,
-                }))
+        let events = statement
+            .query_map(params![board_id], |row| {
+                Ok(StoredCardEvent {
+                    id: row.get(0)?,
+                    card_id: row.get(1)?,
+                    kind: row.get(2)?,
+                    from_column_id: row.get(3)?,
+                    to_column_id: row.get(4)?,
+                    at: row.get(5)?,
+                })
             })?
             .collect::<Result<Vec<_>, _>>()?;
-
-        let card_json = |card: &Card| {
-            json!({
-                "id": card.id,
-                "column_id": card.column_id,
-                "title": card.title,
-                "description": card.description,
-                "position": card.position,
-                "created_at": card.created_at,
-                "updated_at": card.updated_at,
-                "due_date": card.due_date.map(|date| date.format("%Y-%m-%d").to_string()),
-                "tag_ids": card.tag_ids,
-                "archived_at": card.archived_at,
-                "checklist_items": card.checklist_items.iter().map(|item| json!({
-                    "id": item.id,
-                    "card_id": item.card_id,
-                    "text": item.text,
-                    "checked": item.checked,
-                    "position": item.position,
-                    "created_at": item.created_at,
-                    "updated_at": item.updated_at,
-                })).collect::<Vec<_>>(),
-            })
-        };
-        let columns = board
-            .columns
-            .iter()
-            .map(|column| {
-                json!({
-                    "id": column.id,
-                    "board_id": column.board_id,
-                    "name": column.name,
-                    "position": column.position,
-                    "created_at": column.created_at,
-                    "updated_at": column.updated_at,
-                    "cards": column.cards.iter().map(card_json).collect::<Vec<_>>(),
-                })
-            })
-            .collect::<Vec<_>>();
-        let tags = board
-            .tags
-            .iter()
-            .map(|tag| {
-                json!({
-                    "id": tag.id,
-                    "board_id": tag.board_id,
-                    "name": tag.name,
-                    "color": tag.color,
-                    "created_at": tag.created_at,
-                    "updated_at": tag.updated_at,
-                })
-            })
-            .collect::<Vec<_>>();
-        let archived_cards = board
-            .archived_cards
-            .iter()
-            .map(card_json)
-            .collect::<Vec<_>>();
-
-        serde_json::to_string_pretty(&json!({
-            "format": "ekanban-board",
-            "version": 1,
-            "board": {
-                "id": board.id,
-                "name": board.name,
-                "created_at": board.created_at,
-                "updated_at": board.updated_at,
-                "next_card_id": board.next_card_id,
-                "next_column_id": board.next_column_id,
-                "next_tag_id": board.next_tag_id,
-                "next_checklist_item_id": board.next_checklist_item_id,
-            },
-            "columns": columns,
-            "tags": tags,
-            "archived_cards": archived_cards,
-            "card_events": events,
-        }))
-        .map_err(DbError::from)
+        Ok(events)
     }
 
-    pub fn backup_to(&self, destination: &Path) -> Result<(), DbError> {
+    pub fn backup_to(&self, destination: &Path) -> Result<(), StoreError> {
         self.connection
             .execute("VACUUM INTO ?1", params![destination.to_string_lossy()])?;
         Ok(())
     }
 
-    fn load_app_state(&self, key: &str) -> Result<Option<String>, DbError> {
+    fn load_app_state(&self, key: &str) -> Result<Option<String>, StoreError> {
         self.connection
             .query_row(
                 "SELECT value FROM app_state WHERE key = ?1",
@@ -424,10 +322,10 @@ impl Database {
                 |row| row.get::<_, String>(0),
             )
             .optional()
-            .map_err(DbError::from)
+            .map_err(StoreError::from)
     }
 
-    fn set_app_state(&self, key: &str, value: impl Into<String>) -> Result<(), DbError> {
+    fn set_app_state(&self, key: &str, value: impl Into<String>) -> Result<(), StoreError> {
         self.connection.execute(
             "INSERT INTO app_state (key, value) VALUES (?1, ?2)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -436,13 +334,13 @@ impl Database {
         Ok(())
     }
 
-    fn delete_app_state(&self, key: &str) -> Result<(), DbError> {
+    fn delete_app_state(&self, key: &str) -> Result<(), StoreError> {
         self.connection
             .execute("DELETE FROM app_state WHERE key = ?1", params![key])?;
         Ok(())
     }
 
-    pub fn load_board_by_id(&self, id: BoardId) -> Result<Board, DbError> {
+    pub fn load_board_by_id(&self, id: BoardId) -> Result<Board, StoreError> {
         let (
             id,
             name,
@@ -473,7 +371,7 @@ impl Database {
                 },
             )
             .optional()?
-            .ok_or(DbError::NoBoard)?;
+            .ok_or(StoreError::NoBoard)?;
 
         let mut tag_statement = self.connection.prepare(
             "SELECT id, board_id, name, color, created_at, updated_at
@@ -623,7 +521,7 @@ impl Database {
         })
     }
 
-    fn load_checklist_items(&self, card_id: i64) -> Result<Vec<ChecklistItem>, DbError> {
+    fn load_checklist_items(&self, card_id: i64) -> Result<Vec<ChecklistItem>, StoreError> {
         let mut statement = self.connection.prepare(
             "SELECT id, card_id, text, checked, position, created_at, updated_at
              FROM checklist_items WHERE card_id = ?1 ORDER BY position, id",
@@ -641,14 +539,14 @@ impl Database {
                 })
             })?
             .collect::<Result<Vec<_>, _>>()
-            .map_err(DbError::from);
+            .map_err(StoreError::from);
         items
     }
 
-    pub fn create_board(&mut self, name: impl Into<String>) -> Result<Board, DbError> {
+    pub fn create_board(&mut self, name: impl Into<String>) -> Result<Board, StoreError> {
         let name = name.into();
         if name.trim().is_empty() {
-            return Err(DbError::EmptyBoardName);
+            return Err(StoreError::EmptyBoardName);
         }
 
         let now = now();
@@ -667,7 +565,7 @@ impl Database {
             .map(|value| {
                 value
                     .parse::<BoardId>()
-                    .map_err(|_| DbError::InvalidAppState)
+                    .map_err(|_| StoreError::InvalidAppState)
             })
             .transpose()?;
         let board_id = stored_next_board_id
@@ -721,7 +619,7 @@ impl Database {
         ))
     }
 
-    pub fn delete_board(&mut self, board_id: BoardId) -> Result<(), DbError> {
+    pub fn delete_board(&mut self, board_id: BoardId) -> Result<(), StoreError> {
         let transaction = self.connection.transaction()?;
         let board_exists = transaction.query_row(
             "SELECT EXISTS(SELECT 1 FROM boards WHERE id = ?1)",
@@ -729,13 +627,13 @@ impl Database {
             |row| row.get::<_, bool>(0),
         )?;
         if !board_exists {
-            return Err(DbError::NoBoard);
+            return Err(StoreError::NoBoard);
         }
         let board_count = transaction.query_row("SELECT COUNT(*) FROM boards", [], |row| {
             row.get::<_, i64>(0)
         })?;
         if board_count <= 1 {
-            return Err(DbError::LastBoard);
+            return Err(StoreError::LastBoard);
         }
         transaction.execute("DELETE FROM boards WHERE id = ?1", params![board_id])?;
         transaction.execute(
@@ -746,7 +644,7 @@ impl Database {
         Ok(())
     }
 
-    pub fn save_board(&mut self, board: &mut Board) -> Result<(), DbError> {
+    pub fn save_board(&mut self, board: &mut Board) -> Result<(), StoreError> {
         let pending_events = std::mem::take(&mut board.pending_events);
         let transaction = self.connection.transaction()?;
         transaction.execute(
@@ -1061,7 +959,7 @@ impl Database {
         Ok(())
     }
 
-    fn migrate(&mut self) -> Result<(), DbError> {
+    fn migrate(&mut self) -> Result<(), StoreError> {
         self.connection.execute_batch(
             "CREATE TABLE IF NOT EXISTS schema_migrations (
                 version INTEGER PRIMARY KEY,
@@ -1322,7 +1220,7 @@ impl Database {
         Ok(())
     }
 
-    fn seed_if_empty(&mut self) -> Result<(), DbError> {
+    fn seed_if_empty(&mut self) -> Result<(), StoreError> {
         let count = self
             .connection
             .query_row("SELECT COUNT(*) FROM boards", [], |row| {
@@ -1361,15 +1259,10 @@ fn now() -> i64 {
     Utc::now().timestamp_millis()
 }
 
-fn board_scoped_id(board_id: BoardId) -> i64 {
-    board_id
-        .checked_shl(BOARD_ID_NAMESPACE_SHIFT)
-        .and_then(|id| id.checked_add(1))
-        .expect("board ID namespace overflowed")
-}
-
 #[cfg(test)]
 mod tests {
+    use crate::store::{Store, BOARD_ID_NAMESPACE_SHIFT};
+
     use chrono::NaiveDate;
     use rusqlite::Connection;
     use serde_json::Value;
@@ -1377,7 +1270,7 @@ mod tests {
 
     use super::{
         board_scoped_id, save_board_snapshot, Database, FilterState, WindowBoundsState,
-        BOARD_ID_NAMESPACE_SHIFT, CURRENT_SCHEMA_VERSION,
+        CURRENT_SCHEMA_VERSION,
     };
     use crate::model::{Board, ChecklistItemDraft, DueCounts};
     use crate::MAX_SAFE_JS_INTEGER;
@@ -1665,7 +1558,8 @@ mod tests {
         database.save_board(&mut board).unwrap();
 
         let document: Value =
-            serde_json::from_str(&database.export_board_json(&board).unwrap()).unwrap();
+            serde_json::from_str(&Store::Sqlite(database).export_board_json(&board).unwrap())
+                .unwrap();
         assert_eq!(document["format"], "ekanban-board");
         assert_eq!(document["board"]["name"], board.name);
         assert_eq!(document["tags"][0]["name"], "書き出し");
@@ -1732,11 +1626,11 @@ mod tests {
         database.delete_board(first.id).unwrap();
         assert!(matches!(
             database.load_board_by_id(first.id),
-            Err(super::DbError::NoBoard)
+            Err(super::StoreError::NoBoard)
         ));
         assert!(matches!(
             database.delete_board(second.id),
-            Err(super::DbError::LastBoard)
+            Err(super::StoreError::LastBoard)
         ));
     }
 
@@ -1764,7 +1658,7 @@ mod tests {
 
         assert!(matches!(
             database.create_board("  "),
-            Err(super::DbError::EmptyBoardName)
+            Err(super::StoreError::EmptyBoardName)
         ));
     }
 

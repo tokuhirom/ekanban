@@ -604,9 +604,12 @@ pub fn web_sections(platform: Platform) -> Vec<WebSection> {
 /// [`Item`] の `enabled` にも書いてあります）。灰色の項目は押せず、押せない以上
 /// 理由を出す先が無いので、`quick_capture_item` と同じように文言に入れます。
 ///
-/// ファイル管理でフォルダを開くのがそれです。ブラウザから OS のファイル管理は
-/// 呼べません。**「データベースをコピー…」は残ります**——ブラウザにも
-/// ダウンロードはあるので、控えは持ち出せます。
+/// ファイル管理でフォルダを開くのと、データベースの控えがそれです。前者は
+/// ブラウザから OS のファイル管理を呼べないため、後者は**ブラウザ版に
+/// SQLite のファイルがそもそも無い**ためです（[ADR 0036]）。**盤面の持ち出しは
+/// 残ります**——「ボードを書き出す」の 2 つがダウンロードになります。
+///
+/// [ADR 0036]: ../../../docs/adr/0036-one-model-two-places-to-put-it.md
 fn browser_availability(item: WebItem) -> WebItem {
     let WebItem::Action {
         action,
@@ -617,7 +620,10 @@ fn browser_availability(item: WebItem) -> WebItem {
     else {
         return item;
     };
-    let unavailable = matches!(action, AppAction::RevealDatabase | AppAction::RevealBackups);
+    let unavailable = matches!(
+        action,
+        AppAction::RevealDatabase | AppAction::RevealBackups | AppAction::BackupDatabase
+    );
     WebItem::Action {
         action,
         label: if unavailable {
@@ -1234,12 +1240,18 @@ mod tests {
                 .expect("項目が出ている")
         };
 
-        for action in [AppAction::RevealDatabase, AppAction::RevealBackups] {
+        for action in [
+            AppAction::RevealDatabase,
+            AppAction::RevealBackups,
+            // ブラウザ版に SQLite のファイルが無い（ADR 0036）。
+            AppAction::BackupDatabase,
+        ] {
             let (label, enabled) = find(action);
             assert!(!enabled, "{action:?} は押せないはず");
             assert!(label.contains("ブラウザでは使えません"), "{label}");
         }
-        // 控えの持ち出しはブラウザにもある。ここまで灰色にしない。
-        assert!(find(AppAction::BackupDatabase).1);
+        // 盤面の持ち出しは残る。ここまで灰色にしない。
+        assert!(find(AppAction::ExportBoardJson).1);
+        assert!(find(AppAction::ExportBoardMarkdown).1);
     }
 }

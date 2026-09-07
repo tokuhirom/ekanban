@@ -22,6 +22,7 @@ crates/
       instance.rs     同じデータベースを 2 プロセスに開かせないロック
       paths.rs        OS ごとのデータベースとログの配置の解決
       diagnostics.rs  起動失敗とパニックのログ記録、ダイアログ表示
+      store.rs        盤面の置き場所。SQLite と JSON の 2 つを 1 つの口に（ADR 0036）
       db/
         mod.rs        SQLite のスキーマ移行、読み書き、トランザクション
   harness/        ekanban-harness: コマンドを HTTP に出す。開発とテスト専用
@@ -66,6 +67,7 @@ web(crate)/      ekanban-web: 同じコマンドを wasm で動かす。ブラ�
 - **`ekanban-core` に UI ツールキットを足しません。** `tauri` に依存しないことが、テストを GUI のランタイム無しで走らせ続ける条件であり、Tauri のアプリと開発用のハーネスが同じコードを使える条件でもあります（[設計の記録](DESIGN.md)「層の分け方」）。依存の依存から入り込むほうがありがちなので、解決した依存グラフを `script/check-core-independence` が CI で見ています
 - **`crates/app/src/commands.rs` に `tauri` は出てきません。** `ipc.rs` の `#[tauri::command]` は、その関数を呼ぶだけの包みです。開発用のハーネス（[設計の記録](DESIGN.md)「テスト」）が同じ関数を HTTP に出すので、**判断を包みの側に置かないことは設計そのもの**です
 - **D&D の挿入位置と、キーボードの割り当ては `web/src/board/dnd.ts` と `keyboard.ts` に置きます。** dnd-kit に渡すのは掴む・運ぶ・オートスクロールだけです（[ADR 0022](adr/0022-dnd-kit-core-for-drag-and-drop.md)）。盤面の意味を決めるところをライブラリに預けると、外せなくなります
+- **盤面の置き場所は 2 つ、モデルは 1 つです。** `store::Store` が口で、配るアプリは SQLite、ブラウザ版は JSON です（[ADR 0036](adr/0036-one-model-two-places-to-put-it.md)）。**`Store` に盤面の判断を書かないでください**——採番も並べ替えも Undo も `model.rs` にあります。`cargo build -p ekanban-core --no-default-features` が、中核が SQLite に依らない層を持っていることの確かめ方です
 - **`crates/app` の `shell` feature を外すと、Tauri を知らない層だけが残ります。** ブラウザ版（`crates/web`、[ADR 0035](adr/0035-a-browser-build-of-the-real-core.md)）がそこを使います。`cargo build -p ekanban-app --no-default-features --target wasm32-unknown-unknown` が通ることが、「コマンドの層が Tauri を知らない」の実際の確かめ方です
 - **どの OS で動いているかを `navigator.userAgent` から決めません。** あれは webview が書き換えられる文字列です（Playwright の Safari 模擬は Linux 上で `Macintosh` を名乗ります）。`secondary` が Cmd か Ctrl かを取り違えると割り当てが丸ごと効かないので、Rust が `StartupState.platform` で渡します（[ADR 0009](adr/0009-per-platform-key-bindings.md)、[ADR 0023](adr/0023-verifying-the-webview-engines.md)）。**例外はブラウザ版だけ**です——`wasm32-unknown-unknown` はどの OS でもないので、そこだけはページが名乗ります（[ADR 0035](adr/0035-a-browser-build-of-the-real-core.md)）
 - **`crates/app` のコンパイルには `web/dist` が要ります。** `tauri::generate_context!` が画面を実行ファイルに埋め込むためです。checkout したてなら `npm --prefix web ci && npm --prefix web run build` を先に走らせてください（`make dev` と CI はそうしています）
@@ -228,7 +230,7 @@ test("カードを足して保存すると、タイトルがデータベース�
 
 ここで見るのは**組み立ての違いだけ**です。
 
-- 読み込み直しても盤面が残ること（`localStorage`）。ここでしか確かめられない受け入れ条件です
+- 読み込み直しても盤面が残ること（`localStorage` の JSON）。ここでしか確かめられない受け入れ条件です
 - メニューバーが Rust の構成（`menu::web_sections`）どおりに出て、OS のものが混ざらないこと
 - ブラウザにできないことが、消されずに灰色で残っていること
 - 書き出しがダウンロードとして受け取れること
