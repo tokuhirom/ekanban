@@ -610,18 +610,21 @@ button.danger {
 }
 
 /* パネルは「カードを大きくしたもの」（#144）。タイトルは見出し無しの大きい欄で、
- * 期限とタグはその直下の 1 行。枠は触っているときだけ出す。 */
+ * 期限とタグはその直下の 1 行。
+ *
+ * **枠は最初から出します**（#168）。触るまで枠が無いと、そこが打てる場所だと
+ * 読めません。触った瞬間に枠が現れると、余白まで変わって行が動きます。枠と
+ * 余白は据え置き、触っているあいだは枠の色だけ変えます——タグの欄
+ * （`.tags-input`）と同じ出し方です。 */
 .card-title-input {
-  padding: 4px 0;
-  border: 0;
-  background: transparent;
+  padding: 4px 8px;
   font-size: 16px;
   font-weight: 600;
 }
 
 .card-title-input:focus {
-  outline: 2px solid var(--color-border);
-  outline-offset: 2px;
+  outline: none;
+  border-color: var(--color-info);
 }
 
 .card-meta {
@@ -639,16 +642,12 @@ button.danger {
   /* パネルは 340px。タグと 1 行に並ぶ幅にする（#144）。 */
   width: 7.5em;
   min-width: 0;
-  /* タイトルや説明と同じく、枠は触っているあいだだけ。 */
-  border-color: transparent;
-  background: transparent;
-  padding-left: 0;
 }
 
+/* タイトルや説明と同じく、枠と余白は据え置きで色だけ変える（#168）。 */
 .card-meta > .due-field > .card-due-input:focus {
-  border-color: var(--color-border);
-  background: var(--color-input-background);
-  padding-left: 8px;
+  outline: none;
+  border-color: var(--color-info);
 }
 
 .card-meta > .tags-input {
@@ -857,15 +856,18 @@ button.danger {
 /* 説明は Markdown のエディタ（#129、ADR 0033）。中身は `contenteditable` で、
  * 打った分だけ自然に伸びます——高さを測る必要が無くなりました。
  *
- * タイトルや期限と同じく、**枠は触っているあいだだけ**出します（#144）。 */
+ * **枠はこの外枠が持ちます**——中の `contenteditable` に持たせると、触った
+ * ときだけ枠を出す作りに戻したくなります。タイトルや期限と同じく、枠も余白も
+ * 最初から据え置きで、触っているあいだは色だけ変わります（#168）。 */
 .description-field {
   position: relative;
-  background: transparent;
+  border: 1px solid var(--color-border);
   border-radius: 6px;
+  background: var(--color-input-background);
 }
 
 .description-field:focus-within {
-  background: var(--color-input-background);
+  border-color: var(--color-info);
 }
 
 .description-field > .card-description-input {
@@ -874,8 +876,8 @@ button.danger {
   width: 100%;
   min-height: calc(1.5em * 4 + 10px);
   margin: 0;
-  padding: 5px 0;
-  border: 1px solid transparent;
+  padding: 5px 8px;
+  border: 0;
   border-radius: 6px;
   background: transparent;
   color: var(--color-foreground);
@@ -885,25 +887,18 @@ button.danger {
   outline: none;
 }
 
-.description-field:focus-within > .card-description-input {
-  padding: 5px 8px;
-  border-color: var(--color-border);
-}
-
-/* 空のときだけ出る案内。入力欄の上に重ねるので、クリックは下へ通す。 */
+/* 空のときだけ出る案内。入力欄の上に重ねるので、クリックは下へ通す。
+ * **本文と同じ位置に置きます**——外枠の 1px と入力欄の余白（5px 8px）の分。
+ * ずれていると、打ち始めた瞬間に文字が跳ねたように見えます。 */
 .description-placeholder {
   position: absolute;
-  top: 5px;
-  left: 1px;
+  top: 6px;
+  left: 9px;
   margin: 0;
   color: var(--color-muted-foreground);
   line-height: 1.5;
   pointer-events: none;
   user-select: none;
-}
-
-.description-field:focus-within > .description-placeholder {
-  left: 9px;
 }
 
 /* 段落の間は 1 行ぶん。見出しと箇条書きは編集器が作るので、素の余白だけ整える。 */
