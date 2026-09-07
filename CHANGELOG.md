@@ -1,5 +1,14 @@
 # Changelog
 
+## [v0.2.1](https://github.com/tokuhirom/ekanban/compare/v0.2.0...v0.2.1) - 2026-09-07
+
+### 変更
+- Trim the design record down to the rules in force by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/167
+- 入力欄の枠を、触る前から出す（#168） by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/171
+- PR は、マージされるまで作った側が見張る by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/172
+- WIP 上限をやめる by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/174
+- Focus the quick capture input once its destination arrives by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/173
+
 ## [v0.2.0](https://github.com/tokuhirom/ekanban/compare/v0.1.3...v0.2.0) - 2026-09-07
 
 ### 変更
