@@ -104,9 +104,15 @@ export function Column({
         <header
           className="column-header"
           ref={setActivatorNodeRef}
-          title="掴んでカラムを並べ替える"
+          title="掴んでカラムを並べ替える。ダブルクリックで名前と WIP 上限を変える"
           {...attributes}
           {...listeners}
+          // 名前を変える入口を、ボード一覧（#119）とカードに揃えます（#145）。
+          // 掴んだ判定は 4px 動かしてからなので、ダブルクリックとぶつかりません。
+          // `…` の「編集」は残します——キーボードから辿れる入口が要ります。
+          onDoubleClick={() => {
+            setEditing(true);
+          }}
         >
           <h2 className="column-name">{column.name}</h2>
           <span

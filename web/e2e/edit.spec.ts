@@ -850,6 +850,24 @@ test("最後の 1 本になったカラムは消せない", async ({ page }) => 
   await expect(only.getByRole("button", { name: "削除" })).toBeDisabled();
 });
 
+/// 名前を変える入口をボード一覧・カードと揃える（#145）。掴んだ判定は 4px
+/// 動かしてからなので、ダブルクリックでは並びが動かない。
+test("カラム名をダブルクリックすると、名前と WIP の欄が開く", async ({ page }) => {
+  await openBoard(page);
+  const first = page.locator(".column").first();
+  const before = (await storedBoard()).columns.map((column) => column.name);
+
+  await first.locator(".column-name").dblclick();
+  const name = first.locator(".column-name-input");
+  await expect(name).toBeVisible();
+  // 掴んだことにはなっていない。カラムの並びはそのまま。
+  expect((await storedBoard()).columns.map((column) => column.name)).toEqual(before);
+
+  await name.fill("名前を変えた");
+  await first.locator(".save-column").click();
+  await expect.poll(async () => (await storedBoard()).columns[0]?.name).toBe("名前を変えた");
+});
+
 // ---------------------------------------------------------------- ボード
 
 test("ボードを足し、名前を変え、消せる", async ({ page }) => {
