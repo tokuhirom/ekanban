@@ -30,8 +30,17 @@ export interface Ipc {
   renameBoard(name: string): Promise<Snapshot>;
   deleteBoard(boardId: number): Promise<Snapshot>;
 
-  /** タイトルが決まってから 1 回だけ呼ぶ。空白だけのタイトルは Rust が断る（`docs/DESIGN.md`「状態の持ち主」）。 */
-  addCard(columnId: number, title: string, description: string): Promise<Snapshot>;
+  /** タイトルが決まってから 1 回だけ呼ぶ。空白だけのタイトルは Rust が断る（`docs/DESIGN.md`「状態の持ち主」）。
+   * 下書きは `updateCard` と同じ一式を渡す——期限もタグもチェックリストも、
+   * 足すときに付けられる（#127）。 */
+  addCard(
+    columnId: number,
+    title: string,
+    description: string,
+    dueDate: string,
+    tagIds: number[],
+    checklist: ChecklistItemDraft[],
+  ): Promise<Snapshot>;
   /** カードの中身をまとめて書き換える。チェックリストも項目ごと一括で渡す
    * （`docs/DESIGN.md`「コマンドとイベント」）。 */
   updateCard(

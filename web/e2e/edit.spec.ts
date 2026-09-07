@@ -99,6 +99,68 @@ test("カードを足して保存すると、タイトルがデータベース�
   expect(board.columns[0]?.cards.at(-1)?.title).toBe("新しく足したカード");
 });
 
+/// 新しいカードにも期限・チェックリスト・タグの欄を出す（#127）。
+///
+/// `add_card` が下書きを丸ごと受けるので、足したあとに開き直して付け直す往復が
+/// 要らない。**画面と SQLite の両方**で、1 回の保存で入っていることを見る。
+test("新しいカードにも期限・チェックリスト・タグを付けて保存できる", async ({ page }) => {
+  await openBoard(page);
+  await page.locator(".column").first().locator(".add-card").click();
+
+  await expect(page.locator(".card-due-input")).toBeVisible();
+  await expect(page.locator(".tags-input-field")).toBeVisible();
+  await expect(page.locator(".add-checklist-item")).toBeVisible();
+
+  await page.locator(".card-title-input").fill("備えて足すカード");
+  await page.locator(".card-due-input").fill("2026-12-31");
+  await page.locator(".add-checklist-item").click();
+  await page.locator(".checklist-text").fill("先にやる");
+  await page.locator(".tags-input-field").fill("足すときのタグ");
+  await page.locator(".tags-input-field").press("Enter");
+  await expect(
+    page.locator(".tags-input-chip").filter({ hasText: "足すときのタグ" }),
+  ).toHaveCount(1);
+
+  await page.locator(".save-card").click();
+  await expect(page.locator(".card-panel")).toBeHidden();
+
+  const added = async () => {
+    const board = await storedBoard();
+    return board.columns
+      .flatMap((column) => column.cards)
+      .find((card) => card.title === "備えて足すカード");
+  };
+  await expect.poll(async () => (await added())?.dueDate).toBe("2026-12-31");
+  const board = await storedBoard();
+  const tagId = board.tags.find((tag) => tag.name === "足すときのタグ")?.id;
+  expect(tagId).toBeDefined();
+  expect((await added())?.tagIds).toEqual([tagId]);
+  expect((await added())?.checklistItems.map((item) => item.text)).toEqual(["先にやる"]);
+});
+
+/// 足したばかりのカードは、Undo 1 回で消える（#127）。
+///
+/// 期限もタグもチェックリストも備えたまま足すので、積まれる操作は 1 件。
+/// 2 件に割れていると、ここで 1 回押しただけではカードが残る。
+test("期限やタグごと足したカードも、Undo 1 回で消える", async ({ page }) => {
+  await openBoard(page);
+  const before = await storedTitles();
+
+  await page.locator(".column").first().locator(".add-card").click();
+  await page.locator(".card-title-input").fill("戻す対象");
+  await page.locator(".card-due-input").fill("2026-12-31");
+  await page.locator(".add-checklist-item").click();
+  await page.locator(".checklist-text").fill("項目");
+  await page.locator(".save-card").click();
+  await expect.poll(storedTitles).toContain("戻す対象");
+
+  // 入力欄にフォーカスがある間は盤面の Undo に回らない（`docs/DESIGN.md`）。
+  await page.locator(".board-content").click({ position: { x: 5, y: 5 } });
+  await page.keyboard.press("ControlOrMeta+z");
+  await expect.poll(storedTitles).toEqual(before);
+  await expect(page.locator(".card-title", { hasText: "戻す対象" })).toHaveCount(0);
+});
+
 test("説明の欄は、打った分だけ縦に伸びる", async ({ page }) => {
   await openBoard(page);
   await page.locator(".column").first().locator(".add-card").click();

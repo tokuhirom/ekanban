@@ -5,6 +5,9 @@
 //
 // **下書きはここが持ちます**（`docs/DESIGN.md`「状態の持ち主」）。打っている間は
 // Rust に渡さず、保存を押した 1 回だけ `add_card` か `update_card` を呼びます。
+// 出す欄は新しいカードでも保存済みのカードでも同じで、どちらも下書きを丸ごと
+// 渡します（#127）。違うのは呼ぶコマンドと、向ける先のあるカード操作（コピー・
+// アーカイブ・削除）を出すかどうかだけです。
 // **無題のカードが盤面に現れる経路がありません**——足してから引っこめる形を
 // 取らないので、取り下げが履歴に残ることもありません。
 
@@ -101,7 +104,14 @@ export function CardPanel({
     if (!savable) return;
     const failure = await run(() =>
       editing.kind === "new"
-        ? ipc.addCard(editing.columnId, draft.title, draft.description)
+        ? ipc.addCard(
+            editing.columnId,
+            draft.title,
+            draft.description,
+            draft.dueDate,
+            draft.tagIds,
+            checklistToSend(draft.checklist),
+          )
         : ipc.updateCard(
             editing.cardId,
             draft.title,
@@ -257,144 +267,139 @@ export function CardPanel({
           }}
         />
 
-        {/* 期限・チェックリスト・タグは、保存済みのカードにしか付けられません。
-            `add_card` が受けるのはタイトルと説明だけで、まだカードが無いうちは
-            付ける先がないからです（`docs/DESIGN.md`「コマンドとイベント」）。足したあとに開いて付けます。 */}
-        {editing.kind === "card" && (
-          <>
-            <label className="field-label" htmlFor="card-due-date">
-              期限
-            </label>
-            {/* カレンダーのポップアップは webview（＝OS）が出します（#120）。
-                日付選択のライブラリを足さないのは、3 つの webview で見た目と
-                操作を確かめる対象を増やさないため。`value` の形は `""` か
-                `"YYYY-MM-DD"` で、素の欄だったときと変わりません。読めるか
-                どうかの判定は Rust に 1 つだけ置いたままにします。 */}
-            <input
-              id="card-due-date"
-              type="date"
-              className="field-input card-due-input"
-              value={draft.dueDate}
-              onChange={(event) => {
-                setDraft({ ...draft, dueDate: event.target.value });
-              }}
-            />
-            {/* `type="date"` は placeholder を出さないので、案内は欄の脇に置く。 */}
-            <p className="field-note">空欄で期限なし</p>
-            <FieldFailure failure={failed} field="dueDate" />
-            <div className="button-row">
-              {quickDueDates(today).map((quick) => (
-                <button
-                  key={quick.label}
-                  type="button"
-                  className="secondary"
-                  onClick={() => {
-                    setDraft({ ...draft, dueDate: quick.date });
-                  }}
-                >
-                  {quick.label}
-                </button>
-              ))}
-              <button
-                type="button"
-                className="secondary"
-                onClick={() => {
-                  setDraft({ ...draft, dueDate: "" });
-                }}
-              >
-                クリア
-              </button>
-            </div>
-
-            <span className="field-label">チェックリスト</span>
-            <FieldFailure failure={failed} field="checklistItem" />
-            {/* 掴んで並べ替える（#113）。盤面とは別の `DndContext` です——
-                パネルは盤面の外にあり、落とし先の候補が混ざる意味がありません。
-                **何番目に落ちたかを決めるのは `draft.ts`** で、ライブラリに
-                任せるのは掴む・追う・落とすまで（`docs/DESIGN.md`
-                「ドラッグ＆ドロップ」）。動かすのは下書きの配列だけなので、
-                落とした瞬間に Rust は呼びません。 */}
-            <DndContext
-              sensors={checklistSensors}
-              collisionDetection={closestCenter}
-              onDragEnd={(event: DragEndEvent) => {
-                if (event.over === null) return;
-                setDraft({
-                  ...draft,
-                  checklist: reorderChecklist(
-                    draft.checklist,
-                    String(event.active.id),
-                    String(event.over.id),
-                  ),
-                });
+        {/* 期限・チェックリスト・タグは、新しいカードにも出します（#127）。
+            `add_card` が下書きを丸ごと受けるので、足してから開き直す往復が要りません。 */}
+        <label className="field-label" htmlFor="card-due-date">
+          期限
+        </label>
+        {/* カレンダーのポップアップは webview（＝OS）が出します（#120）。
+            日付選択のライブラリを足さないのは、3 つの webview で見た目と
+            操作を確かめる対象を増やさないため。`value` の形は `""` か
+            `"YYYY-MM-DD"` で、素の欄だったときと変わりません。読めるか
+            どうかの判定は Rust に 1 つだけ置いたままにします。 */}
+        <input
+          id="card-due-date"
+          type="date"
+          className="field-input card-due-input"
+          value={draft.dueDate}
+          onChange={(event) => {
+            setDraft({ ...draft, dueDate: event.target.value });
+          }}
+        />
+        {/* `type="date"` は placeholder を出さないので、案内は欄の脇に置く。 */}
+        <p className="field-note">空欄で期限なし</p>
+        <FieldFailure failure={failed} field="dueDate" />
+        <div className="button-row">
+          {quickDueDates(today).map((quick) => (
+            <button
+              key={quick.label}
+              type="button"
+              className="secondary"
+              onClick={() => {
+                setDraft({ ...draft, dueDate: quick.date });
               }}
             >
-              <SortableContext
-                items={draft.checklist.map((item) => item.key)}
-                strategy={verticalListSortingStrategy}
-              >
-                {draft.checklist.map((item, index) => (
-                  <ChecklistRow
-                    key={item.key}
-                    item={item}
-                    index={index}
-                    count={draft.checklist.length}
-                    onToggle={() => {
-                      setDraft({
-                        ...draft,
-                        checklist: toggleChecklistItem(draft.checklist, index),
-                      });
-                    }}
-                    onChangeText={(text) => {
-                      setDraft({
-                        ...draft,
-                        checklist: setChecklistText(draft.checklist, index, text),
-                      });
-                    }}
-                    onMove={(direction) => {
-                      setDraft({
-                        ...draft,
-                        checklist: moveChecklistItem(draft.checklist, index, direction),
-                      });
-                    }}
-                    onDelete={() => {
-                      setDraft({
-                        ...draft,
-                        checklist: deleteChecklistItem(draft.checklist, index),
-                      });
-                    }}
-                  />
-                ))}
-              </SortableContext>
-            </DndContext>
-            <div className="button-row">
-              <button
-                type="button"
-                className="secondary add-checklist-item"
-                onClick={() => {
-                  // 名前を入れないままにした行は、保存のときに Rust が落とします
-                  // （#114）。消しにいかなくても保存できます。
-                  setDraft({ ...draft, checklist: [...draft.checklist, newChecklistItem()] });
-                }}
-              >
-                ＋ 項目を追加
-              </button>
-            </div>
+              {quick.label}
+            </button>
+          ))}
+          <button
+            type="button"
+            className="secondary"
+            onClick={() => {
+              setDraft({ ...draft, dueDate: "" });
+            }}
+          >
+            クリア
+          </button>
+        </div>
 
-            <span className="field-label" id="card-tags-label">
-              タグ
-            </span>
-            <TagsInput
-              tags={board.tags}
-              selected={draft.tagIds}
-              failure={failed}
-              onToggle={(tagId) => {
-                setDraft({ ...draft, tagIds: toggleTag(draft.tagIds, tagId) });
-              }}
-              onCreate={createTag}
-            />
-          </>
-        )}
+        <span className="field-label">チェックリスト</span>
+        <FieldFailure failure={failed} field="checklistItem" />
+        {/* 掴んで並べ替える（#113）。盤面とは別の `DndContext` です——
+            パネルは盤面の外にあり、落とし先の候補が混ざる意味がありません。
+            **何番目に落ちたかを決めるのは `draft.ts`** で、ライブラリに
+            任せるのは掴む・追う・落とすまで（`docs/DESIGN.md`
+            「ドラッグ＆ドロップ」）。動かすのは下書きの配列だけなので、
+            落とした瞬間に Rust は呼びません。 */}
+        <DndContext
+          sensors={checklistSensors}
+          collisionDetection={closestCenter}
+          onDragEnd={(event: DragEndEvent) => {
+            if (event.over === null) return;
+            setDraft({
+              ...draft,
+              checklist: reorderChecklist(
+                draft.checklist,
+                String(event.active.id),
+                String(event.over.id),
+              ),
+            });
+          }}
+        >
+          <SortableContext
+            items={draft.checklist.map((item) => item.key)}
+            strategy={verticalListSortingStrategy}
+          >
+            {draft.checklist.map((item, index) => (
+              <ChecklistRow
+                key={item.key}
+                item={item}
+                index={index}
+                count={draft.checklist.length}
+                onToggle={() => {
+                  setDraft({
+                    ...draft,
+                    checklist: toggleChecklistItem(draft.checklist, index),
+                  });
+                }}
+                onChangeText={(text) => {
+                  setDraft({
+                    ...draft,
+                    checklist: setChecklistText(draft.checklist, index, text),
+                  });
+                }}
+                onMove={(direction) => {
+                  setDraft({
+                    ...draft,
+                    checklist: moveChecklistItem(draft.checklist, index, direction),
+                  });
+                }}
+                onDelete={() => {
+                  setDraft({
+                    ...draft,
+                    checklist: deleteChecklistItem(draft.checklist, index),
+                  });
+                }}
+              />
+            ))}
+          </SortableContext>
+        </DndContext>
+        <div className="button-row">
+          <button
+            type="button"
+            className="secondary add-checklist-item"
+            onClick={() => {
+              // 名前を入れないままにした行は、保存のときに Rust が落とします
+              // （#114）。消しにいかなくても保存できます。
+              setDraft({ ...draft, checklist: [...draft.checklist, newChecklistItem()] });
+            }}
+          >
+            ＋ 項目を追加
+          </button>
+        </div>
+
+        <span className="field-label" id="card-tags-label">
+          タグ
+        </span>
+        <TagsInput
+          tags={board.tags}
+          selected={draft.tagIds}
+          failure={failed}
+          onToggle={(tagId) => {
+            setDraft({ ...draft, tagIds: toggleTag(draft.tagIds, tagId) });
+          }}
+          onCreate={createTag}
+        />
       </div>
 
       <footer className="panel-footer">

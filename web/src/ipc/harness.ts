@@ -53,8 +53,15 @@ export function harnessIpc(base: string): Ipc {
     createBoard: (name) => call<Snapshot>(base, "create_board", { name }),
     renameBoard: (name) => call<Snapshot>(base, "rename_board", { name }),
     deleteBoard: (boardId) => call<Snapshot>(base, "delete_board", { boardId }),
-    addCard: (columnId, title, description) =>
-      call<Snapshot>(base, "add_card", { columnId, title, description }),
+    addCard: (columnId, title, description, dueDate, tagIds, checklist) =>
+      call<Snapshot>(base, "add_card", {
+        columnId,
+        title,
+        description,
+        dueDate,
+        tagIds,
+        checklist,
+      }),
     updateCard: (cardId, title, description, dueDate, tagIds, checklist) =>
       call<Snapshot>(base, "update_card", {
         cardId,

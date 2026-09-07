@@ -143,13 +143,34 @@ fn an_empty_board_name_lands_next_to_the_field_that_took_it() {
 
 // ---------------------------------------------------------------- カード
 
+/// 期限もタグもチェックリストも付けずにカードを足す。
+///
+/// `add_card` は下書きを丸ごと受け取る（#127）ので、そこを見ないテストでは
+/// 空の一式を毎回並べることになる。並べる代わりにここへ寄せる。
+fn add_plain_card(
+    harness: &Harness,
+    column: ColumnId,
+    title: &str,
+    description: &str,
+) -> Result<ekanban_app::snapshot::Snapshot, ekanban_app::error::AppError> {
+    commands::add_card(
+        &harness.state,
+        column,
+        title,
+        description,
+        "",
+        Vec::new(),
+        Vec::new(),
+    )
+}
+
 #[test]
 fn adding_editing_moving_copying_and_deleting_a_card() {
     let harness = Harness::open();
     let column = harness.first_column();
 
-    let added = commands::add_card(&harness.state, column, "足したカード", "説明")
-        .expect("the card is added");
+    let added =
+        add_plain_card(&harness, column, "足したカード", "説明").expect("the card is added");
     assert!(titles(&added.board, 0).contains(&"足したカード".to_string()));
     assert!(added.can_undo, "足したら戻せる");
     assert!(titles(&harness.stored(), 0).contains(&"足したカード".to_string()));
@@ -202,6 +223,92 @@ fn adding_editing_moving_copying_and_deleting_a_card() {
         .cards
         .iter()
         .any(|card| card.id == card_id));
+}
+
+/// 足すときに期限・タグ・チェックリストを付けられる（#127）。
+///
+/// 見るのは返ったスナップショットと SQLite の両方。足したあとに `update_card`
+/// を呼んでいないので、届いているならカード 1 枚ぶんの保存で入っている。
+#[test]
+fn adding_a_card_carries_its_due_date_tags_and_checklist_to_sqlite() {
+    let harness = Harness::open();
+    let column = harness.first_column();
+    let tag_id = commands::add_tag(&harness.state, "重要", "#ef4444")
+        .expect("the tag is added")
+        .board
+        .tags[0]
+        .id;
+
+    let added = commands::add_card(
+        &harness.state,
+        column,
+        "備えて足すカード",
+        "説明",
+        "2026-09-30",
+        vec![tag_id],
+        vec![
+            ChecklistItemDraft {
+                id: None,
+                text: "先にやる".to_string(),
+                checked: false,
+            },
+            ChecklistItemDraft {
+                id: None,
+                text: "  ".to_string(),
+                checked: false,
+            },
+        ],
+    )
+    .expect("the card is added");
+
+    for board in [&added.board, &harness.stored()] {
+        let card = board.columns[0]
+            .cards
+            .iter()
+            .find(|card| card.title == "備えて足すカード")
+            .expect("the card is there");
+        assert_eq!(
+            card.due_date.map(|date| date.to_string()).as_deref(),
+            Some("2026-09-30")
+        );
+        assert_eq!(card.tag_ids, vec![tag_id]);
+        // 名前の入っていない項目は落ちる（#114 と同じ規則）。
+        assert_eq!(
+            card.checklist_items
+                .iter()
+                .map(|item| item.text.as_str())
+                .collect::<Vec<_>>(),
+            ["先にやる"]
+        );
+    }
+
+    // 積まれた操作は 1 件。足したばかりのカードは 1 回の Undo で消える。
+    let undone = commands::undo(&harness.state).expect("undone");
+    assert!(!titles(&undone.board, 0).contains(&"備えて足すカード".to_string()));
+    assert!(!titles(&harness.stored(), 0).contains(&"備えて足すカード".to_string()));
+}
+
+/// 読めない期限は入力欄に返し、カードは 1 枚も増やさない。
+#[test]
+fn adding_a_card_with_an_unreadable_due_date_is_refused() {
+    let harness = Harness::open();
+    let before = harness.stored();
+
+    let error = commands::add_card(
+        &harness.state,
+        before.columns[0].id,
+        "足せないカード",
+        "",
+        "2026/09/30",
+        Vec::new(),
+        Vec::new(),
+    )
+    .expect_err("an unreadable due date is refused");
+    assert_eq!(error.kind, ErrorKind::Validation);
+    assert_eq!(error.field, Some(Field::DueDate));
+
+    assert_eq!(harness.state.snapshot().expect("a snapshot").board, before);
+    assert_eq!(harness.stored(), before);
 }
 
 #[test]
@@ -289,7 +396,7 @@ fn a_refused_operation_leaves_the_board_exactly_as_it_was() {
     let harness = Harness::open();
     let before = harness.state.snapshot().expect("a snapshot").board;
 
-    let error = commands::add_card(&harness.state, harness.first_column(), "   ", "")
+    let error = add_plain_card(&harness, harness.first_column(), "   ", "")
         .expect_err("an empty title is refused");
     assert_eq!(error.field, Some(Field::CardTitle));
 
@@ -308,7 +415,7 @@ fn an_untitled_card_never_reaches_the_board_or_the_database() {
     let before = harness.stored();
 
     for title in ["", "   ", "\u{3000}"] {
-        commands::add_card(&harness.state, column, title, "説明だけある")
+        add_plain_card(&harness, column, title, "説明だけある")
             .expect_err("an untitled card is refused");
     }
     commands::set_capture_target(&harness.state, Some((before.id, column)))
@@ -402,7 +509,7 @@ fn undo_and_redo_reach_sqlite_as_well_as_the_snapshot() {
     let column = harness.first_column();
     let before = titles(&harness.stored(), 0);
 
-    commands::add_card(&harness.state, column, "戻す対象", "").expect("added");
+    add_plain_card(&harness, column, "戻す対象", "").expect("added");
 
     let undone = commands::undo(&harness.state).expect("undone");
     assert_eq!(titles(&undone.board, 0), before);
@@ -460,7 +567,7 @@ fn filtering_matches_cards_by_text_number_and_tag() {
 fn filtering_normalizes_full_width_text_the_same_way_the_model_does() {
     let harness = Harness::open();
     let column = harness.first_column();
-    let added = commands::add_card(&harness.state, column, "SQLite の設計", "").expect("added");
+    let added = add_plain_card(&harness, column, "SQLite の設計", "").expect("added");
     let card_id = added.board.columns[0]
         .cards
         .iter()

@@ -22,8 +22,15 @@ export const tauriIpc: Ipc = {
   createBoard: (name) => invoke<Snapshot>("create_board", { name }),
   renameBoard: (name) => invoke<Snapshot>("rename_board", { name }),
   deleteBoard: (boardId) => invoke<Snapshot>("delete_board", { boardId }),
-  addCard: (columnId, title, description) =>
-    invoke<Snapshot>("add_card", { columnId, title, description }),
+  addCard: (columnId, title, description, dueDate, tagIds, checklist) =>
+    invoke<Snapshot>("add_card", {
+      columnId,
+      title,
+      description,
+      dueDate,
+      tagIds,
+      checklist,
+    }),
   updateCard: (cardId, title, description, dueDate, tagIds, checklist) =>
     invoke<Snapshot>("update_card", { cardId, title, description, dueDate, tagIds, checklist }),
   copyCard: (cardId) => invoke<Snapshot>("copy_card", { cardId }),

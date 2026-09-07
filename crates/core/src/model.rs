@@ -777,10 +777,61 @@ impl Board {
         title: impl Into<String>,
         description: impl Into<String>,
     ) -> Result<CardId, BoardError> {
+        self.add_card_with_details(column_id, title, description, None, Vec::new(), Vec::new())
+    }
+
+    /// 期限・タグ・チェックリストまで備えたカードを 1 回で足す（#127）。
+    ///
+    /// **足してから書き換えるのではなく、備えた状態で作ります。** 2 回に分けると
+    /// `AddCard` と `EditCard` が 2 件積まれ、足したばかりのカードを取り消すのに
+    /// Undo が 2 回要ることになります。`AddCard` はやり直しで `Card` をまるごと
+    /// 入れ直すので、この形ならタグもチェックリストも 1 往復で戻ります。
+    ///
+    /// 名前が空のチェックリスト項目は落とします（#114 と同じ規則）。渡された
+    /// `ChecklistItemDraft.id` は見ません——**まだ存在しないカードに既存の項目は
+    /// ありえない**ので、すべて新しい項目として採番します。
+    pub fn add_card_with_details(
+        &mut self,
+        column_id: ColumnId,
+        title: impl Into<String>,
+        description: impl Into<String>,
+        due_date: Option<NaiveDate>,
+        tag_ids: Vec<TagId>,
+        checklist_drafts: Vec<ChecklistItemDraft>,
+    ) -> Result<CardId, BoardError> {
         let id = self.next_card_id;
         let title = title.into();
         let description = description.into();
+        // カラムが無いとき、タグが無いときは、何も変えずに断る。採番も進めない。
+        if !self.columns.iter().any(|column| column.id == column_id) {
+            return Err(BoardError::ColumnNotFound(column_id));
+        }
+        for tag_id in &tag_ids {
+            if !self.tags.iter().any(|tag| tag.id == *tag_id) {
+                return Err(BoardError::TagNotFound(*tag_id));
+            }
+        }
+        let mut tag_ids = tag_ids;
+        tag_ids.sort_unstable();
+        tag_ids.dedup();
         let now = timestamp();
+        let mut checklist_items = Vec::new();
+        for draft in checklist_drafts {
+            if draft.text.trim().is_empty() {
+                continue;
+            }
+            let item_id = self.next_checklist_item_id;
+            self.next_checklist_item_id += 1;
+            checklist_items.push(ChecklistItem {
+                id: item_id,
+                card_id: id,
+                text: draft.text,
+                checked: draft.checked,
+                position: checklist_items.len() as i64,
+                created_at: now,
+                updated_at: now,
+            });
+        }
         {
             let column = self
                 .columns
@@ -795,9 +846,9 @@ impl Board {
                 position: column.cards.len() as i64,
                 created_at: now,
                 updated_at: now,
-                due_date: None,
-                tag_ids: Vec::new(),
-                checklist_items: Vec::new(),
+                due_date,
+                tag_ids,
+                checklist_items,
                 archived_at: None,
             });
         }
@@ -2579,8 +2630,18 @@ mod tests {
 
     use super::{
         card_matches_search, due_status, find_urls, normalize_search_text, parse_card_number_query,
-        parse_due_date, Board, BoardError, CardEventKind, ChecklistItemDraft, DueStatus,
+        parse_due_date, Board, BoardError, CardEventKind, ChecklistItemDraft, ChecklistItemId,
+        DueStatus,
     };
+
+    /// チェックリストの下書きを 1 つ。`id` は保存済みの項目を指すときだけ入る。
+    fn draft(id: Option<ChecklistItemId>, text: &str, checked: bool) -> ChecklistItemDraft {
+        ChecklistItemDraft {
+            id,
+            text: text.to_string(),
+            checked,
+        }
+    }
 
     #[test]
     fn moves_card_to_another_column() {
@@ -2712,6 +2773,138 @@ mod tests {
             .unwrap());
         assert_eq!(board.columns[0].cards[0].title, "更新したタイトル");
         assert_eq!(board.columns[0].cards[0].description, "更新した説明");
+    }
+
+    #[test]
+    fn adds_a_card_with_a_due_date_tags_and_a_checklist() {
+        let mut board = Board::fixture();
+        let tag_id = board.add_tag("重要", "#ef4444").unwrap();
+        let due_date = NaiveDate::from_ymd_opt(2026, 9, 30).unwrap();
+
+        let card_id = board
+            .add_card_with_details(
+                1,
+                "備えて足すカード",
+                "説明",
+                Some(due_date),
+                vec![tag_id, tag_id],
+                vec![
+                    draft(None, "先にやる", false),
+                    draft(None, "あとでやる", true),
+                ],
+            )
+            .unwrap();
+
+        let card = board.columns[0].cards.last().unwrap();
+        assert_eq!(card.id, card_id);
+        assert_eq!(card.due_date, Some(due_date));
+        // 同じタグを 2 度渡しても 1 つ。
+        assert_eq!(card.tag_ids, vec![tag_id]);
+        assert_eq!(
+            card.checklist_items
+                .iter()
+                .map(|item| (item.text.as_str(), item.checked, item.position))
+                .collect::<Vec<_>>(),
+            [("先にやる", false, 0), ("あとでやる", true, 1)]
+        );
+        assert!(card
+            .checklist_items
+            .iter()
+            .all(|item| item.card_id == card_id));
+    }
+
+    /// 名前の入っていない項目は落とす（#114 と同じ規則）。
+    #[test]
+    fn drops_blank_checklist_items_when_adding_a_card() {
+        let mut board = Board::fixture();
+
+        let card_id = board
+            .add_card_with_details(
+                1,
+                "空の項目つき",
+                "",
+                None,
+                Vec::new(),
+                vec![
+                    draft(None, "  ", false),
+                    draft(None, "残るもの", false),
+                    draft(None, "", true),
+                ],
+            )
+            .unwrap();
+
+        let card = board.columns[0].cards.last().unwrap();
+        assert_eq!(card.id, card_id);
+        assert_eq!(
+            card.checklist_items
+                .iter()
+                .map(|item| item.text.as_str())
+                .collect::<Vec<_>>(),
+            ["残るもの"]
+        );
+        // 落とした分の ID は採らない。
+        assert_eq!(board.next_checklist_item_id, card.checklist_items[0].id + 1);
+    }
+
+    /// 知らないタグを断ったら、カードも採番も残らない。
+    #[test]
+    fn rejects_an_unknown_tag_when_adding_a_card() {
+        let mut board = Board::fixture();
+        let before = board.clone();
+
+        assert_eq!(
+            board.add_card_with_details(1, "足せないカード", "", None, vec![999], Vec::new()),
+            Err(BoardError::TagNotFound(999))
+        );
+        assert_eq!(board, before);
+    }
+
+    #[test]
+    fn rejects_an_unknown_column_when_adding_a_card() {
+        let mut board = Board::fixture();
+        let before = board.clone();
+
+        assert_eq!(
+            board.add_card_with_details(999, "足せないカード", "", None, Vec::new(), Vec::new()),
+            Err(BoardError::ColumnNotFound(999))
+        );
+        assert_eq!(board, before);
+    }
+
+    /// 備えて足したカードも、取り消しとやり直しは 1 往復（#127）。
+    #[test]
+    fn undoes_adding_a_detailed_card_as_one_operation() {
+        let mut board = Board::fixture();
+        let tag_id = board.add_tag("重要", "#ef4444").unwrap();
+        let due_date = NaiveDate::from_ymd_opt(2026, 9, 30).unwrap();
+        let before = board.columns[0].cards.len();
+
+        let card_id = board
+            .add_card_with_details(
+                1,
+                "備えて足すカード",
+                "説明",
+                Some(due_date),
+                vec![tag_id],
+                vec![draft(None, "項目", false)],
+            )
+            .unwrap();
+
+        assert!(board.undo().unwrap());
+        assert_eq!(board.columns[0].cards.len(), before);
+
+        assert!(board.redo().unwrap());
+        let card = board.columns[0].cards.last().unwrap();
+        assert_eq!(card.id, card_id);
+        assert_eq!(card.due_date, Some(due_date));
+        assert_eq!(card.tag_ids, vec![tag_id]);
+        assert_eq!(
+            card.checklist_items
+                .iter()
+                .map(|item| item.text.as_str())
+                .collect::<Vec<_>>(),
+            ["項目"]
+        );
     }
 
     #[test]

@@ -155,19 +155,28 @@ const TAG: &str = "タグを操作できませんでした";
 /// 押すまで盤面には何も届きません。だから「無題のカードを作らない」は
 /// **ここで断るだけで守れます**——足してから引っこめる経路がありません。
 ///
-/// `Board::add_card` はタイトルを見ないので、その規則を保つのはこの層です。
+/// `Board::add_card_with_details` はタイトルを見ないので、その規則を保つのはこの層です。
+///
+/// 受け取るのは `update_card` と同じ下書き一式です（#127）。期限・タグ・
+/// チェックリストを付けてから足すので、足したあとに開き直す往復が要りません。
+/// **モデルを呼ぶのは 1 回だけ**なので、Undo に積まれるのも 1 件です
+/// （`docs/DESIGN.md`「コマンドとイベント」）。
 pub fn add_card(
     state: &AppState,
     column_id: ColumnId,
     title: &str,
     description: &str,
+    due_date: &str,
+    tag_ids: Vec<TagId>,
+    checklist: Vec<ChecklistItemDraft>,
 ) -> Result<Snapshot, AppError> {
     state
         .mutate(CARD, |board| {
             if title.trim().is_empty() {
                 return Err(BoardError::EmptyCardTitle);
             }
-            board.add_card(column_id, title, description)
+            let due_date = parse_due_date(due_date)?;
+            board.add_card_with_details(column_id, title, description, due_date, tag_ids, checklist)
         })
         .map(|(_, snapshot)| snapshot)
 }
