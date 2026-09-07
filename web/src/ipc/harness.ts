@@ -90,8 +90,6 @@ export function harnessIpc(base: string): Ipc {
       call<Snapshot>(base, "rename_column", { columnId, name }),
     removeColumn: (columnId) =>
       call<Snapshot>(base, "remove_column", { columnId }),
-    setColumnWipLimit: (columnId, wipLimit) =>
-      call<Snapshot>(base, "set_column_wip_limit", { columnId, wipLimit }),
     archiveColumn: (columnId) =>
       call<Snapshot>(base, "archive_column", { columnId }),
     addTag: (name, color) => call<Snapshot>(base, "add_tag", { name, color }),

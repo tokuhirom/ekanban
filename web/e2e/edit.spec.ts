@@ -1088,7 +1088,7 @@ test("打った名前でカラムが足される", async ({ page }) => {
   await expect(page.locator(".column-name", { hasText: "あたらしいカラム" })).toBeVisible();
 });
 
-test("カラムの名前と WIP 上限を直せる", async ({ page }) => {
+test("カラムの名前を直せる", async ({ page }) => {
   await openBoard(page);
   const column = page.locator(".column").first();
   const columnId = Number(await column.getAttribute("data-column"));
@@ -1096,30 +1096,14 @@ test("カラムの名前と WIP 上限を直せる", async ({ page }) => {
   await column.locator(".column-menu-button").click();
   await column.getByRole("button", { name: "編集" }).click();
   await column.locator(".column-name-input").fill("直した名前");
-  await column.locator(".column-wip-input").fill("2");
   await column.locator(".save-column").click();
 
   await expect
     .poll(async () => {
       const stored = (await storedBoard()).columns.find((each) => each.id === columnId);
-      return [stored?.name, stored?.wipLimit];
+      return stored?.name;
     })
-    .toEqual(["直した名前", 2]);
-  // 色だけに意味を持たせない。上限を超えていることは語でも書く。
-  await expect(column.locator(".column-over")).toContainText("上限超過");
-});
-
-test("読めない WIP 上限は、欄の脇で断られる", async ({ page }) => {
-  await openBoard(page);
-  const column = page.locator(".column").first();
-
-  await column.locator(".column-menu-button").click();
-  await column.getByRole("button", { name: "編集" }).click();
-  await column.locator(".column-wip-input").fill("たくさん");
-  await column.locator(".save-column").click();
-
-  await expect(column.locator(".field-error")).toBeVisible();
-  await expect(page.locator(".dialog")).toHaveCount(0);
+    .toBe("直した名前");
 });
 
 test("カードの入ったカラムを消すには、確認に答える", async ({ page }) => {
@@ -1157,7 +1141,7 @@ test("最後の 1 本になったカラムは消せない", async ({ page }) => 
 
 /// 名前を変える入口をボード一覧・カードと揃える（#145）。掴んだ判定は 4px
 /// 動かしてからなので、ダブルクリックでは並びが動かない。
-test("カラム名をダブルクリックすると、名前と WIP の欄が開く", async ({ page }) => {
+test("カラム名をダブルクリックすると、名前の欄が開く", async ({ page }) => {
   await openBoard(page);
   const first = page.locator(".column").first();
   const before = (await storedBoard()).columns.map((column) => column.name);

@@ -119,11 +119,6 @@ fn build_personal_board(board: &mut Board) -> Tags {
     let doing = board.columns[1].id;
     let done = board.columns[2].id;
     let later = board.add_column("寝かせる").expect("新しいカラム");
-    // WIP 上限に達したカラムを 1 つ見せる。
-    board
-        .set_column_wip_limit(doing, Some(2))
-        .expect("カラムがある");
-
     // 初回のシード（`Board::first_run`）が作るのは空の 3 カラムだけなので、撮る
     // 盤面のカードはここで全部足す。中身は下の `edit` で埋める。
     let demo_todo = [

@@ -121,7 +121,6 @@ columns
   position
   created_at
   updated_at
-  wip_limit (整数または NULL)
 
 cards
   id

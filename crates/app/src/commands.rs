@@ -13,8 +13,8 @@ use std::path::{Path, PathBuf};
 use chrono::{Datelike, Local};
 use ekanban_core::db::{Database, FilterState, WindowBoundsState};
 use ekanban_core::model::{
-    card_matches_search, parse_due_date, parse_wip_limit, Board, BoardError, BoardId, CardId,
-    ChecklistItemDraft, ColumnId, TagId,
+    card_matches_search, parse_due_date, Board, BoardError, BoardId, CardId, ChecklistItemDraft,
+    ColumnId, TagId,
 };
 use ekanban_core::{backup, diagnostics, export};
 
@@ -306,19 +306,6 @@ pub fn move_column(
     state
         .mutate("カラムを移動できませんでした", |board| {
             board.move_column(column_id, to_index)
-        })
-        .map(|(_, snapshot)| snapshot)
-}
-
-/// WIP 上限を決める。空欄で「上限なし」。
-pub fn set_column_wip_limit(
-    state: &AppState,
-    column_id: ColumnId,
-    wip_limit: &str,
-) -> Result<Snapshot, AppError> {
-    state
-        .mutate(COLUMN, |board| {
-            board.set_column_wip_limit(column_id, parse_wip_limit(wip_limit)?)
         })
         .map(|(_, snapshot)| snapshot)
 }

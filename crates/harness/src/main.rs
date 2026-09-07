@@ -194,12 +194,6 @@ fn invoke(command: &str, args: Value, state: &AppState) -> Result<Value, AppErro
     }
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
-    struct WipLimit {
-        column_id: i64,
-        wip_limit: String,
-    }
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
     struct AddTag {
         name: String,
         color: String,
@@ -373,14 +367,6 @@ fn invoke(command: &str, args: Value, state: &AppState) -> Result<Value, AppErro
             state,
             read::<ColumnId>(args)?.column_id,
         )?),
-        "set_column_wip_limit" => {
-            let a: WipLimit = read(args)?;
-            ok(commands::set_column_wip_limit(
-                state,
-                a.column_id,
-                &a.wip_limit,
-            )?)
-        }
         "archive_column" => ok(commands::archive_column(
             state,
             read::<ColumnId>(args)?.column_id,
