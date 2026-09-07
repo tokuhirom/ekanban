@@ -3,4 +3,4 @@
 /**
  * 入力欄に返す失敗の行き先。
  */
-export type Field = "cardTitle" | "dueDate" | "checklistItem" | "columnName" | "wipLimit" | "tagName" | "boardName";
+export type Field = "cardTitle" | "dueDate" | "checklistItem" | "columnName" | "tagName" | "boardName";

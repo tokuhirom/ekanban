@@ -132,7 +132,6 @@ pub struct Column {
     pub position: i64,
     pub created_at: i64,
     pub updated_at: i64,
-    pub wip_limit: Option<i64>,
     pub cards: Vec<Card>,
 }
 
@@ -229,11 +228,6 @@ pub enum BoardOperation {
         card_id: CardId,
         before: Option<NaiveDate>,
         after: Option<NaiveDate>,
-    },
-    SetColumnWipLimit {
-        column_id: ColumnId,
-        before: Option<i64>,
-        after: Option<i64>,
     },
     AddTag {
         tag: Tag,
@@ -351,8 +345,6 @@ pub enum BoardError {
     EmptyColumnName,
     #[error("invalid due date: {0}")]
     InvalidDueDate(String),
-    #[error("invalid WIP limit: {0}")]
-    InvalidWipLimit(String),
     #[error("a tag name cannot be empty")]
     EmptyTagName,
     #[error("tag {0} was not found")]
@@ -504,20 +496,6 @@ fn read_month_and_day(text: &str, today: NaiveDate) -> Option<NaiveDate> {
     }
     // 2/29 は来年に無いことがある。無ければ読めなかったことにする。
     NaiveDate::from_ymd_opt(today.year() + 1, month, day)
-}
-
-pub fn parse_wip_limit(value: &str) -> Result<Option<i64>, BoardError> {
-    let value = value.trim();
-    if value.is_empty() {
-        return Ok(None);
-    }
-    let limit = value
-        .parse::<i64>()
-        .map_err(|_| BoardError::InvalidWipLimit(value.to_string()))?;
-    if limit <= 0 {
-        return Err(BoardError::InvalidWipLimit(value.to_string()));
-    }
-    Ok(Some(limit))
 }
 
 pub fn normalize_search_text(value: &str) -> String {
@@ -1557,38 +1535,6 @@ impl Board {
         Ok(true)
     }
 
-    pub fn set_column_wip_limit(
-        &mut self,
-        column_id: ColumnId,
-        wip_limit: Option<i64>,
-    ) -> Result<bool, BoardError> {
-        if wip_limit.is_some_and(|limit| limit <= 0) {
-            return Err(BoardError::InvalidWipLimit(
-                "上限は 1 以上で入力してください".to_string(),
-            ));
-        }
-        let column = self
-            .columns
-            .iter_mut()
-            .find(|column| column.id == column_id)
-            .ok_or(BoardError::ColumnNotFound(column_id))?;
-        if column.wip_limit == wip_limit {
-            return Ok(false);
-        }
-
-        let before = column.wip_limit;
-        let now = timestamp();
-        column.wip_limit = wip_limit;
-        column.updated_at = now;
-        self.updated_at = now;
-        self.push_operation(BoardOperation::SetColumnWipLimit {
-            column_id,
-            before,
-            after: wip_limit,
-        });
-        Ok(true)
-    }
-
     pub fn add_tag(
         &mut self,
         name: impl Into<String>,
@@ -2131,11 +2077,6 @@ impl Board {
                 before,
                 after,
             } => self.set_due_date_raw(*card_id, if undo { *before } else { *after })?,
-            BoardOperation::SetColumnWipLimit {
-                column_id,
-                before,
-                after,
-            } => self.set_column_wip_limit_raw(*column_id, if undo { *before } else { *after })?,
             BoardOperation::AddTag { tag } => {
                 if undo {
                     self.remove_tag_raw(tag.id)?;
@@ -2482,21 +2423,6 @@ impl Board {
         Ok(())
     }
 
-    fn set_column_wip_limit_raw(
-        &mut self,
-        column_id: ColumnId,
-        wip_limit: Option<i64>,
-    ) -> Result<(), BoardError> {
-        let column = self
-            .columns
-            .iter_mut()
-            .find(|column| column.id == column_id)
-            .ok_or(BoardError::ColumnNotFound(column_id))?;
-        column.wip_limit = wip_limit;
-        column.updated_at = timestamp();
-        Ok(())
-    }
-
     fn remove_tag_raw(&mut self, tag_id: TagId) -> Result<(), BoardError> {
         let index = self
             .tags
@@ -2643,7 +2569,6 @@ impl Column {
             position,
             created_at: now,
             updated_at: now,
-            wip_limit: None,
             cards: Vec::new(),
         }
     }
@@ -3266,22 +3191,6 @@ mod tests {
         assert_eq!(counts.today, 1);
         assert!(!counts.is_empty());
         assert!(Board::fixture().due_counts(today).is_empty());
-    }
-
-    #[test]
-    fn sets_wip_limit_and_rejects_non_positive_values() {
-        let mut board = Board::fixture();
-
-        assert!(board.set_column_wip_limit(1, Some(3)).unwrap());
-        assert!(!board.set_column_wip_limit(1, Some(3)).unwrap());
-        assert_eq!(board.columns[0].wip_limit, Some(3));
-        assert_eq!(
-            board.set_column_wip_limit(1, Some(0)),
-            Err(BoardError::InvalidWipLimit(
-                "上限は 1 以上で入力してください".to_string()
-            ))
-        );
-        assert!(board.set_column_wip_limit(1, None).unwrap());
     }
 
     #[test]

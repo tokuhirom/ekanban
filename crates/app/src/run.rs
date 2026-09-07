@@ -154,7 +154,6 @@ pub fn run() {
             ipc::rename_column,
             ipc::remove_column,
             ipc::move_column,
-            ipc::set_column_wip_limit,
             ipc::archive_column,
             ipc::add_tag,
             ipc::rename_tag,

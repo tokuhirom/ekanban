@@ -113,3 +113,4 @@
 | [0031](0031-typing-a-due-date.md) | 期限は文字で打つ | 2026-09-07 | 有効 |
 | [0032](0032-committing-a-card-field-by-field.md) | 編集パネルは欄ごとに確定する | 2026-09-07 | 有効 |
 | [0033](0033-a-markdown-editor-for-the-description.md) | 説明は Markdown のエディタで書く | 2026-09-07 | 有効 |
+| [0034](0034-dropping-the-wip-limit.md) | WIP 上限をやめる | 2026-09-07 | 有効 |

@@ -11,7 +11,7 @@ use crate::model::{
     Board, BoardId, BoardSummary, Card, ChecklistItem, Column, ColumnId, DueCounts, Tag,
 };
 
-const CURRENT_SCHEMA_VERSION: i64 = 10;
+const CURRENT_SCHEMA_VERSION: i64 = 11;
 
 const LAST_BOARD_STATE_KEY: &str = "last_board_id";
 const NEXT_BOARD_STATE_KEY: &str = "next_board_id";
@@ -365,7 +365,6 @@ impl Database {
                     "position": column.position,
                     "created_at": column.created_at,
                     "updated_at": column.updated_at,
-                    "wip_limit": column.wip_limit,
                     "cards": column.cards.iter().map(card_json).collect::<Vec<_>>(),
                 })
             })
@@ -494,7 +493,7 @@ impl Database {
             .collect::<Result<Vec<_>, _>>()?;
 
         let mut column_statement = self.connection.prepare(
-            "SELECT id, board_id, name, position, created_at, updated_at, wip_limit
+            "SELECT id, board_id, name, position, created_at, updated_at
                  FROM columns WHERE board_id = ?1 ORDER BY position, id",
         )?;
         let column_rows = column_statement.query_map(params![id], |row| {
@@ -505,7 +504,6 @@ impl Database {
                 position: row.get(3)?,
                 created_at: row.get(4)?,
                 updated_at: row.get(5)?,
-                wip_limit: row.get(6)?,
                 cards: Vec::new(),
             })
         })?;
@@ -706,8 +704,8 @@ impl Database {
         )?;
         transaction.execute(
             "INSERT INTO columns
-             (id, board_id, name, position, created_at, updated_at, wip_limit)
-             VALUES (?1, ?2, ?3, 0, ?4, ?5, NULL)",
+             (id, board_id, name, position, created_at, updated_at)
+             VALUES (?1, ?2, ?3, 0, ?4, ?5)",
             params![first_column_id, board_id, "やること", now, now],
         )?;
         transaction.commit()?;
@@ -849,23 +847,21 @@ impl Database {
         for column in &board.columns {
             transaction.execute(
                 "INSERT INTO columns
-                 (id, board_id, name, position, created_at, updated_at, wip_limit)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                 (id, board_id, name, position, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
                  ON CONFLICT(id) DO UPDATE SET
                    board_id = excluded.board_id,
                    name = excluded.name,
                    position = excluded.position,
                    created_at = excluded.created_at,
-                   updated_at = excluded.updated_at,
-                   wip_limit = excluded.wip_limit",
+                   updated_at = excluded.updated_at",
                 params![
                     column.id,
                     board.id,
                     column.name,
                     column.position,
                     column.created_at,
-                    column.updated_at,
-                    column.wip_limit
+                    column.updated_at
                 ],
             )?;
             for card in &column.cards {
@@ -1296,6 +1292,27 @@ impl Database {
                 "DELETE FROM app_state WHERE key = ?1",
                 params!["filter_due"],
             )?;
+            transaction.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, ?2)",
+                params![10, now()],
+            )?;
+            transaction.commit()?;
+        }
+
+        if version < 11 {
+            // WIP 上限をやめたので、列も索引も残さない（ADR 0034）。読まれない
+            // 列を全ユーザーの DB に置いたままにしない。SQLite に
+            // `DROP COLUMN IF EXISTS` は無いので、有無を先に見る。
+            let transaction = self.connection.transaction()?;
+            transaction.execute_batch("DROP INDEX IF EXISTS idx_columns_wip_limit;")?;
+            let has_wip_limit = transaction.query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('columns') WHERE name = 'wip_limit'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )? > 0;
+            if has_wip_limit {
+                transaction.execute_batch("ALTER TABLE columns DROP COLUMN wip_limit;")?;
+            }
             transaction.execute(
                 "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, ?2)",
                 params![CURRENT_SCHEMA_VERSION, now()],
@@ -1966,7 +1983,7 @@ mod tests {
             let database = open_with_cards(&path);
             database
                 .connection
-                .execute("DELETE FROM schema_migrations WHERE version = ?1", [10])
+                .execute("DELETE FROM schema_migrations WHERE version >= ?1", [10])
                 .unwrap();
             database
                 .connection
@@ -2114,16 +2131,43 @@ mod tests {
     }
 
     #[test]
-    fn round_trips_wip_limits() {
+    fn drops_the_wip_limit_column_when_migrating_a_version_ten_database() {
         let directory = tempdir().unwrap();
         let path = directory.path().join("board.sqlite3");
-        let mut database = open_with_cards(&path);
-        let mut board = database.load_board().unwrap();
+        {
+            // v10 まで進んだ DB を作り、当時の WIP 上限の列と索引を戻しておく。
+            let database = open_with_cards(&path);
+            database
+                .connection
+                .execute("DELETE FROM schema_migrations WHERE version = ?1", [11])
+                .unwrap();
+            database
+                .connection
+                .execute_batch(
+                    "ALTER TABLE columns ADD COLUMN wip_limit INTEGER;
+                     CREATE INDEX idx_columns_wip_limit ON columns(wip_limit);
+                     UPDATE columns SET wip_limit = 3;",
+                )
+                .unwrap();
+        }
 
-        board.set_column_wip_limit(1, Some(5)).unwrap();
-        database.save_board(&mut board).unwrap();
+        let database = open_with_cards(&path);
 
-        assert_eq!(database.load_board().unwrap().columns[0].wip_limit, Some(5));
+        assert!(database.load_board().is_ok());
+        assert!(
+            database
+                .connection
+                .prepare("SELECT wip_limit FROM columns")
+                .is_err(),
+            "the column is gone"
+        );
+        let version = database
+            .connection
+            .query_row("SELECT MAX(version) FROM schema_migrations", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap();
+        assert_eq!(version, CURRENT_SCHEMA_VERSION);
     }
 
     #[test]

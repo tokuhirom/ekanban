@@ -20,7 +20,7 @@
 // [ADR 0016]: ../../../docs/adr/0016-where-the-app-says-things.md
 // [ADR 0030]: ../../../docs/adr/0030-capturing-a-shortcut-needs-the-menu-out-of-the-way.md
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { useIpc, type Ipc } from "../ipc";
 import { describeFailure } from "../ipc/error";
@@ -83,7 +83,12 @@ export function ShortcutDialog({
 
   // 押されたキーを受けるので、開いた瞬間に焦点をここへ移す。`autoFocus` は
   // 入力欄にしか効かないので、自分で動かす（`Dialog.tsx` の `Shell` と同じ）。
-  useEffect(() => {
+  //
+  // **`useEffect` では遅すぎます。** あれが走るのは描画のあとなので、ダイアログが
+  // 出ていて焦点はまだ外、という 1 フレームが空きます。キーを受けるためだけに
+  // 出す窓で、そこに打たれた 1 打が黙って消えます。`useLayoutEffect` なら
+  // 描かれる前に移るので、その隙間ができません。
+  useLayoutEffect(() => {
     box.current?.focus();
   }, []);
 

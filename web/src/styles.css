@@ -344,10 +344,6 @@ textarea {
   white-space: nowrap;
 }
 
-.column-over {
-  font-size: 12px;
-}
-
 .column-cards {
   display: flex;
   flex-direction: column;

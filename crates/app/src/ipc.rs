@@ -181,15 +181,6 @@ pub fn move_column(
 }
 
 #[tauri::command]
-pub fn set_column_wip_limit(
-    state: State<'_, AppState>,
-    column_id: ColumnId,
-    wip_limit: String,
-) -> Reply<Snapshot> {
-    commands::set_column_wip_limit(&state, column_id, &wip_limit)
-}
-
-#[tauri::command]
 pub fn archive_column(state: State<'_, AppState>, column_id: ColumnId) -> Reply<Snapshot> {
     commands::archive_column(&state, column_id)
 }

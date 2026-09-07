@@ -441,11 +441,6 @@ fn adding_renaming_moving_sorting_and_removing_columns() {
     let moved = commands::move_column(&harness.state, column_id, 0).expect("moved");
     assert_eq!(moved.board.columns[0].id, column_id);
 
-    commands::set_column_wip_limit(&harness.state, column_id, "3").expect("a limit is set");
-    assert_eq!(harness.stored().columns[0].wip_limit, Some(3));
-    commands::set_column_wip_limit(&harness.state, column_id, "").expect("the limit is cleared");
-    assert_eq!(harness.stored().columns[0].wip_limit, None);
-
     let removed = commands::remove_column(&harness.state, column_id).expect("removed");
     assert!(!removed.board.columns.iter().any(|c| c.id == column_id));
 }
@@ -462,15 +457,6 @@ fn archiving_a_column_moves_its_cards_to_the_archive() {
     assert!(snapshot.board.columns[0].cards.is_empty());
     assert_eq!(snapshot.board.archived_cards.len(), count);
     assert_eq!(harness.stored().archived_cards.len(), count);
-}
-
-#[test]
-fn an_unreadable_wip_limit_comes_back_to_the_field() {
-    let harness = Harness::open();
-    let error = commands::set_column_wip_limit(&harness.state, harness.first_column(), "たくさん")
-        .expect_err("the value is refused");
-    assert_eq!(error.field, Some(Field::WipLimit));
-    assert_eq!(error.value.as_deref(), Some("たくさん"));
 }
 
 // ---------------------------------------------------------------- タグ

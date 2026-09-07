@@ -64,8 +64,6 @@ export function Column({
   onRemoveColumn,
 }: Props) {
   const ipc = useIpc();
-  const overLimit =
-    column.wipLimit !== null && column.cards.length > column.wipLimit;
   const [menuOpen, setMenuOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const {
@@ -104,7 +102,7 @@ export function Column({
         <header
           className="column-header"
           ref={setActivatorNodeRef}
-          title="掴んでカラムを並べ替える。ダブルクリックで名前と WIP 上限を変える"
+          title="掴んでカラムを並べ替える。ダブルクリックで名前を変える"
           {...attributes}
           {...listeners}
           // 名前を変える入口を、ボード一覧（#119）とカードに揃えます（#145）。
@@ -115,16 +113,7 @@ export function Column({
           }}
         >
           <h2 className="column-name">{column.name}</h2>
-          <span
-            className="column-count"
-            data-tone={overLimit ? "danger" : undefined}
-          >
-            {column.wipLimit === null
-              ? `${column.cards.length} 枚`
-              : `${column.cards.length} / ${column.wipLimit}`}
-            {/* 色だけに意味を持たせない。上限を超えていることは語でも書く。 */}
-            {overLimit && <span className="column-over"> 上限超過</span>}
-          </span>
+          <span className="column-count">{column.cards.length} 枚</span>
           {/* キャプチャ先は印だけにします（#130）。入れ先はアプリ全体で 1 つ
               （`docs/DESIGN.md`「クイックキャプチャ」）なので、盤面のどこかに
               出ていないと `…` を 1 本ずつ開くまで分かりません。文言を常時
@@ -251,7 +240,7 @@ export function Column({
   );
 }
 
-/// カラム名と WIP 上限を直す。ヘッダと入れ替えて出す。
+/// カラム名を直す。ヘッダと入れ替えて出す。
 function ColumnEditor({
   column,
   run,
@@ -263,28 +252,13 @@ function ColumnEditor({
 }) {
   const ipc = useIpc();
   const [name, setName] = useState(column.name);
-  const [wipLimit, setWipLimit] = useState(
-    column.wipLimit === null ? "" : String(column.wipLimit),
-  );
   const [failed, setFailed] = useState<AppError | null>(null);
 
   async function save() {
     if (name.trim() === "") return;
-    // 名前と上限は別のコマンドです。
-    // （`docs/DESIGN.md`「コマンドとイベント」の「1 つのコマンドが 1 つのモデル操作」）
-    // 変わっていないほうは呼びません——同じ値で呼ぶと Undo に空の 1 手が積まれます。
+    // 変わっていなければ呼びません——同じ値で呼ぶと Undo に空の 1 手が積まれます。
     if (name !== column.name) {
       const failure = await run(() => ipc.renameColumn(column.id, name));
-      if (failure !== null) {
-        setFailed(failure);
-        return;
-      }
-    }
-    const current = column.wipLimit === null ? "" : String(column.wipLimit);
-    if (wipLimit.trim() !== current) {
-      const failure = await run(() =>
-        ipc.setColumnWipLimit(column.id, wipLimit),
-      );
       if (failure !== null) {
         setFailed(failure);
         return;
@@ -324,20 +298,6 @@ function ColumnEditor({
         </p>
       )}
       {failed?.field === "columnName" && (
-        <p className="field-error" role="alert">
-          {failed.detail}
-        </p>
-      )}
-      <input
-        className="field-input column-wip-input"
-        value={wipLimit}
-        placeholder="WIP 上限（空欄で上限なし）"
-        aria-label="WIP 上限"
-        onChange={(event) => {
-          setWipLimit(event.target.value);
-        }}
-      />
-      {failed?.field === "wipLimit" && (
         <p className="field-error" role="alert">
           {failed.detail}
         </p>

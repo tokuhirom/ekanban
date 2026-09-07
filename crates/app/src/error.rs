@@ -40,7 +40,6 @@ pub enum Field {
     DueDate,
     ChecklistItem,
     ColumnName,
-    WipLimit,
     TagName,
     BoardName,
 }
@@ -109,11 +108,6 @@ fn field_for(error: &BoardError) -> Option<(Field, &'static str, Option<String>)
             Some(value.clone()),
         ),
         BoardError::EmptyColumnName => (Field::ColumnName, "カラム名を入力してください", None),
-        BoardError::InvalidWipLimit(value) => (
-            Field::WipLimit,
-            "WIP は正の整数、または空欄で入力してください",
-            Some(value.clone()),
-        ),
         BoardError::EmptyTagName => (Field::TagName, "タグ名を入力してください", None),
         BoardError::DuplicateTagName(_) => (
             Field::TagName,
@@ -143,9 +137,6 @@ fn board_detail(error: &BoardError) -> String {
         BoardError::EmptyColumnName => "カラム名を入力してください".to_string(),
         BoardError::InvalidDueDate(value) => {
             format!("期限「{value}」を日付として読めません。9/12、明日、金、+3 のように入力してください")
-        }
-        BoardError::InvalidWipLimit(value) => {
-            format!("WIP 上限「{value}」は正の整数、または空欄で入力してください")
         }
         BoardError::EmptyTagName => "タグ名を入力してください".to_string(),
         BoardError::TagNotFound(tag_id) => {
