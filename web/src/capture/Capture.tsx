@@ -6,7 +6,7 @@
 // 入れ先は「〇〇ボード / △△カラム」として常に見せます。どこに入るのか分からない
 // まま放り込ませない、というのが元からの決めごとです。
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useIpc } from "../ipc";
 import { describeFailure } from "../ipc/error";
@@ -20,6 +20,7 @@ export function Capture() {
   const [failure, setFailure] = useState<string | null>(null);
   // 保存を頼んで待っている間は `true`。`Enter` の二重押しを受けない。
   const [saving, setSaving] = useState(false);
+  const input = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -35,6 +36,13 @@ export function Capture() {
       cancelled = true;
     };
   }, [ipc]);
+
+  // 入れ先が届くまで入力欄は `disabled` で、`autoFocus` は無効な要素には効かない。
+  // ホットキーを押した人がそのまま 1 行打てることがこの窓の存在理由なので、
+  // 使えるようになった時点でこちらから焦点を移す。
+  useEffect(() => {
+    if (target !== null) input.current?.focus();
+  }, [target]);
 
   async function save() {
     if (saving || title.trim() === "") return;
@@ -70,11 +78,11 @@ export function Capture() {
           : `${target.boardName} / ${target.columnName}`}
       </p>
       <input
+        ref={input}
         className="field-input capture-input"
         value={title}
         placeholder="思いついたことを 1 行で"
         aria-label="キャプチャするカードのタイトル"
-        autoFocus
         disabled={target === null}
         onChange={(event) => {
           setTitle(event.target.value);

@@ -63,6 +63,21 @@ test("1 行を打って Enter で、入れ先のカラムの末尾に足され�
     .toBe("思いついたこと");
 });
 
+test("窓が開いたら入力欄に焦点があり、そのまま打って Enter で足せる", async ({ page }) => {
+  await openCapture(page);
+
+  // ホットキーを押した人が、どこもクリックせずに 1 行打てること。入れ先が
+  // 届くまで入力欄は無効なので、有効になったところで焦点が移っている。
+  await expect(page.locator(".capture-input")).toBeFocused();
+
+  await page.keyboard.type("クリックせずに打ったこと");
+  await page.keyboard.press("Enter");
+
+  await expect
+    .poll(async () => (await storedBoard()).columns[0]?.cards.at(-1)?.title)
+    .toBe("クリックせずに打ったこと");
+});
+
 test("空のまま Enter を押しても、何も足さない", async ({ page }) => {
   const before = (await storedBoard()).columns[0]?.cards.length ?? 0;
   await openCapture(page);
