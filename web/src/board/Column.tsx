@@ -1,5 +1,8 @@
 import { useSortable } from "@dnd-kit/sortable";
-import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import {
+  SortableContext,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useState } from "react";
 
@@ -58,7 +61,8 @@ export function Column({
   onRemoveColumn,
 }: Props) {
   const ipc = useIpc();
-  const overLimit = column.wipLimit !== null && column.cards.length > column.wipLimit;
+  const overLimit =
+    column.wipLimit !== null && column.cards.length > column.wipLimit;
   const [menuOpen, setMenuOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const {
@@ -70,7 +74,9 @@ export function Column({
     transition,
     isDragging,
   } = useSortable({ id: handleId({ kind: "column", id: column.id }) });
-  const cardIds = column.cards.map((card) => handleId({ kind: "card", id: card.id }));
+  const cardIds = column.cards.map((card) =>
+    handleId({ kind: "card", id: card.id }),
+  );
 
   return (
     <section
@@ -78,7 +84,10 @@ export function Column({
       className="column"
       data-column={column.id}
       data-placeholder={isDragging || undefined}
-      style={{ transform: CSS.Translate.toString(transform), transition: transition ?? undefined }}
+      style={{
+        transform: CSS.Translate.toString(transform),
+        transition: transition ?? undefined,
+      }}
     >
       {editing ? (
         <ColumnEditor
@@ -97,13 +106,31 @@ export function Column({
           {...listeners}
         >
           <h2 className="column-name">{column.name}</h2>
-          <span className="column-count" data-tone={overLimit ? "danger" : undefined}>
+          <span
+            className="column-count"
+            data-tone={overLimit ? "danger" : undefined}
+          >
             {column.wipLimit === null
               ? `${column.cards.length} 枚`
               : `${column.cards.length} / ${column.wipLimit}`}
             {/* 色だけに意味を持たせない。上限を超えていることは語でも書く。 */}
             {overLimit && <span className="column-over"> 上限超過</span>}
           </span>
+          {/* キャプチャ先は印だけにします（#130）。入れ先はアプリ全体で 1 つ
+              （`docs/DESIGN.md`「クイックキャプチャ」）なので、盤面のどこかに
+              出ていないと `…` を 1 本ずつ開くまで分かりません。文言を常時
+              置く代わりに、意味は読み上げ名と説明に持たせます——運んでいるのは
+              色ではなく形なので、「色だけに意味を持たせない」にも触れません。 */}
+          {captureTarget && (
+            <span
+              className="column-capture"
+              role="img"
+              aria-label="クイックキャプチャ先"
+              title="クイックキャプチャ先"
+            >
+              ⚡
+            </span>
+          )}
           {/* 常用しない操作は `…` に畳む（`docs/DESIGN.md`）。掴むのはヘッダ
               なので、ボタンの上でドラッグが始まらないよう押下を止める。 */}
           <button
@@ -120,9 +147,6 @@ export function Column({
           >
             …
           </button>
-          {/* 色だけに意味を持たせない。文言でキャプチャ先だと分かるようにする。
-              名前と枚数の下へ回り込ませたいので、`…` のあとに置く。 */}
-          {captureTarget && <span className="column-capture">⚡ クイックキャプチャ先</span>}
         </header>
       )}
       {menuOpen && (
@@ -180,7 +204,9 @@ export function Column({
       <div className="column-cards">
         {/* 空のカラムでも、そこが落とし先だと分かるようにする。カードが
             1 枚も無いと、掴んだものをどこへ持っていけばよいかが読めない。 */}
-        {column.cards.length === 0 && <p className="column-empty">ここにドロップ</p>}
+        {column.cards.length === 0 && (
+          <p className="column-empty">ここにドロップ</p>
+        )}
         <SortableContext items={cardIds} strategy={verticalListSortingStrategy}>
           {column.cards.map((card) => (
             <Card
@@ -227,7 +253,9 @@ function ColumnEditor({
 }) {
   const ipc = useIpc();
   const [name, setName] = useState(column.name);
-  const [wipLimit, setWipLimit] = useState(column.wipLimit === null ? "" : String(column.wipLimit));
+  const [wipLimit, setWipLimit] = useState(
+    column.wipLimit === null ? "" : String(column.wipLimit),
+  );
   const [failed, setFailed] = useState<AppError | null>(null);
 
   async function save() {
@@ -244,7 +272,9 @@ function ColumnEditor({
     }
     const current = column.wipLimit === null ? "" : String(column.wipLimit);
     if (wipLimit.trim() !== current) {
-      const failure = await run(() => ipc.setColumnWipLimit(column.id, wipLimit));
+      const failure = await run(() =>
+        ipc.setColumnWipLimit(column.id, wipLimit),
+      );
       if (failure !== null) {
         setFailed(failure);
         return;

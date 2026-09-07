@@ -1167,9 +1167,9 @@ button.danger {
   color: var(--color-danger);
 }
 
-/* カラムがクイックキャプチャの入れ先であること。色ではなく文言で示す。 */
+/* カラムがクイックキャプチャの入れ先であること。色ではなく形で示し、
+ * 文言は読み上げ名と説明に持たせる（#130）。 */
 .column-capture {
   font-size: 11px;
-  color: var(--color-muted-foreground);
-  flex-basis: 100%;
+  line-height: 1;
 }

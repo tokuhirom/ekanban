@@ -78,7 +78,8 @@ test("入れ先を選ぶと、そのカラムに印が出て、キャプチャ�
   await second.locator(".column-menu-button").click();
   await second.locator(".set-capture-column").click();
 
-  await expect(second.locator(".column-capture")).toBeVisible();
+  // 印は ⚡ だけで、意味は読み上げ名が運ぶ（#130）。
+  await expect(second.getByRole("img", { name: "クイックキャプチャ先" })).toBeVisible();
   await expect(page.locator(".column").first().locator(".column-capture")).toHaveCount(0);
 
   await openCapture(page);
