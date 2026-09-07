@@ -250,7 +250,7 @@ test("カードを開いて名前を変えると、盤面と保存の両方が�
   await openFirstCard(page);
 
   await page.locator(".card-title-input").fill("書き換えたタイトル");
-  await page.locator(".save-card").click();
+  await page.locator(".close-card").click();
 
   await expect(page.locator(".card-panel")).toBeHidden();
   await expect(page.locator(".card-title").first()).toHaveText("書き換えたタイトル");
@@ -267,6 +267,105 @@ test("選んだカードは Enter で開き、Escape で閉じる", async ({ pag
 
   await page.locator(".card-title-input").press("Escape");
   await expect(page.locator(".card-panel")).toBeHidden();
+});
+
+// ------------------------------------------------ 欄ごとに確定する（#141）
+
+/// 保存済みのカードは、欄を離れた時点で確定します（ADR 0032）。押すものは
+/// ありません。
+test("説明を打って欄を離れると、保存を押さずに書き戻される", async ({ page }) => {
+  await openBoard(page);
+  await openFirstCard(page);
+  const cardId = Number(
+    await page.locator(".column").first().locator(".card").first().getAttribute("data-card"),
+  );
+
+  await page.locator(".card-description-input").fill("欄を離れたら残る");
+  // 欄を離れる。押していないのに届く。
+  await page.locator(".card-title-input").click();
+
+  await expect
+    .poll(async () =>
+      (await storedBoard()).columns
+        .flatMap((column) => column.cards)
+        .find((card) => card.id === cardId)?.description,
+    )
+    .toBe("欄を離れたら残る");
+});
+
+/// 別のカードを開いても、直前のカードの変更が消えない（#142）。マニュアルが
+/// 前から言っていた振る舞いに、実装が追いついた形。
+test("編集中に別のカードを開いても、直前の変更が残る", async ({ page }) => {
+  await openBoard(page);
+  const cards = page.locator(".column").first().locator(".card");
+  const firstId = Number(await cards.nth(0).getAttribute("data-card"));
+
+  await cards.nth(0).dblclick();
+  await page.locator(".card-description-input").fill("消えては困る説明");
+  // 保存を押さずに、2 枚目を開く。
+  await cards.nth(1).dblclick();
+  await expect(page.locator(".card-panel")).toBeVisible();
+
+  await expect
+    .poll(async () =>
+      (await storedBoard()).columns
+        .flatMap((column) => column.cards)
+        .find((card) => card.id === firstId)?.description,
+    )
+    .toBe("消えては困る説明");
+});
+
+/// チェックは押した瞬間に確定する（#139）。`Escape` で閉じても残り、Undo は
+/// 1 チェックずつ戻る。
+test("チェックは押した瞬間に残り、Undo で 1 つずつ戻る", async ({ page }) => {
+  await openBoard(page);
+  await openFirstCard(page);
+  const cardId = Number(
+    await page.locator(".column").first().locator(".card").first().getAttribute("data-card"),
+  );
+  const checks = async () =>
+    (await storedBoard()).columns
+      .flatMap((column) => column.cards)
+      .find((card) => card.id === cardId)
+      ?.checklistItems.filter((item) => item.checked).length;
+  const before = (await checks()) ?? 0;
+
+  await page.locator(".add-checklist-item").click();
+  await page.keyboard.type("ひとつ目");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("ふたつ目");
+  await page.locator(".card-title-input").click();
+
+  // 1 つずつ、押した時点で届いていることを確かめる。
+  const rows = page.locator(".checklist-row");
+  const count = await rows.count();
+  await rows.nth(count - 2).locator(".checklist-toggle").click();
+  await expect.poll(checks).toBe(before + 1);
+  await rows.nth(count - 1).locator(".checklist-toggle").click();
+  await expect.poll(checks).toBe(before + 2);
+
+  // 打ちかけのタイトルは消えない。
+  await expect(page.locator(".card-title-input")).not.toHaveValue("");
+
+  await page.locator(".card-title-input").press("Escape");
+  await expect(page.locator(".card-panel")).toBeHidden();
+  expect(await checks()).toBe(before + 2);
+
+  await page.keyboard.press("ControlOrMeta+z");
+  await expect.poll(checks).toBe(before + 1);
+});
+
+/// 無題のカードは作れないまま（`docs/DESIGN.md`）。空にして離したら元に戻る。
+test("タイトルを空にして欄を離れると、元のタイトルに戻る", async ({ page }) => {
+  await openBoard(page);
+  await openFirstCard(page);
+  const before = await page.locator(".card-title-input").inputValue();
+
+  await page.locator(".card-title-input").fill("");
+  await page.locator(".card-description-input").click();
+
+  await expect(page.locator(".card-title-input")).toHaveValue(before);
+  await expect.poll(storedTitles).toContain(before);
 });
 
 // ---------------------------------------------------------------- 期限
@@ -335,7 +434,7 @@ test("欄に打った日付が、そのまま保存される", async ({ page }) 
 
   await expect(page.locator(".card-due-input")).toHaveAttribute("type", "text");
   await page.locator(".card-due-input").fill("2026-12-31");
-  await page.locator(".save-card").click();
+  await page.locator(".close-card").click();
 
   await expect
     .poll(async () =>
@@ -364,7 +463,7 @@ test("「明日」と打つと、翌日の期限が保存される", async ({ pa
   // 打った文字がどう読まれたかは、確定する前に欄の下に出る。
   await expect(page.locator(".due-preview")).toContainText(tomorrow);
 
-  await page.locator(".save-card").click();
+  await page.locator(".close-card").click();
   await expect
     .poll(async () =>
       (await storedBoard()).columns
@@ -388,7 +487,8 @@ test("読めない期限は、欄の脇で断られて保存されない", async
   // 読めない間は、読み下しを出さない。
   await expect(page.locator(".due-preview")).toHaveCount(0);
 
-  await page.locator(".save-card").click();
+  // 欄を離れた時点で確定しにいき、そこで断られる（#141）。
+  await page.locator(".card-title-input").click();
   await expect(page.locator(".field-error")).toContainText("日付として読めません");
   // 断られた値は打ち直せるように残り、パネルも開いたまま。
   await expect(page.locator(".card-due-input")).toHaveValue("きのう");
@@ -420,7 +520,7 @@ test("× を押すと期限が外れる", async ({ page }) => {
   await page.locator(".card-due-input").fill("2026-12-31");
   await page.getByRole("button", { name: "期限を外す" }).click();
   await expect(page.locator(".card-due-input")).toHaveValue("");
-  await page.locator(".save-card").click();
+  await page.locator(".close-card").click();
 
   await expect
     .poll(async () =>
@@ -500,7 +600,7 @@ test("チェックリストの項目を足し、並べ替え、チェックで�
   await expect(page.locator(".checklist-text").nth(before)).toHaveValue("につ目");
 
   await page.locator(".checklist-row").nth(before).locator(".checklist-toggle").click();
-  await page.locator(".save-card").click();
+  await page.locator(".close-card").click();
 
   await expect
     .poll(async () =>
@@ -528,8 +628,7 @@ test("項目名を入れないままの行は、保存のときに消える", as
   await page.locator(".checklist-text").nth(before).fill("書いた");
   // 2 行目は空のまま。ここで止められないことが、この issue の受け入れ条件。
   await page.locator(".add-checklist-item").click();
-  await expect(page.locator(".save-card")).toBeEnabled();
-  await page.locator(".save-card").click();
+  await page.locator(".close-card").click();
 
   await expect
     .poll(async () =>
@@ -551,10 +650,15 @@ test("チェックリストの項目を掴んで並べ替えられる", async ({
   );
 
   const before = await page.locator(".checklist-row").count();
-  for (const text of ["いち", "に", "さん"]) {
-    await page.locator(".add-checklist-item").click();
-    await page.locator(".checklist-text").last().fill(text);
-  }
+  // 「＋」は 1 回だけ押して、あとは `Enter` で続ける（#138）。押すたびに確定が
+  // 走って行が増えるので、ボタンの位置が動き続けます。
+  await page.locator(".add-checklist-item").click();
+  await page.keyboard.type("いち");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("に");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("さん");
+  await expect(page.locator(".checklist-row")).toHaveCount(before + 3);
 
   const rows = page.locator(".checklist-row");
   // 3 つ目を 1 つ目の位置へ運ぶ。
@@ -565,8 +669,10 @@ test("チェックリストの項目を掴んで並べ替えられる", async ({
   // のあいだ document の `click` を握りつぶします（`AbstractPointerSensor` の
   // `detach()`）。人の指では届かない窓ですが、Playwright は届いてしまうので、
   // ここは打鍵で保存します（タイトル欄の `Enter`、`docs/DESIGN.md`「画面の作り」）。
+  // タイトル欄の `Enter` は確定です。**閉じません**（#141）——欄ごとに確定する
+  // ので、閉じるのは別の操作になりました。
   await page.locator(".card-title-input").press("Enter");
-  await expect(page.locator(".card-panel")).toBeHidden();
+  await expect(page.locator(".card-panel")).toBeVisible();
 
   await expect
     .poll(async () =>
@@ -588,19 +694,21 @@ test("チェックリストの項目数が増えても、カードの高さが�
   // 1 項目のカードの高さを測る。ここまでは「進捗の 1 行が増えた」ぶんの差。
   await card.dblclick();
   await page.locator(".add-checklist-item").click();
-  await page.locator(".checklist-text").last().fill("項目 1");
-  await page.locator(".save-card").click();
+  await page.keyboard.type("項目 1");
+  await page.locator(".close-card").click();
   await expect(page.locator(".card-checklist").first()).toContainText("0/1");
   const withOne = await card.boundingBox();
   expect(withOne?.height).toBeGreaterThan(before?.height ?? 0);
 
-  // ここから項目を 11 個足しても、高さは動かない。
+  // ここから項目を 11 個足しても、高さは動かない。「＋」は 1 回だけ押して、
+  // あとは `Enter` で続ける（#138）。
   await card.dblclick();
+  await page.locator(".add-checklist-item").click();
   for (let index = 2; index <= 12; index += 1) {
-    await page.locator(".add-checklist-item").click();
-    await page.locator(".checklist-text").last().fill(`項目 ${String(index)}`);
+    await page.keyboard.type(`項目 ${String(index)}`);
+    if (index < 12) await page.keyboard.press("Enter");
   }
-  await page.locator(".save-card").click();
+  await page.locator(".close-card").click();
 
   await expect(page.locator(".card-checklist").first()).toContainText("0/12");
   const withTwelve = await card.boundingBox();
@@ -625,7 +733,7 @@ test("＋ を 1 回押したら、Enter だけで項目を続けて打てる", a
   await page.keyboard.type("う");
   await expect(page.locator(".checklist-text")).toHaveCount(before + 3);
 
-  await page.locator(".save-card").click();
+  await page.locator(".close-card").click();
   await expect
     .poll(async () =>
       (await storedBoard()).columns
@@ -703,7 +811,7 @@ test("項目の欄で Alt+↑ を押すと、その項目が 1 つ上がる", as
   await page.keyboard.press("Enter");
   await page.keyboard.type("さき");
   await page.keyboard.press("Alt+ArrowUp");
-  await page.locator(".save-card").click();
+  await page.locator(".close-card").click();
 
   await expect
     .poll(async () =>
@@ -749,7 +857,7 @@ test("タグを作り、カードに付け、名前を変えて消せる", async
     await page.locator(".column").first().locator(".card").first().getAttribute("data-card"),
   );
   await page.locator(".tag-suggestions").getByRole("button", { name: "あたらしいタグ" }).click();
-  await page.locator(".save-card").click();
+  await page.locator(".close-card").click();
 
   const tagId = (await storedBoard()).tags.find((tag) => tag.name === "あたらしいタグ")?.id;
   await expect
@@ -798,7 +906,7 @@ test("カードの編集中に、打った名前のタグをその場で作っ�
     .poll(async () => (await storedBoard()).tags.map((tag) => tag.name))
     .toContain("その場で作った");
 
-  await page.locator(".save-card").click();
+  await page.locator(".close-card").click();
 
   const tagId = (await storedBoard()).tags.find((tag) => tag.name === "その場で作った")?.id;
   await expect
@@ -821,7 +929,7 @@ test("既にある名前を打つと、タグは増えずに選ばれるだけ",
   await page.locator(".tags-input-field").press("Enter");
 
   await expect(page.locator(".tags-input-chip").filter({ hasText: "調査" })).toHaveCount(1);
-  await page.locator(".save-card").click();
+  await page.locator(".close-card").click();
 
   // 打ってからひととおり通しても、タグは増えていない。
   await expect.poll(async () => (await storedBoard()).tags.length).toBe(before);
@@ -842,7 +950,7 @@ test("チップの ✕ でカードからタグが外れ、ボードのタグは
 
   await page.getByLabel("設計 を外す").click();
   await expect(page.locator(".tags-input-chip").filter({ hasText: "設計" })).toHaveCount(0);
-  await page.locator(".save-card").click();
+  await page.locator(".close-card").click();
 
   const tagId = (await storedBoard()).tags.find((tag) => tag.name === "設計")?.id;
   await expect
@@ -868,7 +976,7 @@ test("カードのタグを押すと、そのタグで絞り込む", async ({ pa
 
   await openFirstCard(page);
   await page.locator(".tag-suggestions").getByRole("button", { name: "絞り込み用" }).click();
-  await page.locator(".save-card").click();
+  await page.locator(".close-card").click();
   await expect(page.locator(".card-panel")).toBeHidden();
 
   const cards = page.locator(".column .card");

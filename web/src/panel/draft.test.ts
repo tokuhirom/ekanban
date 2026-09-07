@@ -8,6 +8,7 @@ import {
   checklistToSend,
   deleteChecklistItem,
   insertChecklistItemAfter,
+  syncChecklistIds,
   draftIsSavable,
   emptyDraft,
   moveChecklistItem,
@@ -162,5 +163,53 @@ describe("insertChecklistItemAfter", () => {
   it("範囲の外を指されたら末尾に足す", () => {
     expect(insertChecklistItemAfter(list, 9).checklist).toHaveLength(3);
     expect(insertChecklistItemAfter([], 0).checklist).toHaveLength(1);
+  });
+});
+
+describe("syncChecklistIds", () => {
+  /// ID を写さないと、次の確定で同じ項目がもう 1 つ増える（#141）。
+  it("まだ ID を持たない項目に、保存された ID を写す", () => {
+    const drafted = [
+      { key: "a", id: 1, text: "あ", checked: false },
+      { key: "b", id: null, text: "い", checked: false },
+    ];
+    expect(syncChecklistIds(drafted, [{ id: 1 }, { id: 7 }])).toEqual([
+      { key: "a", id: 1, text: "あ", checked: false },
+      { key: "b", id: 7, text: "い", checked: false },
+    ]);
+  });
+
+  it("既に ID を持つ項目は触らない", () => {
+    const drafted = [{ key: "a", id: 3, text: "あ", checked: false }];
+    expect(syncChecklistIds(drafted, [{ id: 9 }])).toEqual(drafted);
+  });
+
+  it("返ってきた並びが短くても落ちない", () => {
+    const drafted = [{ key: "a", id: null, text: "あ", checked: false }];
+    expect(syncChecklistIds(drafted, [])).toEqual(drafted);
+  });
+
+  /// 空の行は保存のときに落ちる（#114）ので、返ってきた並びには入っていない。
+  /// 数に入れると、そこから下の行に 1 つずれた ID が付く。
+  it("空の行を数に入れず、そこから下の ID をずらさない", () => {
+    const drafted = [
+      { key: "a", id: null, text: "あ", checked: false },
+      { key: "b", id: null, text: "  ", checked: false },
+      { key: "c", id: null, text: "い", checked: false },
+    ];
+    expect(syncChecklistIds(drafted, [{ id: 4 }, { id: 5 }])).toEqual([
+      { key: "a", id: 4, text: "あ", checked: false },
+      { key: "b", id: null, text: "  ", checked: false },
+      { key: "c", id: 5, text: "い", checked: false },
+    ]);
+  });
+
+  /// 文字を消した行は、保存の側ではもう無い。ID を持たせたままにすると、
+  /// 打ち直したときにもう無い項目を指す。
+  it("文字を消した行からは ID を外す", () => {
+    const drafted = [{ key: "a", id: 7, text: "", checked: false }];
+    expect(syncChecklistIds(drafted, [])).toEqual([
+      { key: "a", id: null, text: "", checked: false },
+    ]);
   });
 });

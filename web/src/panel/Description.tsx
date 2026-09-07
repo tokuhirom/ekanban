@@ -22,9 +22,16 @@ interface Props {
   value: string;
   platform: Platform;
   onChange: (value: string) => void;
+  /**
+   * 打った内容を確定する（保存済みのカードだけ、#141、ADR 0032）。
+   *
+   * 欄を離れたときと、打ち止まって 1 秒で呼びます。**打鍵のたびには呼びません**
+   * ——1 打鍵ごとに `update_card` を呼ぶと、Undo が 1 文字ずつ積まれます。
+   */
+  onCommit?: ((value: string) => void) | undefined;
 }
 
-export function Description({ id, value, platform, onChange }: Props) {
+export function Description({ id, value, platform, onChange, onCommit }: Props) {
   const ipc = useIpc();
   const [links, setLinks] = useState<readonly UrlSpan[]>([]);
   // IME の変換中かどうか。変換中の文字は入力欄の中にしかなく、表示層には
@@ -63,6 +70,21 @@ export function Description({ id, value, platform, onChange }: Props) {
     };
   }, [ipc, value]);
 
+  // 打ち止まって 1 秒で確定します（#141）。**打鍵のたびには確定しません**
+  // ——1 文字ごとに `update_card` を呼ぶと、Undo が 1 文字ずつ積まれます。
+  // 変換中は待ちません（`value` は確定した文字しか来ないため）。
+  const committed = useRef(value);
+  useEffect(() => {
+    if (onCommit === undefined || value === committed.current) return;
+    const timer = setTimeout(() => {
+      committed.current = value;
+      onCommit(value);
+    }, 1000);
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [onCommit, value]);
+
   const modifier = platform === "macos" ? "Cmd" : "Ctrl";
 
   return (
@@ -91,6 +113,10 @@ export function Description({ id, value, platform, onChange }: Props) {
         title={`${modifier} を押しながらクリックすると、リンクを開きます`}
         onChange={(event) => {
           onChange(event.target.value);
+        }}
+        // 欄を離れたら確定（#141）。打ち止まって 1 秒のほうは下の見張りが呼びます。
+        onBlur={() => {
+          onCommit?.(value);
         }}
         onCompositionStart={() => {
           setComposing(true);
