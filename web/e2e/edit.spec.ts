@@ -42,6 +42,25 @@ async function openFirstCard(page: Page) {
   await expect(page.locator(".card-panel")).toBeVisible();
 }
 
+/// 欄の枠と、置かれている場所を読む。**触る前と後で見比べる**ためのもの（#168）。
+async function fieldFrame(locator: Locator) {
+  return await locator.evaluate((element) => {
+    const style = getComputedStyle(element);
+    const rect = element.getBoundingClientRect();
+    return {
+      borderWidth: style.borderTopWidth,
+      borderColor: style.borderTopColor,
+      // 小数の丸めでちらつかせない。動いたかどうかだけが見たい。
+      frame: {
+        left: Math.round(rect.left),
+        top: Math.round(rect.top),
+        width: Math.round(rect.width),
+        height: Math.round(rect.height),
+      },
+    };
+  });
+}
+
 /// IME の変換に伴う `keydown` を流す。
 ///
 /// Playwright は本物の IME を打てないので、**WebKit が変換を確定するときに
@@ -136,6 +155,52 @@ test("新しいカードにも期限・チェックリスト・タグを付け�
   expect(tagId).toBeDefined();
   expect((await added())?.tagIds).toEqual([tagId]);
   expect((await added())?.checklistItems.map((item) => item.text)).toEqual(["先にやる"]);
+});
+
+/// 枠は最初から出す（#168）。
+///
+/// 触るまで枠が無いと、そこが打てる場所だと読めない。しかも触った瞬間に枠と
+/// 余白が現れると、打ち始めたところで文字が動く。**見るのは 2 つ**——触って
+/// いない欄にも枠があること、触っても欄と案内の位置が変わらないこと。
+test("タイトルと説明の枠は、触る前から出ていて、触っても位置が動かない", async ({ page }) => {
+  await openBoard(page);
+  await page.locator(".column").first().locator(".add-card").click();
+
+  const title = page.locator(".card-title-input");
+  const description = page.locator(".description-field");
+  const placeholder = page.locator(".description-placeholder");
+  const due = page.locator(".card-due-input");
+  // 透明な枠は「枠が無い」のと同じ。色まで見る。
+  const invisible = ["0px", "rgba(0, 0, 0, 0)", "transparent"];
+
+  // 開いた直後、焦点はタイトルにある（`autoFocus`）。説明と期限はまだ触って
+  // いないので、そこが触る前の姿。
+  await expect(title).toBeFocused();
+  const descriptionBefore = await fieldFrame(description);
+  const placeholderBefore = await fieldFrame(placeholder);
+  const dueBefore = await fieldFrame(due);
+  expect(invisible).not.toContain(descriptionBefore.borderWidth);
+  expect(invisible).not.toContain(descriptionBefore.borderColor);
+  expect(invisible).not.toContain(dueBefore.borderWidth);
+  expect(invisible).not.toContain(dueBefore.borderColor);
+
+  // 説明に触る。タイトルは焦点を失う側になる。
+  const titleFocused = await fieldFrame(title);
+  await description.click();
+  await expect(page.locator(".card-description-input")).toBeFocused();
+
+  const titleBlurred = await fieldFrame(title);
+  expect(invisible).not.toContain(titleBlurred.borderWidth);
+  expect(invisible).not.toContain(titleBlurred.borderColor);
+  expect(titleBlurred.frame).toEqual(titleFocused.frame);
+
+  expect((await fieldFrame(description)).frame).toEqual(descriptionBefore.frame);
+  expect((await fieldFrame(placeholder)).frame).toEqual(placeholderBefore.frame);
+
+  // 期限も同じ欄の並びにいる。触ったときに幅や余白が変わると、その 1 行ごと動く。
+  await due.click();
+  await expect(due).toBeFocused();
+  expect((await fieldFrame(due)).frame).toEqual(dueBefore.frame);
 });
 
 /// 足したばかりのカードは、Undo 1 回で消える（#127）。
