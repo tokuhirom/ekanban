@@ -23,6 +23,7 @@ import type { Platform } from "../ipc/types/Platform";
 import type { Snapshot } from "../ipc/types/Snapshot";
 import type { Tag } from "../ipc/types/Tag";
 import { useAppActions } from "../shell/actions";
+import { isComposing } from "../shell/ime";
 import { Description } from "./Description";
 import type { Editing } from "../state/board";
 import {
@@ -147,7 +148,9 @@ export function CardPanel({
       // 取りません——説明が複数行なので、改行のほうを優先します。保存する Enter は
       // タイトル欄の中だけ（`docs/DESIGN.md`）。
       onKeyDown={(event) => {
-        if (event.key !== "Escape") return;
+        // 変換を取り消す Escape でパネルを閉じない。打ちかけの下書きが消える
+        // （`shell/ime.ts`）。
+        if (event.key !== "Escape" || isComposing(event.nativeEvent)) return;
         event.stopPropagation();
         onClose();
       }}
@@ -234,7 +237,7 @@ export function CardPanel({
           // カードを足すときはタイトルを打つのが最後の操作なので、そのまま
           // 終われないと保存ボタンまで手が要ります。
           onKeyDown={(event) => {
-            if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
+            if (event.key !== "Enter" || isComposing(event.nativeEvent)) return;
             event.preventDefault();
             void save();
           }}
@@ -475,8 +478,8 @@ function TagsInput({
           }}
           onKeyDown={(event) => {
             // 1 行の欄なので Enter で確定する（`docs/DESIGN.md`）。IME の変換を
-            // 確定する Enter でタグを作らないよう `isComposing` を見る。
-            if (event.key === "Enter" && !event.nativeEvent.isComposing) {
+            // 確定する Enter でタグを作らないよう `shell/ime.ts` を通す。
+            if (event.key === "Enter" && !isComposing(event.nativeEvent)) {
               event.preventDefault();
               commit();
               return;

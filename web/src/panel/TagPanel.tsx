@@ -17,6 +17,7 @@ import type { AppError } from "../ipc/types/AppError";
 import type { Snapshot } from "../ipc/types/Snapshot";
 import type { Tag } from "../ipc/types/Tag";
 import { useAppActions } from "../shell/actions";
+import { isComposing } from "../shell/ime";
 import { DEFAULT_TAG_COLOR } from "./tags";
 
 interface Props {
@@ -48,7 +49,8 @@ export function TagPanel({ tags, run, onClose }: Props) {
       className="panel tag-panel"
       aria-label="タグの整理"
       onKeyDown={(event) => {
-        if (event.key !== "Escape") return;
+        // 変換を取り消す Escape でパネルを閉じない（`shell/ime.ts`）。
+        if (event.key !== "Escape" || isComposing(event.nativeEvent)) return;
         event.stopPropagation();
         onClose();
       }}
@@ -83,7 +85,7 @@ export function TagPanel({ tags, run, onClose }: Props) {
             autoFocus
             // 1 行の欄なので Enter で確定する（`docs/DESIGN.md`）。
             onKeyDown={(event) => {
-              if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
+              if (event.key !== "Enter" || isComposing(event.nativeEvent)) return;
               event.preventDefault();
               void add();
             }}
@@ -146,7 +148,7 @@ function TagRow({
           setName(event.target.value);
         }}
         onKeyDown={(event) => {
-          if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
+          if (event.key !== "Enter" || isComposing(event.nativeEvent)) return;
           event.preventDefault();
           void rename();
         }}

@@ -181,6 +181,7 @@ app_state
 - 入力は webview の入力欄に任せ、IME の composition を扱わせます
 - 日本語の文字列をキーイベントから自前で組み立てません
 - IME の変換中の Enter や Escape を、ショートカットとして取り上げません
+- 変換中かどうかは `web/src/shell/ime.ts` の `isComposing()` で判定します。`KeyboardEvent.isComposing` を直に読むと、WebKit（WKWebView・WebKitGTK）が `compositionend` を先に出すぶん、変換を確定する Enter を取りこぼします（[ADR 0029](adr/0029-detecting-ime-composition.md)）
 - 入力欄を追加・変更したら、日本語 IME での入力を実機で確認してください
 
 ## テスト

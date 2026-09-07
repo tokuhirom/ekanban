@@ -12,6 +12,8 @@
 
 import { useEffect, useId, useRef, type ReactNode } from "react";
 
+import { isComposing } from "./ime";
+
 interface ShellProps {
   title: string;
   onCancel: () => void;
@@ -34,7 +36,8 @@ function Shell({ title, onCancel, children }: ShellProps) {
     <div
       className="dialog-backdrop"
       onKeyDown={(event) => {
-        if (event.key === "Escape") {
+        // 変換を取り消す Escape でダイアログを閉じない（`shell/ime.ts`）。
+        if (event.key === "Escape" && !isComposing(event.nativeEvent)) {
           event.stopPropagation();
           onCancel();
         }
@@ -155,7 +158,10 @@ export function PromptDialog({
           onChange(event.target.value);
         }}
         onKeyDown={(event) => {
+          // 1 行の欄なので Enter で確定する（`docs/DESIGN.md`）。変換を確定する
+          // Enter では確定しない（`shell/ime.ts`）。
           if (event.key !== "Enter" || value.trim() === "") return;
+          if (isComposing(event.nativeEvent)) return;
           event.preventDefault();
           onOk();
         }}

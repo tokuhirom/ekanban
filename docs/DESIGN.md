@@ -112,6 +112,7 @@ TypeScript + React + Vite（[ADR 0019](adr/0019-typescript-react-vite-for-the-we
 - **フォントはシステムのものを使う。** web フォントを読み込まない。README の「ネットワーク接続を必要としない」がそのまま設定で守られる（`tauri.conf.json` の CSP は `default-src 'self'`、capability は使うものだけを並べる）
 - **入力欄の初期値に、案内の文言を入れない。** 案内は placeholder で出す。既定値として入れると、消し忘れがそのままデータになる。「+ カードを追加」が説明に「説明を追加してください」と書いたカードを作っていた（#36）。任意の項目はその旨も placeholder に書く
 - **1 行の入力欄では `Enter` で確定する。** カードのタイトル、カラム名、タグ名、検索のように改行の要らない欄は `Enter` で保存し、`Escape` で取り消す。打ち終わりに保存ボタンへ手を伸ばさせない。複数行の欄（カードの説明）では取らない。改行のほうが要るため、カードの編集パネルでも `Enter` を拾うのはタイトル欄の中だけにする
+- **IME の変換中かは `web/src/shell/ime.ts` の `isComposing()` で判定する。** `KeyboardEvent.isComposing` を直に読まない。WebKit（macOS の WKWebView、Linux の WebKitGTK）は変換を確定する `Enter` の `keydown` より先に `compositionend` を出すので、その `keydown` は `isComposing === false` で届く。変換に伴う `keydown` はどのエンジンでも `keyCode` が 229 になるので、そちらも見る。判定を散らすと、`Enter` で保存する欄が 1 つずつ「確定しただけで保存される」に戻る（#124、[ADR 0029](adr/0029-detecting-ime-composition.md)）
 - **常用しない操作を画面に常時出さない。** カードの操作は右クリックメニュー、カラムの操作は `…` メニュー、タグの編集・削除はメニューから開くタグ整理パネルに集約する。`danger`（赤）はダイアログの確定ボタンとメニュー内の削除項目だけに使う
 - **タグを作れるのは、タグ整理パネルと、カード編集パネルのタグ欄の 2 か所。** あちらは「いま書いているカードに付ける」ためのもので、打った名前のタグが無ければその場で作る（前後の空白と大文字小文字を無視して突き合わせるので、同じ名前が 2 つできることはない）。色は既定色で、名前の変更・色・削除はタグ整理パネルにしか置かない（[ADR 0027](adr/0027-creating-tags-while-editing-a-card.md)）
 - **説明に貼られた URL は、入力欄の中でリンクとして描く。** `textarea` の裏に同じ字送りの表示層を重ね、URL はその層で描く。説明はプレーンテキストのままにする（「やらないこと」の Markdown の描画）ので、解釈するのは `http(s)://` だけ。見出しも強調も記法も見ない（[ADR 0002](adr/0002-links-inside-the-description-field.md)）

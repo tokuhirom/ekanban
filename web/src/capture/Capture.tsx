@@ -11,6 +11,7 @@ import { useEffect, useState } from "react";
 import { useIpc } from "../ipc";
 import { describeFailure } from "../ipc/error";
 import type { CaptureTarget } from "../ipc/types/CaptureTarget";
+import { isComposing } from "../shell/ime";
 
 export function Capture() {
   const ipc = useIpc();
@@ -53,7 +54,7 @@ export function Capture() {
     <div
       className="capture"
       onKeyDown={(event) => {
-        if (event.nativeEvent.isComposing) return;
+        if (isComposing(event.nativeEvent)) return;
         if (event.key === "Enter") {
           event.preventDefault();
           void save();
