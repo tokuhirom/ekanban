@@ -98,6 +98,7 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .manage(state)
+        .manage(crate::capture::Registration::default())
         .menu(menu::build)
         .on_menu_event(|app, event| handle_menu_event(app, event.id().as_ref()))
         .on_window_event(move |window, event| {
@@ -124,9 +125,11 @@ pub fn run() {
             }
             // 保存されている割り当てを登録する。登録できなくても起動は続け、
             // 理由は記録に残す（設定は消さない、`docs/DESIGN.md`「クイックキャプチャ」）。
-            if let Some(reason) =
-                crate::capture::register_saved(app.handle(), saved_shortcut.as_deref())
-            {
+            if let Some(reason) = crate::capture::register_saved(
+                app.handle(),
+                &app.state::<crate::capture::Registration>(),
+                saved_shortcut.as_deref(),
+            ) {
                 diagnostics::log(&format!("quick capture is not registered: {reason}"));
             }
             Ok(())
@@ -179,7 +182,8 @@ pub fn run() {
             ipc::capture_target,
             ipc::set_capture_target,
             ipc::set_capture_column,
-            ipc::quick_capture_support,
+            ipc::quick_capture_status,
+            ipc::set_menu_accelerators_active,
             ipc::set_quick_capture_shortcut,
             ipc::set_quick_capture_shortcut_from_key,
             ipc::close_capture_window,

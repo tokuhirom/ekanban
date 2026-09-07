@@ -14,6 +14,7 @@ use tauri::{AppHandle, Emitter as _, State, WebviewWindow};
 use tauri_plugin_dialog::DialogExt as _;
 use tauri_plugin_opener::OpenerExt as _;
 
+use crate::capture::{QuickCaptureStatus, Registration};
 use crate::commands::{self, ExportFormat};
 use crate::error::AppError;
 use crate::events;
@@ -392,10 +393,11 @@ pub fn set_capture_column(
     commands::set_capture_column(&state, column_id)
 }
 
-/// この環境でグローバルホットキーを使えるか。使えないなら理由。
+/// 割り当てのダイアログが開くときに読むもの。使えない環境の理由と、保存されて
+/// いるのに登録できていない理由。
 #[tauri::command]
-pub fn quick_capture_support() -> Option<String> {
-    crate::shortcut::platform_support().err()
+pub fn quick_capture_status(registration: State<'_, Registration>) -> QuickCaptureStatus {
+    crate::capture::status(&registration)
 }
 
 /// 割り当てを差し替える。`None` で解除。保存された形が返る。
@@ -403,9 +405,22 @@ pub fn quick_capture_support() -> Option<String> {
 pub fn set_quick_capture_shortcut_from_key(
     app: AppHandle,
     state: State<'_, AppState>,
+    registration: State<'_, Registration>,
     press: Option<KeyPress>,
 ) -> Reply<Option<String>> {
-    crate::capture::set(&app, &state, press)
+    crate::capture::set(&app, &state, &registration, press)
+}
+
+/// メニューに付いているキーの割り当てを、付け外しする。
+///
+/// **割り当てを捕まえている間だけ外します**（`docs/DESIGN.md`「クイックキャプチャ」）。
+/// 付いたままだと、メニューのアクセラレータが webview より先に押されたキーを
+/// 取ってしまい、`keydown` がダイアログまで届きません。
+#[tauri::command]
+pub fn set_menu_accelerators_active(app: AppHandle, active: bool) {
+    if let Err(error) = crate::menu::set_accelerators_active(&app, active) {
+        ekanban_core::diagnostics::log(&format!("failed to change the menu accelerators: {error}"));
+    }
 }
 
 /// キャプチャの窓を閉じる。

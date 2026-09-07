@@ -744,6 +744,16 @@ pub fn set_capture_column(
     state.snapshot()
 }
 
+/// 保存されている割り当てを読む。無ければ `None`。
+pub fn quick_capture_shortcut(state: &AppState) -> Result<Option<String>, AppError> {
+    let database = state.database().map_err(|error| {
+        AppError::from_db(ErrorKind::Save, "割り当てを読めませんでした", &error)
+    })?;
+    database
+        .load_quick_capture_shortcut()
+        .map_err(|error| AppError::from_db(ErrorKind::Save, "割り当てを読めませんでした", &error))
+}
+
 /// 割り当てを覚える。**登録できなかった割り当ては保存しません**（`docs/DESIGN.md`「クイックキャプチャ」）ので、
 /// 呼ぶ側が登録に成功してからここを呼びます。読めない文字列はここで断ります。
 pub fn set_quick_capture_shortcut(

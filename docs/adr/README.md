@@ -108,3 +108,5 @@
 | [0026](0026-gpui-stays-only-in-the-adrs.md) | gpui の名前は ADR にだけ残す | 2026-09-06 | 有効 |
 | [0027](0027-creating-tags-while-editing-a-card.md) | カードを編集しながらタグを作れるようにする | 2026-09-06 | 有効 |
 | [0028](0028-a-single-default-quick-capture-target.md) | クイックキャプチャの既定の入れ先を、先頭のボードに固定する | 2026-09-06 | 有効 |
+| [0029](0029-detecting-ime-composition.md) | IME の変換中かは 1 か所で判定し、`keyCode` も見る | 2026-09-07 | 有効 |
+| [0030](0030-capturing-a-shortcut-needs-the-menu-out-of-the-way.md) | 割り当てを捕まえている間はメニューのアクセラレータを外し、押されているキーをその場に映す | 2026-09-07 | 有効 |

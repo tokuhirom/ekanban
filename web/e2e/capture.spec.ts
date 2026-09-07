@@ -103,18 +103,36 @@ test("ほかの窓が盤面を変えたら、開いているボードにも出�
   await expect(page.locator(".card", { hasText: "別の窓から足したカード" })).toBeVisible();
 });
 
-test("割り当てを記録して、解除できる", async ({ page }) => {
+test("押しているキーがその場に出て、割り当てを記録して、解除できる", async ({ page }) => {
   await openBoard(page);
   await chooseMenu(page, "setQuickCaptureShortcut");
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
 
+  // 押している途中のキーがそのまま出る（ADR 0030）。出さないと、押したのに
+  // 何も起きないとき、キーが届いていないのか断られたのかが分からない。
+  const pressed = dialog.locator(".pressed-keys");
+  await expect(pressed).toContainText("キーが押されていません");
+  await page.keyboard.down("Control");
+  await page.keyboard.down("Alt");
+  await expect(pressed).toContainText("Ctrl");
+  await expect(pressed).toContainText("Alt");
+
   // 押された組み合わせが、そのままの形で `app_state` に入る。
-  await page.keyboard.press("Control+Alt+KeyK");
+  await page.keyboard.down("KeyK");
+  await expect(pressed).toContainText("K");
   await expect.poll(async () => (await storedStartup()).quickCaptureShortcut).toBe("ctrl-alt-k");
 
-  await chooseMenu(page, "setQuickCaptureShortcut");
-  await page.locator(".clear-shortcut").click();
+  await page.keyboard.up("KeyK");
+  await page.keyboard.up("Alt");
+  await page.keyboard.up("Control");
+  await expect(pressed).toContainText("キーが押されていません");
+
+  // 何が登録されたのかを読めるように、割り当てても閉じない。
+  await expect(dialog).toBeVisible();
+  await expect(dialog.locator(".shortcut-current")).toContainText("ctrl-alt-k");
+
+  await dialog.locator(".clear-shortcut").click();
   await expect.poll(async () => (await storedStartup()).quickCaptureShortcut).toBeNull();
 });
 

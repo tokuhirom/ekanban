@@ -12,6 +12,7 @@
 import type { Ipc } from "./index";
 import type { AppAction } from "./types/AppAction";
 import type { CaptureTarget } from "./types/CaptureTarget";
+import type { QuickCaptureStatus } from "./types/QuickCaptureStatus";
 import type { Snapshot } from "./types/Snapshot";
 import type { StartupState } from "./types/StartupState";
 import type { UrlSpan } from "./types/UrlSpan";
@@ -134,7 +135,9 @@ export function harnessIpc(base: string): Ipc {
     captureTarget: () => call<CaptureTarget | null>(base, "capture_target"),
     setCaptureColumn: (columnId) => call<Snapshot>(base, "set_capture_column", { columnId }),
     captureCard: (title) => call<Snapshot>(base, "capture_card", { title }),
-    quickCaptureSupport: () => call<string | null>(base, "quick_capture_support"),
+    quickCaptureStatus: () => call<QuickCaptureStatus>(base, "quick_capture_status"),
+    // ブラウザにネイティブのメニューはないので、外すものがない。
+    setMenuAcceleratorsActive: () => Promise.resolve(),
     setQuickCaptureShortcut: (press) =>
       call<string | null>(base, "set_quick_capture_shortcut", { press }),
     // ブラウザに閉じる窓がありません。ハーネスでは何も起きないことだけが違い。

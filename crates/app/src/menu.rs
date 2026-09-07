@@ -16,9 +16,11 @@
 //! テキスト編集（カット・コピー・ペースト・すべてを選択）と macOS のシステム
 //! 項目は [`Predefined`] に任せます。OS が持っている操作を自分で書き直しません。
 
+use std::collections::HashMap;
+
 use serde::Serialize;
 use tauri::menu::{
-    AboutMetadata, Menu, MenuItemBuilder, PredefinedMenuItem, Submenu, SubmenuBuilder,
+    AboutMetadata, Menu, MenuItemBuilder, MenuItemKind, PredefinedMenuItem, Submenu, SubmenuBuilder,
 };
 use tauri::{AppHandle, Runtime};
 use ts_rs::TS;
@@ -506,6 +508,94 @@ pub fn build<R: Runtime>(app_handle: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     Ok(menu)
 }
 
+/// メニューに付いているキーの割り当てを、付け外しする。
+///
+/// **クイックキャプチャの割り当てを捕まえている間は外します**（`docs/DESIGN.md`
+/// 「クイックキャプチャ」、[ADR 0030]）。メニューのアクセラレータは webview より
+/// 先に押されたキーを取るので、付いたままだと `Cmd+N` のような組み合わせが
+/// `keydown` として画面に届かず、**押しても何も起きないダイアログ**になります。
+///
+/// 触るのは自分で持っている項目だけです。[`Predefined`] の項目（`Cmd+Q`、
+/// `Cmd+W`、`Cmd+C` など）は OS のもので、そこに割り当てるものでもありません。
+///
+/// [ADR 0030]: ../../../docs/adr/0030-capturing-a-shortcut-needs-the-menu-out-of-the-way.md
+pub fn set_accelerators_active<R: Runtime>(app: &AppHandle<R>, active: bool) -> tauri::Result<()> {
+    let Some(menu) = app.menu() else {
+        // メニューを組んでいなければ、外すものも戻すものもない。
+        return Ok(());
+    };
+    let bindings = bindings();
+    apply_bindings(&menu.items()?, active.then_some(&bindings))
+}
+
+/// メニューの項目が、押されたキーをどう取るか。
+struct Binding {
+    accelerator: Option<&'static str>,
+    enabled: bool,
+}
+
+/// [`sections`] が決めている、項目ごとの割り当てと押せるかどうか。
+///
+/// 付け直す先をここから作るので、**外したあとに戻す形は組み立てたときと同じ**
+/// です。控えを持ち回すと、控えを取り損ねた経路が 1 つでもあれば割り当てが
+/// 消えたままになります。`enabled` も同じで、もともと灰色だった項目（使えない
+/// 環境のクイックキャプチャ）が戻すときに押せるようになりません。
+fn bindings() -> HashMap<&'static str, Binding> {
+    sections()
+        .iter()
+        .flat_map(|section| section.items.iter())
+        .filter_map(|item| match item {
+            Item::Action {
+                action,
+                accelerator,
+                enabled,
+                ..
+            } => Some((
+                action.id(),
+                Binding {
+                    accelerator: *accelerator,
+                    enabled: *enabled,
+                },
+            )),
+            _ => None,
+        })
+        .collect()
+}
+
+/// `wanted` が `None` なら外し、`Some` ならその形に戻す。
+///
+/// **外すのに 2 つ必要です。** muda はアクセラレータを外せる環境と外せない環境が
+/// あり（macOS の `set_key_accelerator(None)` は `NSMenuItem` に触りません）、
+/// そこは無効な項目が key equivalent を実行しないことで止まります。GTK と
+/// Windows はアクセラレータの側が実際に外れます。片方だけでは、どちらかの環境で
+/// キーがダイアログに届きません。
+fn apply_bindings<R: Runtime>(
+    items: &[MenuItemKind<R>],
+    wanted: Option<&HashMap<&'static str, Binding>>,
+) -> tauri::Result<()> {
+    for item in items {
+        match item {
+            MenuItemKind::Submenu(submenu) => apply_bindings(&submenu.items()?, wanted)?,
+            MenuItemKind::MenuItem(entry) => match wanted {
+                Some(bindings) => {
+                    // 知らない id は触りません。組み立てていない項目の押せる／
+                    // 押せないを、ここが勝手に決める理由がありません。
+                    if let Some(binding) = bindings.get(entry.id().as_ref()) {
+                        entry.set_accelerator(binding.accelerator)?;
+                        entry.set_enabled(binding.enabled)?;
+                    }
+                }
+                None => {
+                    entry.set_accelerator(None::<&str>)?;
+                    entry.set_enabled(false)?;
+                }
+            },
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 fn submenu<R: Runtime>(app_handle: &AppHandle<R>, section: &Section) -> tauri::Result<Submenu<R>> {
     let mut builder = SubmenuBuilder::new(app_handle, section.name);
     for item in &section.items {
@@ -583,6 +673,61 @@ mod tests {
         Predefined::Minimize,
         Predefined::Zoom,
     ];
+
+    /// 外した割り当てを、id から組み立てたときと同じものに戻せること。
+    ///
+    /// **ここが落ちるのは id が重なったとき**で、そうなると片方の項目が
+    /// 割り当ての無いまま、押せないまま残ります（`docs/DESIGN.md`
+    /// 「クイックキャプチャ」、ADR 0030）。
+    #[test]
+    fn every_menu_item_can_be_put_back_by_its_id() {
+        let built: Vec<(&str, Option<&str>, bool)> = sections()
+            .iter()
+            .flat_map(|section| section.items.iter())
+            .filter_map(|item| match item {
+                Item::Action {
+                    action,
+                    accelerator,
+                    enabled,
+                    ..
+                } => Some((action.id(), *accelerator, *enabled)),
+                _ => None,
+            })
+            .collect();
+        let back = bindings();
+        assert_eq!(back.len(), built.len(), "id が重なっている");
+        for (id, accelerator, enabled) in built {
+            let binding = back.get(id).expect("組み立てた項目は id から引ける");
+            assert_eq!(binding.accelerator, accelerator, "{id} の割り当て");
+            assert_eq!(binding.enabled, enabled, "{id} の押せるかどうか");
+        }
+    }
+
+    /// 割り当ての無い項目も、戻す先として数える。
+    ///
+    /// 外すときは全部の項目を押せなくするので、割り当ての有無にかかわらず
+    /// 戻す先が要ります。
+    #[test]
+    fn the_items_without_an_accelerator_are_still_put_back() {
+        let without: Vec<&str> = sections()
+            .iter()
+            .flat_map(|section| section.items.iter())
+            .filter_map(|item| match item {
+                Item::Action {
+                    action,
+                    accelerator: None,
+                    ..
+                } => Some(action.id()),
+                _ => None,
+            })
+            .collect();
+        let back = bindings();
+        assert!(!without.is_empty(), "割り当ての無い項目が 1 つも無い");
+        for id in without {
+            let binding = back.get(id).expect("{id} が戻す先に無い");
+            assert_eq!(binding.accelerator, None, "{id} に割り当てが生えている");
+        }
+    }
 
     fn actions_of(sections: &[Section]) -> Vec<Action> {
         sections
