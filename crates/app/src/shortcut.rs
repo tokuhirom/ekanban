@@ -11,10 +11,19 @@
 //!
 //! [ADR 0012]: ../../../docs/adr/0012-focus-after-quick-capture-on-linux.md
 
+// 保存の形と `KeyboardEvent.code` の間の変換は、殻を外しても要ります
+// （`KeyPress` は webview から届く形です）。**登録できる形（[`Shortcut`]）だけが
+// 殻の側**——グローバルホットキーはブラウザに無いので、`shell` を外すと
+// まるごと消えます（[ADR 0035]）。
+//
+// [ADR 0035]: ../../../docs/adr/0035-a-browser-build-of-the-real-core.md
+#[cfg(feature = "shell")]
 use std::fmt;
+#[cfg(feature = "shell")]
 use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "shell")]
 use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut as GlobalShortcut};
 use ts_rs::TS;
 
@@ -44,6 +53,7 @@ pub struct KeyPress {
     pub code: String,
 }
 
+#[cfg(feature = "shell")]
 /// クイックキャプチャに割り当てられたキーの組み合わせ。
 ///
 /// 作れた時点で、グローバルホットキーとして登録できる形だと分かっています。
@@ -58,6 +68,7 @@ pub struct Shortcut {
     code: Code,
 }
 
+#[cfg(feature = "shell")]
 impl Shortcut {
     /// 画面から届いた押しかたから作る。受け付けられない組み合わせは断る。
     pub fn from_key_press(press: &KeyPress) -> Result<Self, ShortcutError> {
@@ -137,6 +148,7 @@ impl Shortcut {
     }
 }
 
+#[cfg(feature = "shell")]
 impl fmt::Display for Shortcut {
     /// 保存と表示に使う正規形。修飾キーの順序を固定するので、`cmd-shift-n` と
     /// `shift-cmd-n` は同じ文字列になる。
@@ -157,6 +169,7 @@ impl fmt::Display for Shortcut {
     }
 }
 
+#[cfg(feature = "shell")]
 /// `KeyboardEvent.code` を、保存する側のキー名に直す。
 ///
 /// 対応しないものは `None` を返し、呼ぶ側が断ります。**取りこぼしを黙って別の
@@ -196,6 +209,7 @@ fn key_name(code: &str) -> Option<String> {
     Some(name.to_string())
 }
 
+#[cfg(feature = "shell")]
 fn single_ascii(value: &str) -> Option<char> {
     let mut chars = value.chars();
     match (chars.next(), chars.next()) {
@@ -204,6 +218,7 @@ fn single_ascii(value: &str) -> Option<char> {
     }
 }
 
+#[cfg(feature = "shell")]
 /// 保存する側のキー名を W3C の `code` に直す。[`key_name`] の逆向きで、
 /// 2 つの表が食い違うと保存した割り当てを登録し直せなくなる。
 fn key_code(key: &str) -> Option<Code> {
@@ -274,7 +289,14 @@ pub fn platform_support() -> Result<(), String> {
         )
     }
 
+    // ブラウザ。**アプリの外まで届くキーの割り当ては、ページには作れません。**
+    #[cfg(target_family = "wasm")]
+    {
+        Err("ブラウザでは使えません".to_string())
+    }
+
     #[cfg(not(any(
+        target_family = "wasm",
         target_os = "macos",
         target_os = "linux",
         target_os = "dragonfly",
@@ -292,7 +314,9 @@ pub fn platform_support() -> Result<(), String> {
 /// Wayland にはアプリから使えるグローバルホットキーの共通の仕組みが無い。
 /// XWayland 越しに登録しても、Wayland のクライアントが前面にいる間はイベントが
 /// 来ないので、使えるとは言えない。
-#[cfg_attr(target_os = "macos", allow(dead_code))]
+// macOS とブラウザでは `platform_support` が環境変数を見ないので、ここは
+// テストからしか呼ばれない。
+#[cfg_attr(any(target_os = "macos", target_family = "wasm"), allow(dead_code))]
 fn x11_support(
     wayland_display: Option<&str>,
     session_type: Option<&str>,
@@ -312,8 +336,8 @@ fn x11_support(
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
+#[cfg(all(test, feature = "shell"))]
+mod shortcut_tests {
     use super::*;
 
     fn shortcut(source: &str) -> Shortcut {
@@ -424,6 +448,13 @@ mod tests {
             )
         );
     }
+}
+
+/// 環境の判定は、殻を外しても残ります——メニューが「使えない理由」を文言に
+/// 入れるのに使うためです（`menu::quick_capture_item`）。
+#[cfg(test)]
+mod platform_tests {
+    use super::x11_support;
 
     #[test]
     fn wayland_has_no_global_hotkeys() {

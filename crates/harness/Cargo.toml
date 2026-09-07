@@ -17,7 +17,8 @@ license.workspace = true
 publish = false
 
 [dependencies]
-ekanban-app.workspace = true
+# 殻の側のもの（クイックキャプチャの割り当ての変換）まで使うので `shell` 付き。
+ekanban-app = { workspace = true, features = ["shell"] }
 ekanban-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true

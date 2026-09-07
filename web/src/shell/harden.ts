@@ -2,13 +2,32 @@
 //
 // ネイティブでは考えなくてよかったものを、ここで 1 か所にまとめて切ります。
 // 散らすと、どれを切ったか数えられなくなります。
+//
+// **2 つに分けてあります**（[ADR 0035]）。盤面そのものに要るもの
+// （[`hardenBoard`]）と、**窓を持っているから切れるもの**（[`hardenWebview`]）
+// です。ブラウザで開くデモは前者だけを使います——そこはアプリの窓ではなく
+// ブラウザのタブなので、再読み込みも「戻る」も拡大も、取り上げてよいものでは
+// ありません。
+//
+// [ADR 0035]: ../../docs/adr/0035-a-browser-build-of-the-real-core.md
 
-export function hardenWebview(): void {
+/// 盤面を動かすのに要るぶんだけ。ブラウザのタブでもこれは切ります。
+export function hardenBoard(): void {
   // 既定の右クリックメニューを止める。カードの右クリックメニューを自分で
   // 出すためで、webview に「再読み込み」「検証」を出させないためでもある。
   document.addEventListener("contextmenu", (event) => {
     event.preventDefault();
   });
+
+  // 画像とテキストの既定のドラッグを止める。カードを掴む操作と取り合いになる。
+  document.addEventListener("dragstart", (event) => {
+    event.preventDefault();
+  });
+}
+
+/// アプリが窓を持っているときの手当て。[`hardenBoard`] も含みます。
+export function hardenWebview(): void {
+  hardenBoard();
 
   // 再読み込み (Ctrl+R / F5) と devtools を、リリースビルドでは塞ぐ。
   // 開発中は残す——効かないと直せない。
@@ -21,11 +40,6 @@ export function hardenWebview(): void {
       if (reload || devtools) event.preventDefault();
     });
   }
-
-  // 画像とテキストの既定のドラッグを止める。カードを掴む操作と取り合いになる。
-  document.addEventListener("dragstart", (event) => {
-    event.preventDefault();
-  });
 
   // 拡大縮小 (Ctrl+ホイール、ピンチ) を止める。盤面は自分で幅を決めているので、
   // 拡大されると桁の揃えが崩れるだけで、得るものがない。

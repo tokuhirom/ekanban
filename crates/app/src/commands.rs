@@ -468,6 +468,28 @@ fn with_extension(destination: &Path, extension: &str) -> PathBuf {
     }
 }
 
+/// 開いているボードを、書き出す形の文字列にする。**まだ書きません。**
+///
+/// 書く先が無い環境があるので分けてあります（ブラウザ、[ADR 0035]）。そこでは
+/// この文字列がそのままページへ渡り、ダウンロードになります。**組み立てが
+/// 1 か所なのは、どちらの経路でも同じものが出るための条件**です。
+///
+/// [ADR 0035]: ../../../docs/adr/0035-a-browser-build-of-the-real-core.md
+pub fn export_board_contents(state: &AppState, format: ExportFormat) -> Result<String, AppError> {
+    match format {
+        ExportFormat::Json => {
+            let database = state.database().map_err(|error| {
+                AppError::from_db(ErrorKind::Export, "書き出せませんでした", &error)
+            })?;
+            let board = state.lock();
+            database.export_board_json(&board).map_err(|error| {
+                AppError::from_db(ErrorKind::Export, "書き出せませんでした", &error)
+            })
+        }
+        ExportFormat::Markdown => Ok(export::render_board_markdown(&state.lock())),
+    }
+}
+
 /// 開いているボードをファイルに書き出す。書けたパスを返す。
 ///
 /// 行き先を選ぶのは呼ぶ側（OS のネイティブな保存ダイアログ、`docs/DESIGN.md`「アプリが伝えること」）です。ここは
@@ -478,18 +500,7 @@ pub fn export_board(
     destination: &Path,
 ) -> Result<PathBuf, AppError> {
     let destination = &with_extension(destination, format.extension());
-    let contents = match format {
-        ExportFormat::Json => {
-            let database = state.database().map_err(|error| {
-                AppError::from_db(ErrorKind::Export, "書き出せませんでした", &error)
-            })?;
-            let board = state.lock();
-            database.export_board_json(&board).map_err(|error| {
-                AppError::from_db(ErrorKind::Export, "書き出せませんでした", &error)
-            })?
-        }
-        ExportFormat::Markdown => export::render_board_markdown(&state.lock()),
-    };
+    let contents = export_board_contents(state, format)?;
     std::fs::write(destination, contents).map_err(|error| {
         AppError::new(
             ErrorKind::Export,

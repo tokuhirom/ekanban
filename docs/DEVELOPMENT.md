@@ -37,6 +37,7 @@ crates/
       shortcut.rs     割り当ての形。保存も登録もここを通る
       ipc.rs          `#[tauri::command]` の包み。中身は持たない
       commands.rs     1 操作 1 コマンド。適用して保存して盤面を返す
+      dispatch.rs     コマンド名で振り分ける表。殻の外の呼び手が共有する
       state.rs        開いている盤面。適用と保存をコマンドの中で終わらせる
       snapshot.rs     コマンドが返す形。起動時に読むもの
       error.rs        失敗の伝え方。入力欄に返すか、ダイアログに出すか
@@ -45,7 +46,7 @@ crates/
       commands.rs     コマンドを外から呼んで、SQLite まで見るテスト
 web/             画面。TypeScript + React + Vite（ADR 0019）
   src/
-    ipc/          Rust を呼ぶ唯一の口。tauri と harness の 2 実装。
+    ipc/          Rust を呼ぶ唯一の口。tauri・harness・wasm の 3 実装。
                   `types/` は ts-rs の生成物（手で書かない）
     state/        スナップショットの保持と、コマンドを呼んで差し替える 1 本の経路
     board/        サイドバー、ヘッダ、カラム、カード、D&D
@@ -54,15 +55,19 @@ web/             画面。TypeScript + React + Vite（ADR 0019）
     shell/        webview だから自分で切るもの（右クリック、拡大縮小、スワイプ）
     styles.css    色のトークンと骨組み
   e2e/            Playwright。ハーネス越しに Chromium と WebKit で動かす
+  demo/           ブラウザ版の入口（ADR 0035）。メニューバーもここから足す
+  e2e-demo/       ブラウザ版の e2e。組み立ての違いだけを見る
 harness/         ekanban-harness: コマンドを HTTP に出す開発・テスト専用のバイナリ
   examples/
     manual_screenshot_seed.rs  マニュアルのスクリーンショット用のデータベースを作る
+web(crate)/      ekanban-web: 同じコマンドを wasm で動かす。ブラウザ版の中身
 ```
 
 - **`ekanban-core` に UI ツールキットを足しません。** `tauri` に依存しないことが、テストを GUI のランタイム無しで走らせ続ける条件であり、Tauri のアプリと開発用のハーネスが同じコードを使える条件でもあります（[設計の記録](DESIGN.md)「層の分け方」）。依存の依存から入り込むほうがありがちなので、解決した依存グラフを `script/check-core-independence` が CI で見ています
 - **`crates/app/src/commands.rs` に `tauri` は出てきません。** `ipc.rs` の `#[tauri::command]` は、その関数を呼ぶだけの包みです。開発用のハーネス（[設計の記録](DESIGN.md)「テスト」）が同じ関数を HTTP に出すので、**判断を包みの側に置かないことは設計そのもの**です
 - **D&D の挿入位置と、キーボードの割り当ては `web/src/board/dnd.ts` と `keyboard.ts` に置きます。** dnd-kit に渡すのは掴む・運ぶ・オートスクロールだけです（[ADR 0022](adr/0022-dnd-kit-core-for-drag-and-drop.md)）。盤面の意味を決めるところをライブラリに預けると、外せなくなります
-- **どの OS で動いているかを `navigator.userAgent` から決めません。** あれは webview が書き換えられる文字列です（Playwright の Safari 模擬は Linux 上で `Macintosh` を名乗ります）。`secondary` が Cmd か Ctrl かを取り違えると割り当てが丸ごと効かないので、Rust が `StartupState.platform` で渡します（[ADR 0009](adr/0009-per-platform-key-bindings.md)、[ADR 0023](adr/0023-verifying-the-webview-engines.md)）
+- **`crates/app` の `shell` feature を外すと、Tauri を知らない層だけが残ります。** ブラウザ版（`crates/web`、[ADR 0035](adr/0035-a-browser-build-of-the-real-core.md)）がそこを使います。`cargo build -p ekanban-app --no-default-features --target wasm32-unknown-unknown` が通ることが、「コマンドの層が Tauri を知らない」の実際の確かめ方です
+- **どの OS で動いているかを `navigator.userAgent` から決めません。** あれは webview が書き換えられる文字列です（Playwright の Safari 模擬は Linux 上で `Macintosh` を名乗ります）。`secondary` が Cmd か Ctrl かを取り違えると割り当てが丸ごと効かないので、Rust が `StartupState.platform` で渡します（[ADR 0009](adr/0009-per-platform-key-bindings.md)、[ADR 0023](adr/0023-verifying-the-webview-engines.md)）。**例外はブラウザ版だけ**です——`wasm32-unknown-unknown` はどの OS でもないので、そこだけはページが名乗ります（[ADR 0035](adr/0035-a-browser-build-of-the-real-core.md)）
 - **`crates/app` のコンパイルには `web/dist` が要ります。** `tauri::generate_context!` が画面を実行ファイルに埋め込むためです。checkout したてなら `npm --prefix web ci && npm --prefix web run build` を先に走らせてください（`make dev` と CI はそうしています）
 - **Tauri のアプリは `make dev` で起動します。** デバッグビルドには Vite の開発サーバの URL が焼き込まれているので、開発サーバごと上げる必要があります。うっかり `cargo run` だけで起動したときは、**ウィンドウを開かずに、何を打てばいいかを出して終わります**（`run.rs` の `check_dev_server`）。画面を埋め込んだデバッグビルドが要るなら `tauri build --debug --no-bundle` です
 - **`cargo test` だけを打つと `ekanban-core` のテストが走りません。** `cargo run` にアプリを選ばせるため、ワークスペースの `default-members` を `crates/app` にしてあります。`--workspace` を省いた `cargo` のコマンドは、そこだけを見ます。`make check` は全部に `--workspace` を付けてあります
@@ -217,6 +222,17 @@ test("カードを足して保存すると、タイトルがデータベース�
 
 **ここに出てこないもの。** 本物のメニューバー、OS の保存ダイアログ、グローバルホットキー、ウィンドウの矩形——**Tauri の殻はブラウザには無い**ので、そこは実機で触って確かめます（[アプリを動かして確かめるとき](#アプリを動かして確かめるとき)）。日本語 IME での入力とライト／ダークの見え方も同じです。
 
+### ブラウザ版
+
+`make e2e-demo` は、GitHub Pages に置いているのと同じ成果物（`web/dist-demo/`）を `vite preview` で出して、Chromium から叩きます。**盤面の振る舞いをここで数え直しません**——同じ `Board` と、wasm に組み直した同じ `ekanban-core` が動いているので、`e2e/` が見ているものがそのまま効きます。
+
+ここで見るのは**組み立ての違いだけ**です。
+
+- 読み込み直しても盤面が残ること（`localStorage`）。ここでしか確かめられない受け入れ条件です
+- メニューバーが Rust の構成（`menu::web_sections`）どおりに出て、OS のものが混ざらないこと
+- ブラウザにできないことが、消されずに灰色で残っていること
+- 書き出しがダウンロードとして受け取れること
+
 ## ビルド
 
 `make help` でタスクの一覧が出ます。主なものは次の通りです。
@@ -341,6 +357,8 @@ GitHub Actions（`.github/workflows/ci.yml`）が、`main` への push と pull 
 | `Build and test (macos-latest)` | `macos-latest` | `npm ci` / `vite build` / `cargo test --workspace --all-features` / `cargo build --workspace --all-features` |
 | `Build and test (windows-latest)` | `windows-latest` | `npm ci` / `vite build` / `cargo test --workspace --all-features` / `cargo build --workspace --all-features` |
 
+`.github/workflows/pages.yml` はこれとは別に、ブラウザ版を組み立てて e2e まで走らせます（[ブラウザ版の公開](#ブラウザ版の公開)）。
+
 3 つの OS すべてで画面を先に組み立てるのは、`crates/app` のコンパイルが `web/dist` を実行ファイルに埋め込むからです。型検査と lint はプラットフォームに依らないので ubuntu だけで回します。
 
 macOS と Windows を回すのは、そこでしかコンパイルされないコードがあるためです。`crates/app/src/menu.rs` の OS ごとのメニューバー、`crates/core/src/paths.rs` と `crates/core/src/diagnostics.rs` の `#[cfg(windows)]` / `#[cfg(target_os = "macos")]` の分岐が該当します。fmt と clippy はプラットフォームに依らないので ubuntu だけで回します。
@@ -348,6 +366,14 @@ macOS と Windows を回すのは、そこでしかコンパイルされない�
 **`check` ジョブを matrix にしてはいけません。**（この判断の経緯は [ADR 0006](adr/0006-ci-on-three-platforms.md)） matrix にすると check run の名前が `Check and test (ubuntu-latest)` になり、ルールセットが必須にしている `Check and test` がどこにも現れなくなって、すべての pull request がマージ不能になります。プラットフォームを足すときは、別ジョブとして足してください。
 
 `main` には `Check and test` を必須にしたルールセットが掛かっているので、直接 push はできません。`main` からブランチを切り、`Closes #<issue>` を書いた pull request を出してください。
+
+### ブラウザ版の公開
+
+`.github/workflows/pages.yml` が、ブラウザ版（[ADR 0035](adr/0035-a-browser-build-of-the-real-core.md)）を組み立てて GitHub Pages に置きます。置くのは `main` に入ったときだけですが、**pull request でも組み立てて e2e まで走らせます**——`ci.yml` の `Check and test` は wasm を組まないので、ここが壊れたことがあちらには映りません。
+
+手元で同じものを作るには `make web-demo`（`script/build-web-demo`）です。`wasm-pack` が要ります。
+
+初回だけ、リポジトリの設定で Pages の Source を「GitHub Actions」にする必要があります。
 
 ## リリース
 

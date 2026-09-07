@@ -1,0 +1,112 @@
+/* ブラウザ版だけのもの（ADR 0035）。
+ *
+ * ここにあるのは、**OS が描いていたものをページが描くぶん**だけです。盤面の
+ * 見た目は `src/styles.css` のままで、ここに色を増やしません——使ってよい色は
+ * カスタムプロパティが全部、という決めごと（`docs/DESIGN.md`「画面の作り」）は
+ * こちらにも掛かります。
+ */
+
+.demo {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+/* `.app` は窓いっぱいに広がる前提（`height: 100%`）なので、メニューバーの
+ * ぶんを引いた残りに置き直す。 */
+.demo > .app {
+  flex: 1;
+  height: auto;
+  min-height: 0;
+}
+
+.menu-bar {
+  display: flex;
+  align-items: stretch;
+  flex: none;
+  gap: 2px;
+  padding: 0 6px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-sidebar);
+}
+
+.menu-bar-section {
+  position: relative;
+}
+
+.menu-bar-title {
+  padding: 6px 10px;
+  border: none;
+  border-radius: 4px;
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  cursor: default;
+}
+
+.menu-bar-title:hover,
+.menu-bar-title[aria-expanded="true"] {
+  background: var(--color-sidebar-accent);
+}
+
+.menu-bar-list {
+  position: absolute;
+  z-index: 20;
+  top: 100%;
+  left: 0;
+  min-width: 240px;
+  padding: 4px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-popover);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 18%);
+}
+
+.menu-bar-item {
+  display: flex;
+  gap: 24px;
+  align-items: baseline;
+  justify-content: space-between;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 4px;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  white-space: nowrap;
+  background: transparent;
+  cursor: default;
+}
+
+.menu-bar-item:hover:not(:disabled) {
+  background: var(--color-accent);
+}
+
+/* 使えない項目は消さずに灰色にする（`crates/app/src/menu.rs`）。 */
+.menu-bar-item:disabled {
+  color: var(--color-muted-foreground);
+}
+
+.menu-bar-accelerator {
+  color: var(--color-muted-foreground);
+}
+
+.menu-bar-separator {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--color-border);
+}
+
+/* ここがどこなのか、開いた人に 1 行で伝える。 */
+.menu-bar-note {
+  margin-left: auto;
+  align-self: center;
+  padding: 0 6px;
+  color: var(--color-muted-foreground);
+}
+
+.menu-bar-note a {
+  color: inherit;
+}

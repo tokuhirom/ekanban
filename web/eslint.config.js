@@ -11,7 +11,9 @@ import tseslint from "typescript-eslint";
 export default [
   // `dist/` はビルドの出力、`src/ipc/types/` は ts-rs が Rust から書き出した
   // もの。どちらも手で書かないので、直せない指摘を出しても意味がない。
-  { ignores: ["dist/**", "src/ipc/types/**"] },
+  // `wasm/` は wasm-pack が `crates/web` から書き出したもの。`dist-demo/` は
+  // ブラウザ版の出力（ADR 0035）。
+  { ignores: ["dist/**", "dist-demo/**", "wasm/**", "src/ipc/types/**"] },
 
   js.configs.recommended,
   ...tseslint.configs.strictTypeChecked,
@@ -28,10 +30,15 @@ export default [
     files: [
       "src/**/*.ts",
       "src/**/*.tsx",
+      "demo/**/*.ts",
+      "demo/**/*.tsx",
       "e2e/**/*.ts",
+      "e2e-demo/**/*.ts",
       "vite.config.ts",
+      "vite.demo.config.ts",
       "vitest.config.ts",
       "playwright.config.ts",
+      "playwright.demo.config.ts",
     ],
     languageOptions: {
       parserOptions: {
