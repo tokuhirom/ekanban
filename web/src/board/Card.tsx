@@ -54,6 +54,23 @@ export function dueBadge(
   }
 }
 
+/// カード表面に出すチェックリストの進み具合（#140）。
+///
+/// 項目が無ければ何も出しません。割合は丸めません——1/30 でも「少し進んで
+/// いる」ことが見えるほうが役に立ちます。
+export function checklistProgress(
+  items: readonly { checked: boolean }[],
+): { checked: number; total: number; ratio: number; done: boolean } | null {
+  if (items.length === 0) return null;
+  const checked = items.filter((item) => item.checked).length;
+  return {
+    checked,
+    total: items.length,
+    ratio: checked / items.length,
+    done: checked === items.length,
+  };
+}
+
 interface FaceProps {
   card: CardData;
   tags: readonly Tag[];
@@ -86,10 +103,7 @@ export function CardFace({
     due !== undefined && card.dueDate !== null
       ? dueBadge(due, card.dueDate, today)
       : null;
-  const checked = card.checklistItems.filter((item) => item.checked).length;
-  const progress = card.checklistItems
-    .map((item) => (item.checked ? "■" : "□"))
-    .join("");
+  const progress = checklistProgress(card.checklistItems);
 
   return (
     <>
@@ -99,9 +113,25 @@ export function CardFace({
           {badge.text}
         </div>
       )}
-      {card.checklistItems.length > 0 && (
-        <div className="card-checklist">
-          {progress} {checked}/{card.checklistItems.length}
+      {/* 進捗はバーと数で出します（#140）。記号を項目数だけ並べていたころは、
+          項目が増えるとカードの高さが変わっていました（`docs/DESIGN.md`
+          「ドラッグ＆ドロップ」）。バーの幅は項目数によらず一定です。
+          色だけに意味を持たせないので、終わったものには `✓` を付けます。 */}
+      {progress !== null && (
+        <div
+          className="card-checklist"
+          data-done={progress.done || undefined}
+          role="img"
+          aria-label={`チェックリスト ${String(progress.checked)}/${String(progress.total)}`}
+        >
+          <span className="card-progress">
+            <span
+              className="card-progress-fill"
+              style={{ width: `${String(progress.ratio * 100)}%` }}
+            />
+          </span>
+          {progress.done && "✓ "}
+          {progress.checked}/{progress.total}
         </div>
       )}
       {cardTags.length > 0 && (

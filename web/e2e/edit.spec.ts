@@ -560,6 +560,35 @@ test("チェックリストの項目を掴んで並べ替えられる", async ({
     .toEqual(["さん", "いち", "に"]);
 });
 
+/// 進捗のバーは幅が決まっているので、項目が増えてもカードの高さが変わらない
+/// （#140、`docs/DESIGN.md`「ドラッグ＆ドロップ」）。
+test("チェックリストの項目数が増えても、カードの高さが変わらない", async ({ page }) => {
+  await openBoard(page);
+  const card = page.locator(".column").first().locator(".card").first();
+  const before = await card.boundingBox();
+
+  // 1 項目のカードの高さを測る。ここまでは「進捗の 1 行が増えた」ぶんの差。
+  await card.dblclick();
+  await page.locator(".add-checklist-item").click();
+  await page.locator(".checklist-text").last().fill("項目 1");
+  await page.locator(".save-card").click();
+  await expect(page.locator(".card-checklist").first()).toContainText("0/1");
+  const withOne = await card.boundingBox();
+  expect(withOne?.height).toBeGreaterThan(before?.height ?? 0);
+
+  // ここから項目を 11 個足しても、高さは動かない。
+  await card.dblclick();
+  for (let index = 2; index <= 12; index += 1) {
+    await page.locator(".add-checklist-item").click();
+    await page.locator(".checklist-text").last().fill(`項目 ${String(index)}`);
+  }
+  await page.locator(".save-card").click();
+
+  await expect(page.locator(".card-checklist").first()).toContainText("0/12");
+  const withTwelve = await card.boundingBox();
+  expect(withTwelve?.height).toBe(withOne?.height);
+});
+
 // ---------------------------------------------------------------- タグ
 
 test("タグを作り、カードに付け、名前を変えて消せる", async ({ page }) => {
