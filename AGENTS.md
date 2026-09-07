@@ -62,6 +62,8 @@ Run formatting, Clippy, and all-feature tests before submitting changes.
 
 Work goes through pull requests. A repository ruleset requires the `Check and test` CI job to pass on `main`, so pushing to `main` directly no longer works. Branch off `main`, open a PR that says `Closes #<issue>`, and enable auto-merge with `gh pr merge <n> --squash --auto --delete-branch`; it merges once CI is green and deletes the branch.
 
+**A pull request you opened is yours until it merges.** Subscribe to it the moment you open it (`subscribe_pr_activity`, or `gh pr checks` / `gh pr view` when you have `gh`) and keep watching until it is merged or closed. A red check, a merge conflict, or a review comment is work to do now, not something to hand back: re-run the checks the failure names, push the fix, and say on the PR when a failure is not this branch's to fix. Do not report a PR as finished while it is red or conflicted.
+
 Write commit subjects in English, in the imperative mood, and explain in the body why the change was made rather than restating what it does.
 
 ## Planning and Documentation
