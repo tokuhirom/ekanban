@@ -17,6 +17,7 @@ import type { Tag } from "../ipc/types/Tag";
 import type { Snapshot } from "../ipc/types/Snapshot";
 import type { ThemePreference } from "../ipc/types/ThemePreference";
 import { applyTheme } from "../shell/theme";
+import { dayHasTurned } from "./day";
 
 /** カードの編集パネルが開いている対象。新しいカードはまだ ID を持たない。 */
 export type Editing = { kind: "new"; columnId: number } | { kind: "card"; cardId: number };
@@ -191,6 +192,42 @@ export function useBoardState(): BoardState {
   // クイックキャプチャが書いたとき、盤面はこちらが呼んでいないところで変わる
   // （`docs/DESIGN.md`「コマンドとイベント」）。**差し替えは `run` と同じ 1 本**で、届いた盤面をそのまま載せる。
   useEffect(() => ipc.onBoardChanged(setSnapshot), [ipc]);
+
+  // 開きっぱなしで日付をまたいだら、盤面を取り直す（#135）。
+  //
+  // `due_statuses` はコマンドを呼んだ時点の日付で Rust が出しているので、
+  // 何もしないと昨日の判定が出たままになります。期限は通知しない方針で、
+  // 気づく手がかりは画面の表示だけなので、古いままにはできません。
+  //
+  // **手元の時計は「変わったかどうか」にしか使いません。** 期限の判定は
+  // Rust に残したままで、ずれていたら聞き直すだけです。契機は分ごとの
+  // タイマーと、窓が見えたとき・前に出たときの 3 つ。
+  const today = snapshot?.today ?? null;
+  useEffect(() => {
+    if (today === null) return;
+    let cancelled = false;
+    const reread = () => {
+      if (!dayHasTurned(today, new Date())) return;
+      ipc
+        .snapshot()
+        .then((fresh) => {
+          if (!cancelled) setSnapshot(fresh);
+        })
+        .catch((error: unknown) => {
+          // 表示が古いままになるだけなので、ダイアログには上げない。
+          void ipc.logFrontendError(`failed to reread the board after midnight: ${String(error)}`);
+        });
+    };
+    const timer = setInterval(reread, 60_000);
+    document.addEventListener("visibilitychange", reread);
+    window.addEventListener("focus", reread);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", reread);
+      window.removeEventListener("focus", reread);
+    };
+  }, [ipc, today]);
 
   // 検索語が変わるたびに一致する ID を Rust に聞く。**同じ判定を
   // TypeScript にもう 1 つ持たない**（`docs/DESIGN.md`「絞り込みと検索」）。返るのは ID の配列だけなので、
