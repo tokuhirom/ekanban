@@ -14,12 +14,20 @@ import { archivedGroups } from "./archived";
 interface Props {
   board: Board;
   dueStatuses: ReadonlyMap<number, DueStatus>;
+  /** `due_statuses` を出した日。カード表面の期限表示がここから年を決める。 */
+  today: string;
   /** 絞り込みに一致したカード。`null` は「絞り込んでいない」。 */
   matched: ReadonlySet<number> | null;
   onRestore: (cardId: number) => void;
 }
 
-export function Archive({ board, dueStatuses, matched, onRestore }: Props) {
+export function Archive({
+  board,
+  dueStatuses,
+  today,
+  matched,
+  onRestore,
+}: Props) {
   const groups = archivedGroups(board.archivedCards, matched);
   const shown = groups.reduce((count, group) => count + group.cards.length, 0);
 
@@ -38,9 +46,18 @@ export function Archive({ board, dueStatuses, matched, onRestore }: Props) {
             <span className="archive-day-count">{group.cards.length} 件</span>
           </header>
           {group.cards.map((card) => (
-            <article className="card archived-card" key={card.id} data-card={card.id}>
+            <article
+              className="card archived-card"
+              key={card.id}
+              data-card={card.id}
+            >
               <div className="archived-card-body">
-                <CardFace card={card} tags={board.tags} due={dueStatuses.get(card.id)} />
+                <CardFace
+                  card={card}
+                  tags={board.tags}
+                  due={dueStatuses.get(card.id)}
+                  today={today}
+                />
               </div>
               <button
                 type="button"

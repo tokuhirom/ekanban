@@ -249,7 +249,7 @@ export function Board() {
     );
   }
 
-  const { boards } = state.snapshot;
+  const { boards, today } = state.snapshot;
   // ここから下では盤面がある。巻き上げられる関数宣言の中には絞り込みが
   // 届かないので、絞り込んだあとの束縛を 1 つ置く。
   const openBoard = board;
@@ -440,6 +440,7 @@ export function Board() {
           <Archive
             board={board}
             dueStatuses={state.dueStatuses}
+            today={today}
             matched={state.matched}
             onRestore={state.restoreCard}
           />
@@ -468,6 +469,7 @@ export function Board() {
                   column={column}
                   tags={board.tags}
                   dueStatuses={state.dueStatuses}
+                  today={today}
                   matched={state.matched}
                   activeTag={state.tagId}
                   onToggleTagFilter={state.toggleTag}
@@ -507,6 +509,7 @@ export function Board() {
                   card={draggingCard}
                   tags={board.tags}
                   due={state.dueStatuses.get(draggingCard.id)}
+                  today={today}
                 />
               </article>
             )}
