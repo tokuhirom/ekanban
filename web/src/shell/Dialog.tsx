@@ -10,7 +10,7 @@
 //
 // [ADR 0016]: ../../../docs/adr/0016-where-the-app-says-things.md
 
-import { useEffect, useId, useRef, type ReactNode } from "react";
+import { useId, useLayoutEffect, useRef, type ReactNode } from "react";
 
 import { isComposing } from "./ime";
 
@@ -25,7 +25,9 @@ function Shell({ title, onCancel, children }: ShellProps) {
   const titleId = useId();
   const box = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
+  // 描かれる前に移す。`useEffect` は描画のあとなので、ダイアログが出ていて
+  // 焦点はまだ外、という 1 フレームが空きます（`ShortcutDialog.tsx` と同じ）。
+  useLayoutEffect(() => {
     // 焦点を中へ移す。外に残ったままだと、盤面の割り当てがダイアログの裏で
     // 効いてしまう（`boardShortcutsDisabled` は入力欄しか見ない）。
     const focusable = box.current?.querySelector<HTMLElement>("input, button");
