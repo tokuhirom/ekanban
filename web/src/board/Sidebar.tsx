@@ -2,16 +2,49 @@ import { useState } from "react";
 
 import type { BoardSummary } from "../ipc/types/BoardSummary";
 import type { DueCounts } from "../ipc/types/DueCounts";
+import type { DueKind } from "./dueOrder";
 
 /// ボード一覧の 1 行に出す期限の件数。
 ///
 /// 色だけに意味を持たせないので、数の隣に何の件数かを書く。0 のものは出さない。
-function DueCountsView({ counts }: { counts: DueCounts }) {
+///
+/// **押せます**（#136）。押すとそのボードを開き、いちばん先頭の該当カードを
+/// 選んで見える位置まで送ります。件数だけ出して辿れないのは行き止まりでした。
+/// ボタンはボード名のボタンの外に置きます——ボタンの中にボタンは置けません。
+function DueCountsView({
+  counts,
+  onJump,
+}: {
+  counts: DueCounts;
+  onJump: (kind: DueKind) => void;
+}) {
   if (counts.overdue === 0 && counts.today === 0) return null;
   return (
     <div className="due-counts">
-      {counts.overdue > 0 && <span data-tone="danger">⚠ 期限切れ {counts.overdue}</span>}
-      {counts.today > 0 && <span data-tone="warning">◷ 今日 {counts.today}</span>}
+      {counts.overdue > 0 && (
+        <button
+          type="button"
+          className="ghost due-jump"
+          data-tone="danger"
+          onClick={() => {
+            onJump("overdue");
+          }}
+        >
+          ⚠ 期限切れ {counts.overdue}
+        </button>
+      )}
+      {counts.today > 0 && (
+        <button
+          type="button"
+          className="ghost due-jump"
+          data-tone="warning"
+          onClick={() => {
+            onJump("today");
+          }}
+        >
+          ◷ 今日 {counts.today}
+        </button>
+      )}
     </div>
   );
 }
@@ -32,6 +65,8 @@ interface Props {
   onCreate: () => void;
   onRename: (board: BoardSummary) => void;
   onDelete: (board: BoardSummary) => void;
+  /** 件数が押された。そのボードの、その状態の先頭カードへ送る（#136）。 */
+  onJumpDue: (boardId: number, kind: DueKind) => void;
 }
 
 export function Sidebar({
@@ -43,6 +78,7 @@ export function Sidebar({
   onCreate,
   onRename,
   onDelete,
+  onJumpDue,
 }: Props) {
   // どの行のメニューが開いているか。1 つだけ開く。
   const [menuFor, setMenuFor] = useState<number | null>(null);
@@ -99,10 +135,7 @@ export function Sidebar({
                     <RailMark counts={board.due} />
                   </span>
                 ) : (
-                  <>
-                    <span className="board-name">{board.name}</span>
-                    <DueCountsView counts={board.due} />
-                  </>
+                  <span className="board-name">{board.name}</span>
                 )}
               </button>
               {!collapsed && (
@@ -147,6 +180,15 @@ export function Sidebar({
                 </div>
               )}
             </div>
+            {/* 件数は行の外。ボタンの中にボタンは置けない（#136）。 */}
+            {!collapsed && (
+              <DueCountsView
+                counts={board.due}
+                onJump={(kind) => {
+                  onJumpDue(board.id, kind);
+                }}
+              />
+            )}
           </li>
         ))}
       </ul>

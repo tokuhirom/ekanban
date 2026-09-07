@@ -462,6 +462,24 @@ test("検索欄にいる間は、Backspace でカードが消えない", async (
   expect(await storedTitles()).toEqual(before);
 });
 
+// ---------------------------------------------------------------- 期限の件数から辿る
+
+/// ボード一覧の件数は押せる（#136）。押すと、その状態のいちばん先頭のカードが
+/// 選ばれる。絞り込みはしないので、ほかのカードは暗くならない。
+test("ボード一覧の「期限切れ」を押すと、そのカードが選ばれる", async ({ page }) => {
+  await openBoard(page);
+
+  const jump = page.getByRole("button", { name: /期限切れ/ });
+  await expect(jump).toBeVisible();
+  await jump.click();
+
+  const selected = page.locator(".card[data-selected]");
+  await expect(selected).toHaveCount(1);
+  await expect(selected.locator(".card-due")).toContainText("⚠");
+  // 減光は絞り込みのときだけ。件数から辿っても盤面の見え方は変わらない。
+  await expect(page.locator(".card[data-dimmed]")).toHaveCount(0);
+});
+
 // ---------------------------------------------------------------- チェックリスト
 
 test("チェックリストの項目を足し、並べ替え、チェックできる", async ({ page }) => {
