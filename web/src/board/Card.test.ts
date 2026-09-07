@@ -8,7 +8,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { dueBadge, shortDate } from "./Card";
+import { checklistProgress, dueBadge, shortDate } from "./Card";
 
 const today = "2026-09-06";
 
@@ -56,5 +56,40 @@ describe("dueBadge", () => {
       dueBadge({ kind: "upcoming", days: 8 }, due, today)?.text,
     ];
     expect(new Set(texts).size).toBe(texts.length);
+  });
+});
+
+describe("checklistProgress", () => {
+  function items(...checked: boolean[]) {
+    return checked.map((value) => ({ checked: value }));
+  }
+
+  it("チェックの数と割合を返す", () => {
+    expect(checklistProgress(items(false, true, false, false, true))).toEqual({
+      checked: 2,
+      total: 5,
+      ratio: 0.4,
+      done: false,
+    });
+  });
+
+  /// 1/30 でも「少し進んでいる」ことが見えるように、割合は丸めない。
+  it("割合を丸めない", () => {
+    const progress = checklistProgress(items(true, false, false, false));
+    expect(progress?.ratio).toBe(0.25);
+  });
+
+  it("全部終わっていれば印を出す", () => {
+    expect(checklistProgress(items(true, true))?.done).toBe(true);
+    expect(checklistProgress(items(false, false))).toEqual({
+      checked: 0,
+      total: 2,
+      ratio: 0,
+      done: false,
+    });
+  });
+
+  it("項目が無いカードには何も出さない", () => {
+    expect(checklistProgress([])).toBeNull();
   });
 });

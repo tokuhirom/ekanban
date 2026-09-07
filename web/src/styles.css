@@ -439,6 +439,34 @@ textarea {
   color: var(--color-muted-foreground);
 }
 
+/* 進捗はバーと数で（#140）。**幅は項目数によらず一定**にして、カードの高さも
+ * 幅も動かさない（`docs/DESIGN.md`「ドラッグ＆ドロップ」）。 */
+.card-checklist {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.card-progress {
+  flex: none;
+  width: 48px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--color-border);
+  overflow: hidden;
+}
+
+.card-progress-fill {
+  display: block;
+  height: 100%;
+  background: var(--color-info);
+}
+
+/* 終わったものは落ち着かせる。色だけに意味を持たせないので、印は文言側の `✓`。 */
+.card-checklist[data-done] .card-progress-fill {
+  background: var(--color-muted-foreground);
+}
+
 /* 期限は 1 行に固定する（#133）。折り返すとカードの高さが変わり、掴んでいる
  * 間に周りが動く（`docs/DESIGN.md`「ドラッグ＆ドロップ」）。 */
 .card-due {
