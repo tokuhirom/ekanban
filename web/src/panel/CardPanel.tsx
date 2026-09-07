@@ -37,7 +37,6 @@ import {
   emptyDraft,
   moveChecklistItem,
   newChecklistItem,
-  quickDueDates,
   reorderChecklist,
   setChecklistText,
   toggleChecklistItem,
@@ -50,8 +49,6 @@ import { DEFAULT_TAG_COLOR, findTagByName, suggestTags } from "./tags";
 interface Props {
   board: Board;
   editing: Editing;
-  /** `due_statuses` を出した日。期限の近道はここから数える（ブラウザの時計ではなく）。 */
-  today: string;
   /** 説明の中のリンクを開く修飾キーを決めるのに使う（ADR 0002）。 */
   platform: Platform;
   run: (call: () => Promise<Snapshot>) => Promise<AppError | null>;
@@ -64,7 +61,6 @@ interface Props {
 export function CardPanel({
   board,
   editing,
-  today,
   platform,
   run,
   onClose,
@@ -277,41 +273,35 @@ export function CardPanel({
             操作を確かめる対象を増やさないため。`value` の形は `""` か
             `"YYYY-MM-DD"` で、素の欄だったときと変わりません。読めるか
             どうかの判定は Rust に 1 つだけ置いたままにします。 */}
-        <input
-          id="card-due-date"
-          type="date"
-          className="field-input card-due-input"
-          value={draft.dueDate}
-          onChange={(event) => {
-            setDraft({ ...draft, dueDate: event.target.value });
-          }}
-        />
-        {/* `type="date"` は placeholder を出さないので、案内は欄の脇に置く。 */}
-        <p className="field-note">空欄で期限なし</p>
-        <FieldFailure failure={failed} field="dueDate" />
-        <div className="button-row">
-          {quickDueDates(today).map((quick) => (
+        {/* 外す × は欄に重ねず右へ並べます。`type="date"` のカレンダーアイコンが
+            右端に出る位置は webview ごとに違うので、重ねると押せる場所が
+            エンジンによって変わります。期限が入っているときだけ出すので、
+            期限なしのカードでは欄が入力 1 つになります（#128）。 */}
+        <div className="due-field">
+          <input
+            id="card-due-date"
+            type="date"
+            className="field-input card-due-input"
+            value={draft.dueDate}
+            onChange={(event) => {
+              setDraft({ ...draft, dueDate: event.target.value });
+            }}
+          />
+          {draft.dueDate !== "" && (
             <button
-              key={quick.label}
               type="button"
-              className="secondary"
+              className="ghost due-clear"
+              aria-label="期限を外す"
+              title="期限を外す"
               onClick={() => {
-                setDraft({ ...draft, dueDate: quick.date });
+                setDraft({ ...draft, dueDate: "" });
               }}
             >
-              {quick.label}
+              ×
             </button>
-          ))}
-          <button
-            type="button"
-            className="secondary"
-            onClick={() => {
-              setDraft({ ...draft, dueDate: "" });
-            }}
-          >
-            クリア
-          </button>
+          )}
         </div>
+        <FieldFailure failure={failed} field="dueDate" />
 
         <span className="field-label">チェックリスト</span>
         <FieldFailure failure={failed} field="checklistItem" />

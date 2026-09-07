@@ -534,7 +534,6 @@ export function Board() {
           }
           board={board}
           editing={state.editing}
-          today={state.snapshot.today}
           platform={platform}
           run={run}
           onClose={state.closePanel}

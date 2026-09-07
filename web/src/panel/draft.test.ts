@@ -11,7 +11,6 @@ import {
   emptyDraft,
   moveChecklistItem,
   newChecklistItem,
-  quickDueDates,
   reorderChecklist,
   setChecklistText,
   toggleChecklistItem,
@@ -138,33 +137,5 @@ describe("下書きの鍵", () => {
       { id: 2, text: "い", checked: false },
       { id: null, text: "", checked: false },
     ]);
-  });
-});
-
-describe("quickDueDates", () => {
-  /// 2026-09-06 は日曜。週の起点は月曜なので、今週末は次の土曜、来週は翌日の月曜。
-  it("日曜からは、今週末が次の土曜で、来週が翌日の月曜", () => {
-    expect(quickDueDates("2026-09-06")).toEqual([
-      { label: "今日", date: "2026-09-06" },
-      { label: "明日", date: "2026-09-07" },
-      { label: "今週末", date: "2026-09-12" },
-      { label: "来週", date: "2026-09-07" },
-    ]);
-  });
-
-  it("土曜の「今週末」はその日", () => {
-    expect(quickDueDates("2026-09-05")[2]).toEqual({ label: "今週末", date: "2026-09-05" });
-  });
-
-  it("月曜からは、来週が 7 日後", () => {
-    expect(quickDueDates("2026-09-07")[3]).toEqual({ label: "来週", date: "2026-09-14" });
-  });
-
-  it("月をまたいでも日付が繰り上がる", () => {
-    expect(quickDueDates("2026-09-30")[1]).toEqual({ label: "明日", date: "2026-10-01" });
-  });
-
-  it("読めない日付には近道を出さない", () => {
-    expect(quickDueDates("きょう")).toEqual([]);
   });
 });

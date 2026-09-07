@@ -271,29 +271,6 @@ test("選んだカードは Enter で開き、Escape で閉じる", async ({ pag
 
 // ---------------------------------------------------------------- 期限
 
-test("期限の近道を押すと、その日付が入って保存される", async ({ page }) => {
-  await openBoard(page);
-  await openFirstCard(page);
-  const cardId = Number(
-    await page.locator(".column").first().locator(".card").first().getAttribute("data-card"),
-  );
-
-  await page.getByRole("button", { name: "今日", exact: true }).click();
-  // 「今日」は Rust が返した `Snapshot.today` から数える（ブラウザの時計では
-  // なく）。ここでもハーネスに聞いて突き合わせる。
-  const today = ((await (await invoke("snapshot")).json()) as Snapshot).today;
-  await expect(page.locator(".card-due-input")).toHaveValue(today);
-
-  await page.locator(".save-card").click();
-  await expect
-    .poll(async () =>
-      (await storedBoard()).columns
-        .flatMap((column) => column.cards)
-        .find((card) => card.id === cardId)?.dueDate,
-    )
-    .toBe(today);
-});
-
 /// 期限はカレンダーから選ぶ欄（#120）。`type="date"` なので、打ち込める形は
 /// `"YYYY-MM-DD"` だけ。ポップアップそのものは OS が出すので、ここでは見られない。
 test("カレンダーの欄に入れた日付が、そのまま保存される", async ({ page }) => {
@@ -316,7 +293,18 @@ test("カレンダーの欄に入れた日付が、そのまま保存される",
     .toBe("2026-12-31");
 });
 
-test("「クリア」を押すと期限が外れる", async ({ page }) => {
+/// 外す × は、期限が入っているときだけ出す（#128）。新しいカードは期限が
+/// 空なので、開いた直後は出ていない。
+test("期限が空のうちは、外す × を出さない", async ({ page }) => {
+  await openBoard(page);
+  await page.locator(".column").first().locator(".add-card").click();
+
+  await expect(page.getByRole("button", { name: "期限を外す" })).toHaveCount(0);
+  await page.locator(".card-due-input").fill("2026-12-31");
+  await expect(page.getByRole("button", { name: "期限を外す" })).toBeVisible();
+});
+
+test("× を押すと期限が外れる", async ({ page }) => {
   await openBoard(page);
   await openFirstCard(page);
   const cardId = Number(
@@ -324,7 +312,7 @@ test("「クリア」を押すと期限が外れる", async ({ page }) => {
   );
 
   await page.locator(".card-due-input").fill("2026-12-31");
-  await page.getByRole("button", { name: "クリア", exact: true }).click();
+  await page.getByRole("button", { name: "期限を外す" }).click();
   await expect(page.locator(".card-due-input")).toHaveValue("");
   await page.locator(".save-card").click();
 
