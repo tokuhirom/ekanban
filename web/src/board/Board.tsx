@@ -25,6 +25,7 @@ import { TagPanel } from "../panel/TagPanel";
 import { useAppActions, useAppActionSource } from "../shell/actions";
 import { AlertDialog, ConfirmDialog, PromptDialog } from "../shell/Dialog";
 import { useFileActions } from "../shell/files";
+import { isComposing } from "../shell/ime";
 import { targetOf, undoIntent } from "../shell/keys";
 import { ShortcutDialog } from "../shell/ShortcutDialog";
 import { useBoardState } from "../state/board";
@@ -378,9 +379,10 @@ export function Board() {
               state.setSearch(event.target.value);
             }}
             // 1 行の欄なので `Escape` で取り消す（`docs/DESIGN.md`「画面の作り」）。
-            // 盤面の割り当ては入力欄では効かないので、ここで受ける。
+            // 盤面の割り当ては入力欄では効かないので、ここで受ける。変換を
+            // 取り消す Escape では消さない（`shell/ime.ts`）。
             onKeyDown={(event) => {
-              if (event.key !== "Escape") return;
+              if (event.key !== "Escape" || isComposing(event.nativeEvent)) return;
               event.preventDefault();
               state.setSearch("");
             }}
@@ -685,7 +687,7 @@ function AddColumn({
     <div
       className="add-column-placeholder"
       onKeyDown={(event) => {
-        if (event.nativeEvent.isComposing) return;
+        if (isComposing(event.nativeEvent)) return;
         // 1 行の欄なので Enter で確定し、Escape で取り消す（`docs/DESIGN.md`）。
         if (event.key === "Enter") {
           event.preventDefault();

@@ -14,6 +14,7 @@ import { useEffect, useRef, useState } from "react";
 import { useIpc } from "../ipc";
 import { describeFailure } from "../ipc/error";
 import type { KeyPress } from "../ipc/types/KeyPress";
+import { isComposing } from "./ime";
 
 interface Props {
   /** いま保存されている割り当て。無ければ `null`。 */
@@ -58,7 +59,7 @@ export function ShortcutDialog({ current, unavailable, onChanged, onClose }: Pro
         tabIndex={-1}
         ref={box}
         onKeyDown={(event) => {
-          if (event.nativeEvent.isComposing) return;
+          if (isComposing(event.nativeEvent)) return;
           // 修飾キーなしの Escape は「やめる」。割り当てにはしない。
           if (event.key === "Escape" && !(event.ctrlKey || event.altKey || event.metaKey)) {
             event.stopPropagation();

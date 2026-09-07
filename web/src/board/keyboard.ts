@@ -10,6 +10,7 @@
 
 import type { Board } from "../ipc/types/Board";
 import type { Platform } from "../ipc/types/Platform";
+import { isComposing } from "../shell/ime";
 import { locateCard, type MoveCardArgs } from "./dnd";
 
 export type Direction = "up" | "down" | "left" | "right";
@@ -80,10 +81,10 @@ export function keyboardMove(
 
 /// 入力欄にフォーカスがある間はボードの割り当てを無効にする（`docs/DESIGN.md`）。
 ///
-/// IME の変換中に矢印を取ると、変換候補が選べなくなります。`isComposing` を
-/// 見るのは、変換中は要素の種類に関わらず渡さないためです。
+/// IME の変換中に矢印を取ると、変換候補が選べなくなります。変換中かを見るのは、
+/// 変換中は要素の種類に関わらず渡さないためです（`shell/ime.ts`）。
 export function boardShortcutsDisabled(event: KeyboardEvent): boolean {
-  if (event.isComposing) return true;
+  if (isComposing(event)) return true;
   const target = event.target;
   if (!(target instanceof HTMLElement)) return false;
   if (target.isContentEditable) return true;

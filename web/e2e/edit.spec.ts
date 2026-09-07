@@ -42,6 +42,21 @@ async function openFirstCard(page: Page) {
   await expect(page.locator(".card-panel")).toBeVisible();
 }
 
+/// IME の変換に伴う `keydown` を流す。
+///
+/// Playwright は本物の IME を打てないので、**WebKit が変換を確定するときに
+/// 寄こす形**をそのまま作る——`compositionend` が先に出ているので
+/// `isComposing` は `false`、変換の名残りは `keyCode` の 229 だけ（#124、
+/// `web/src/shell/ime.ts`）。`KeyboardEventInit` の `keyCode` は非推奨なので、
+/// 作ってから生やす。
+async function pressWhileComposing(field: Locator, key: string) {
+  await field.evaluate((element, pressed) => {
+    const event = new KeyboardEvent("keydown", { key: pressed, bubbles: true, cancelable: true });
+    Object.defineProperty(event, "keyCode", { get: () => 229 });
+    element.dispatchEvent(event);
+  }, key);
+}
+
 /// 掴んで運ぶ。**HTML5 の drag events は使わない**ので、ポインタを自分で動かす
 /// （ADR 0020）。1 回で飛ばすと掴んだと判定されないため、刻んで動かす。
 async function dragTo(page: Page, from: Locator, to: Locator) {
@@ -115,6 +130,27 @@ test("タイトル欄で Enter を押すと、そのまま保存される", asyn
 
   await expect(page.locator(".card-panel")).toBeHidden();
   await expect.poll(storedTitles).toContain("Enter で保存");
+});
+
+test("タイトル欄で変換を確定しても、保存されない", async ({ page }) => {
+  await openBoard(page);
+  await page.locator(".column").first().locator(".add-card").click();
+
+  const title = page.locator(".card-title-input");
+  await title.fill("変換の途中");
+
+  // 変換を確定しただけ。保存でもなければ、パネルを閉じる操作でもない。
+  await pressWhileComposing(title, "Enter");
+  await expect(page.locator(".card-panel")).toBeVisible();
+  // 変換の取り消しでパネルごと消えるのも、打ちかけを捨てることになる。
+  await pressWhileComposing(title, "Escape");
+  await expect(page.locator(".card-panel")).toBeVisible();
+  expect(await storedTitles()).not.toContain("変換の途中");
+
+  // 確定したあとに押した Enter は、いつもどおり保存する。
+  await title.press("Enter");
+  await expect(page.locator(".card-panel")).toBeHidden();
+  await expect.poll(storedTitles).toContain("変換の途中");
 });
 
 test("足しかけたカードを取り下げると、跡が残らない", async ({ page }) => {

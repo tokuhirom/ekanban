@@ -9,6 +9,7 @@
 // ためで、メニューからの取り消しも同じ判定を通ります（`board/Board.tsx`）。
 
 import type { Platform } from "../ipc/types/Platform";
+import { isComposing } from "./ime";
 
 export type UndoKind = "undo" | "redo";
 /** 取り消しの行き先。`field` は「webview に任せる」という意味。 */
@@ -25,7 +26,7 @@ export interface UndoIntent {
 /// 受け取ります**（`StartupState.platform`）——`navigator.userAgent` は webview が
 /// 書き換えられる文字列で、取り違えると割り当てが丸ごと効きません。
 export function undoIntent(event: KeyboardEvent, platform: Platform): UndoIntent | null {
-  if (event.isComposing) return null;
+  if (isComposing(event)) return null;
   if (event.key.toLowerCase() !== "z") return null;
   const isMac = platform === "macos";
   const secondary = isMac ? event.metaKey : event.ctrlKey;
