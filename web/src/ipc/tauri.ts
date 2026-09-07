@@ -11,6 +11,7 @@ import { APP_ACTION, BOARD_CHANGED } from "./events";
 import type { Ipc } from "./index";
 import type { AppAction } from "./types/AppAction";
 import type { CaptureTarget } from "./types/CaptureTarget";
+import type { QuickCaptureStatus } from "./types/QuickCaptureStatus";
 import type { Snapshot } from "./types/Snapshot";
 import type { StartupState } from "./types/StartupState";
 import type { UrlSpan } from "./types/UrlSpan";
@@ -96,7 +97,10 @@ export const tauriIpc: Ipc = {
   captureTarget: () => invoke<CaptureTarget | null>("capture_target"),
   setCaptureColumn: (columnId) => invoke<Snapshot>("set_capture_column", { columnId }),
   captureCard: (title) => invoke<Snapshot>("capture_card", { title }),
-  quickCaptureSupport: () => invoke<string | null>("quick_capture_support"),
+  quickCaptureStatus: () => invoke<QuickCaptureStatus>("quick_capture_status"),
+  setMenuAcceleratorsActive: async (active) => {
+    await invoke("set_menu_accelerators_active", { active });
+  },
   setQuickCaptureShortcut: (press) =>
     invoke<string | null>("set_quick_capture_shortcut_from_key", { press }),
   closeCaptureWindow: async (focusBoard) => {

@@ -18,6 +18,7 @@
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::path::PathBuf;
 
+use ekanban_app::capture::QuickCaptureStatus;
 use ekanban_app::commands::{self, ExportFormat};
 use ekanban_app::error::{AppError, ErrorKind};
 use ekanban_app::shortcut::{KeyPress, Shortcut};
@@ -449,7 +450,10 @@ fn invoke(command: &str, args: Value, state: &AppState) -> Result<Value, AppErro
         // ブラウザにグローバルホットキーはありません。登録できるかどうかは
         // 本物の窓の話なので、ここでは「使える」ことにして、割り当ての読み取りと
         // 保存だけを本物と同じ経路に通します。
-        "quick_capture_support" => ok(Option::<String>::None),
+        "quick_capture_status" => ok(QuickCaptureStatus {
+            unavailable: None,
+            failure: None,
+        }),
         "set_quick_capture_shortcut" => {
             let press = read::<Press>(args)?.press;
             let stored = match press {

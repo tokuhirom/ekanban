@@ -9,9 +9,13 @@
 //!
 //! [ADR 0012]: ../../../docs/adr/0012-focus-after-quick-capture-on-linux.md
 
+use std::sync::Mutex;
+
 use ekanban_core::diagnostics;
+use serde::Serialize;
 use tauri::{AppHandle, Manager as _, Runtime, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_global_shortcut::GlobalShortcutExt as _;
+use ts_rs::TS;
 
 use crate::commands;
 use crate::error::{AppError, ErrorKind};
@@ -22,6 +26,52 @@ use crate::state::AppState;
 /// キャプチャの窓のラベル。
 pub(crate) const CAPTURE_WINDOW: &str = "capture";
 
+/// 保存されている割り当てが、いま効いているかどうか。
+///
+/// **登録に失敗した理由を捨てません**（`docs/DESIGN.md`「クイックキャプチャ」、
+/// [ADR 0029]）。保存されているだけで登録できていない割り当ては、設定を見ても
+/// 効いているようにしか見えないので、押しても何も起きない理由が誰にも分かり
+/// ません。ここに残して、割り当てのダイアログがその場で読みます。
+///
+/// [ADR 0029]: ../../../docs/adr/0029-capturing-a-shortcut-needs-the-menu-out-of-the-way.md
+#[derive(Default)]
+pub struct Registration(Mutex<Option<String>>);
+
+impl Registration {
+    fn set(&self, failure: Option<String>) {
+        *self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = failure;
+    }
+
+    fn failure(&self) -> Option<String> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+}
+
+/// 割り当てのダイアログが開くときに読むもの。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct QuickCaptureStatus {
+    /// この環境でグローバルホットキーを使えないなら、その理由。使えるなら `null`。
+    pub unavailable: Option<String>,
+    /// 保存されているのに登録できていない理由。効いているなら `null`。
+    pub failure: Option<String>,
+}
+
+/// いまの状態を読む。
+pub(crate) fn status(registration: &Registration) -> QuickCaptureStatus {
+    QuickCaptureStatus {
+        unavailable: platform_support().err(),
+        failure: registration.failure(),
+    }
+}
+
 /// 起動のときに、保存されている割り当てを登録する。
 ///
 /// 登録できなかった理由は捨てずに返します。**起動のたび黙って失敗する状態を
@@ -29,21 +79,20 @@ pub(crate) const CAPTURE_WINDOW: &str = "capture";
 /// では通るかもしれないからです。
 pub(crate) fn register_saved<R: Runtime>(
     app: &AppHandle<R>,
+    registration: &Registration,
     saved: Option<&str>,
 ) -> Option<String> {
-    let saved = saved?;
-    let shortcut = match Shortcut::parse(saved) {
-        Ok(shortcut) => shortcut,
-        Err(error) => {
-            return Some(format!(
-                "保存されているクイックキャプチャの割り当てを読み取れませんでした: {error}"
-            ))
-        }
-    };
-    register(app, &shortcut).err()
+    let failure = saved.and_then(|saved| match Shortcut::parse(saved) {
+        Ok(shortcut) => register(app, &shortcut).err(),
+        Err(error) => Some(format!(
+            "保存されている割り当て「{saved}」を読み取れませんでした: {error}"
+        )),
+    });
+    registration.set(failure.clone());
+    failure
 }
 
-/// 割り当てを登録する。前の割り当ては、新しいほうが通ってから外す。
+/// 割り当てを登録する。前の割り当ては、呼ぶ側が先に外しておく。
 fn register<R: Runtime>(app: &AppHandle<R>, shortcut: &Shortcut) -> Result<(), String> {
     // 登録の戻り値は当てにならない環境がある（X11）。環境そのものを先に見る。
     platform_support()?;
@@ -67,6 +116,7 @@ fn register<R: Runtime>(app: &AppHandle<R>, shortcut: &Shortcut) -> Result<(), S
 pub(crate) fn set<R: Runtime>(
     app: &AppHandle<R>,
     state: &AppState,
+    registration: &Registration,
     press: Option<KeyPress>,
 ) -> Result<Option<String>, AppError> {
     let shortcut = match press {
@@ -80,23 +130,30 @@ pub(crate) fn set<R: Runtime>(
         None => None,
     };
 
+    let previous = commands::quick_capture_shortcut(state)?;
+
     // 前のものを外してから登録する。同じキーを 2 つ登録できない環境がある。
     if let Err(error) = app.global_shortcut().unregister_all() {
         diagnostics::log(&format!("failed to release the old shortcut: {error}"));
     }
 
     if let Some(shortcut) = shortcut.as_ref() {
-        register(app, shortcut).map_err(|reason| {
-            AppError::new(
+        if let Err(reason) = register(app, shortcut) {
+            // **外したものを戻します。** 設定は変更前のまま残るので（`docs/DESIGN.md`
+            // 「クイックキャプチャ」）、戻さなければ、保存されているのに次の起動まで
+            // 効かない割り当てができます。
+            register_saved(app, registration, previous.as_deref());
+            return Err(AppError::new(
                 ErrorKind::Shortcut,
                 "ショートカットを登録できませんでした",
                 reason,
-            )
-        })?;
+            ));
+        }
     }
 
     let stored = shortcut.as_ref().map(Shortcut::to_string);
     commands::set_quick_capture_shortcut(state, stored.as_deref())?;
+    registration.set(None);
     Ok(stored)
 }
 

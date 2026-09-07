@@ -18,6 +18,7 @@ import { useIpc } from "../ipc";
 import type { AppError } from "../ipc/types/AppError";
 import type { BoardSummary } from "../ipc/types/BoardSummary";
 import type { Column as ColumnData } from "../ipc/types/Column";
+import type { QuickCaptureStatus } from "../ipc/types/QuickCaptureStatus";
 import type { Snapshot } from "../ipc/types/Snapshot";
 import { Archive } from "../panel/Archive";
 import { CardPanel } from "../panel/CardPanel";
@@ -92,7 +93,7 @@ export function Board() {
   const [about, setAbout] = useState(false);
   // 割り当てのダイアログ。使えない環境なら理由を持って開く（押せる項目は
   // メニュー側で灰色になっているが、そこを通らない道もある）。
-  const [shortcutDialog, setShortcutDialog] = useState<{ unavailable: string | null } | null>(null);
+  const [shortcutDialog, setShortcutDialog] = useState<QuickCaptureStatus | null>(null);
   const searchInput = useRef<HTMLInputElement>(null);
   const files = useFileActions(state.notify);
 
@@ -146,12 +147,12 @@ export function Board() {
     },
     setQuickCaptureShortcut: () => {
       void ipc
-        .quickCaptureSupport()
-        .then((unavailable) => {
-          setShortcutDialog({ unavailable });
+        .quickCaptureStatus()
+        .then((status) => {
+          setShortcutDialog(status);
         })
         .catch(() => {
-          setShortcutDialog({ unavailable: null });
+          setShortcutDialog({ unavailable: null, failure: null });
         });
     },
     backupDatabase: files.backupDatabase,
@@ -626,6 +627,8 @@ export function Board() {
         <ShortcutDialog
           current={state.quickCaptureShortcut}
           unavailable={shortcutDialog.unavailable}
+          failure={shortcutDialog.failure}
+          platform={platform}
           onChanged={state.setQuickCaptureShortcut}
           onClose={() => {
             setShortcutDialog(null);

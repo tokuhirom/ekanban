@@ -11,6 +11,7 @@ import type { ChecklistItemDraft } from "./types/ChecklistItemDraft";
 import type { ExportFormat } from "./types/ExportFormat";
 import type { KeyPress } from "./types/KeyPress";
 import type { FilterState } from "./types/FilterState";
+import type { QuickCaptureStatus } from "./types/QuickCaptureStatus";
 import type { Snapshot } from "./types/Snapshot";
 import type { StartupState } from "./types/StartupState";
 import type { ThemePreference } from "./types/ThemePreference";
@@ -102,8 +103,15 @@ export interface Ipc {
   setCaptureColumn(columnId: number | null): Promise<Snapshot>;
   /** 1 行のキャプチャ。ボードと同じ保存経路に乗る（`docs/DESIGN.md`「クイックキャプチャ」）。 */
   captureCard(title: string): Promise<Snapshot>;
-  /** 割り当てを使えない環境なら、その理由。使えるなら `null`。 */
-  quickCaptureSupport(): Promise<string | null>;
+  /** 割り当てのダイアログが開くときに読むもの（`docs/DESIGN.md`「クイックキャプチャ」）。 */
+  quickCaptureStatus(): Promise<QuickCaptureStatus>;
+  /**
+   * メニューに付いているキーの割り当てを、付け外しする。
+   *
+   * 割り当てを捕まえている間だけ外します。付いたままだと、メニューの
+   * アクセラレータが webview より先に押されたキーを取ってしまいます。
+   */
+  setMenuAcceleratorsActive(active: boolean): Promise<void>;
   /** 押されたキーを割り当てにする。`null` で解除。保存された形が返る。 */
   setQuickCaptureShortcut(press: KeyPress | null): Promise<string | null>;
   /** キャプチャの窓を閉じる。`focusBoard` でボードを前に出す（ADR 0012）。 */
