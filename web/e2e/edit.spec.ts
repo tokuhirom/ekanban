@@ -273,14 +273,14 @@ test("選んだカードは Enter で開き、Escape で閉じる", async ({ pag
 
 /// 期限はカレンダーから選ぶ欄（#120）。`type="date"` なので、打ち込める形は
 /// `"YYYY-MM-DD"` だけ。ポップアップそのものは OS が出すので、ここでは見られない。
-test("カレンダーの欄に入れた日付が、そのまま保存される", async ({ page }) => {
+test("欄に打った日付が、そのまま保存される", async ({ page }) => {
   await openBoard(page);
   await openFirstCard(page);
   const cardId = Number(
     await page.locator(".column").first().locator(".card").first().getAttribute("data-card"),
   );
 
-  await expect(page.locator(".card-due-input")).toHaveAttribute("type", "date");
+  await expect(page.locator(".card-due-input")).toHaveAttribute("type", "text");
   await page.locator(".card-due-input").fill("2026-12-31");
   await page.locator(".save-card").click();
 
@@ -291,6 +291,59 @@ test("カレンダーの欄に入れた日付が、そのまま保存される",
         .find((card) => card.id === cardId)?.dueDate,
     )
     .toBe("2026-12-31");
+});
+
+/// 期限は文字で打てる（#134、ADR 0031）。読み方は Rust に 1 つだけなので、
+/// ここで確かめるのは「打った文字が、その日付として SQLite に届くこと」。
+test("「明日」と打つと、翌日の期限が保存される", async ({ page }) => {
+  await openBoard(page);
+  await openFirstCard(page);
+  const cardId = Number(
+    await page.locator(".column").first().locator(".card").first().getAttribute("data-card"),
+  );
+
+  const today = ((await (await invoke("snapshot")).json()) as Snapshot).today;
+  const tomorrow = new Date(Date.parse(`${today}T00:00:00Z`) + 86_400_000)
+    .toISOString()
+    .slice(0, 10);
+
+  await page.locator(".card-due-input").fill("明日");
+  // 打った文字がどう読まれたかは、確定する前に欄の下に出る。
+  await expect(page.locator(".due-preview")).toContainText(tomorrow);
+
+  await page.locator(".save-card").click();
+  await expect
+    .poll(async () =>
+      (await storedBoard()).columns
+        .flatMap((column) => column.cards)
+        .find((card) => card.id === cardId)?.dueDate,
+    )
+    .toBe(tomorrow);
+});
+
+test("読めない期限は、欄の脇で断られて保存されない", async ({ page }) => {
+  await openBoard(page);
+  await openFirstCard(page);
+  const cardId = Number(
+    await page.locator(".column").first().locator(".card").first().getAttribute("data-card"),
+  );
+  const before = (await storedBoard()).columns
+    .flatMap((column) => column.cards)
+    .find((each) => each.id === cardId)?.dueDate;
+
+  await page.locator(".card-due-input").fill("きのう");
+  // 読めない間は、読み下しを出さない。
+  await expect(page.locator(".due-preview")).toHaveCount(0);
+
+  await page.locator(".save-card").click();
+  await expect(page.locator(".field-error")).toContainText("日付として読めません");
+  // 断られた値は打ち直せるように残り、パネルも開いたまま。
+  await expect(page.locator(".card-due-input")).toHaveValue("きのう");
+  expect(
+    (await storedBoard()).columns
+      .flatMap((column) => column.cards)
+      .find((each) => each.id === cardId)?.dueDate,
+  ).toBe(before);
 });
 
 /// 外す × は、期限が入っているときだけ出す（#128）。新しいカードは期限が

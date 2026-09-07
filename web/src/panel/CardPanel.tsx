@@ -11,16 +11,27 @@
 // **無題のカードが盤面に現れる経路がありません**——足してから引っこめる形を
 // 取らないので、取り下げが履歴に残ることもありません。
 
-import { DndContext, PointerSensor, closestCenter, useSensor, useSensors } from "@dnd-kit/core";
+import {
+  DndContext,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
 import type { DragEndEvent } from "@dnd-kit/core";
-import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import {
+  SortableContext,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { useIpc } from "../ipc";
 import type { AppError } from "../ipc/types/AppError";
 import type { Board } from "../ipc/types/Board";
 import type { Card } from "../ipc/types/Card";
+import type { DueDatePreview } from "../ipc/types/DueDatePreview";
 import type { Field } from "../ipc/types/Field";
 import type { Platform } from "../ipc/types/Platform";
 import type { Snapshot } from "../ipc/types/Snapshot";
@@ -77,6 +88,9 @@ export function CardPanel({
     card === null ? emptyDraft() : draftOf(card),
   );
   const [failed, setFailed] = useState<AppError | null>(null);
+  // 打った文字を Rust がどう読んだか（#134）。読み方は向こうに 1 つだけなので、
+  // 往復するのは文字列と、読めた 1 日付だけです（`Description` と同じ考え方）。
+  const [duePreview, setDuePreview] = useState<DueDatePreview | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   // 押しただけでドラッグが始まらないよう、盤面と同じだけ動かしてから掴んだと
   // 判定します。行には入力欄があるので、これが無いと文字を選ぶだけの操作が
@@ -86,6 +100,22 @@ export function CardPanel({
   );
 
   const savable = draftIsSavable(draft);
+
+  useEffect(() => {
+    let cancelled = false;
+    ipc
+      .dueDatePreview(draft.dueDate)
+      .then((read) => {
+        if (!cancelled) setDuePreview(read);
+      })
+      .catch(() => {
+        // 読めた日付が出ないだけなので、打つ手を止めない。
+        if (!cancelled) setDuePreview(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [ipc, draft.dueDate]);
 
   // メニューの「保存」「編集をキャンセル」は、開いているパネルのものです。
   // **下書きを持っているのはここ**なので、受けるのもここ（`shell/actions.ts`）。
@@ -137,14 +167,19 @@ export function CardPanel({
     setFailed(failure);
     const tagId = created.id;
     if (failure !== null || tagId === null) return;
-    setDraft((current) => ({ ...current, tagIds: toggleTag(current.tagIds, tagId) }));
+    setDraft((current) => ({
+      ...current,
+      tagIds: toggleTag(current.tagIds, tagId),
+    }));
   }
 
   const columnName =
     editing.kind === "new"
-      ? (board.columns.find((column) => column.id === editing.columnId)?.name ?? "カラム不明")
-      : (board.columns.find((column) => column.cards.some((each) => each.id === editing.cardId))
-          ?.name ?? "カラム不明");
+      ? (board.columns.find((column) => column.id === editing.columnId)?.name ??
+        "カラム不明")
+      : (board.columns.find((column) =>
+          column.cards.some((each) => each.id === editing.cardId),
+        )?.name ?? "カラム不明");
 
   return (
     <aside
@@ -184,7 +219,12 @@ export function CardPanel({
               ⋮
             </button>
           )}
-          <button type="button" className="ghost" aria-label="閉じる" onClick={onClose}>
+          <button
+            type="button"
+            className="ghost"
+            aria-label="閉じる"
+            onClick={onClose}
+          >
             ✕
           </button>
         </div>
@@ -248,7 +288,9 @@ export function CardPanel({
             void save();
           }}
         />
-        {draft.title.trim() === "" && <FieldError message="タイトルを入力してください" />}
+        {draft.title.trim() === "" && (
+          <FieldError message="タイトルを入力してください" />
+        )}
         <FieldFailure failure={failed} field="cardTitle" />
 
         <label className="field-label" htmlFor="card-description">
@@ -268,20 +310,19 @@ export function CardPanel({
         <label className="field-label" htmlFor="card-due-date">
           期限
         </label>
-        {/* カレンダーのポップアップは webview（＝OS）が出します（#120）。
-            日付選択のライブラリを足さないのは、3 つの webview で見た目と
-            操作を確かめる対象を増やさないため。`value` の形は `""` か
-            `"YYYY-MM-DD"` で、素の欄だったときと変わりません。読めるか
-            どうかの判定は Rust に 1 つだけ置いたままにします。 */}
-        {/* 外す × は欄に重ねず右へ並べます。`type="date"` のカレンダーアイコンが
-            右端に出る位置は webview ごとに違うので、重ねると押せる場所が
-            エンジンによって変わります。期限が入っているときだけ出すので、
+        {/* 期限は文字で打ちます（#134、ADR 0031）。`type="date"` をやめたのは、
+            カレンダーの見た目と操作が webview ごとに違い、キーボードから速く
+            打てないためです。**読み方は Rust に 1 つだけ**——「明日」が何日かを
+            ここでも数えると、`due_statuses` を出した判定と食い違います。 */}
+        {/* 外す × は欄に重ねず右へ並べます。期限が入っているときだけ出すので、
             期限なしのカードでは欄が入力 1 つになります（#128）。 */}
         <div className="due-field">
           <input
             id="card-due-date"
-            type="date"
+            type="text"
             className="field-input card-due-input"
+            placeholder="9/12、明日、金、+3"
+            autoComplete="off"
             value={draft.dueDate}
             onChange={(event) => {
               setDraft({ ...draft, dueDate: event.target.value });
@@ -301,6 +342,12 @@ export function CardPanel({
             </button>
           )}
         </div>
+        {/* 打った文字がどう読まれたかを、確定する前に見せます。読めない間は
+            何も出しません——打っている途中の文字はまだ間違いではないので、
+            断りは保存のときに欄の脇へ出ます。 */}
+        {duePreview !== null && (
+          <p className="field-note due-preview">→ {duePreview.label}</p>
+        )}
         <FieldFailure failure={failed} field="dueDate" />
 
         <span className="field-label">チェックリスト</span>
@@ -351,7 +398,11 @@ export function CardPanel({
                 onMove={(direction) => {
                   setDraft({
                     ...draft,
-                    checklist: moveChecklistItem(draft.checklist, index, direction),
+                    checklist: moveChecklistItem(
+                      draft.checklist,
+                      index,
+                      direction,
+                    ),
                   });
                 }}
                 onDelete={() => {
@@ -371,7 +422,10 @@ export function CardPanel({
             onClick={() => {
               // 名前を入れないままにした行は、保存のときに Rust が落とします
               // （#114）。消しにいかなくても保存できます。
-              setDraft({ ...draft, checklist: [...draft.checklist, newChecklistItem()] });
+              setDraft({
+                ...draft,
+                checklist: [...draft.checklist, newChecklistItem()],
+              });
             }}
           >
             ＋ 項目を追加
@@ -396,7 +450,12 @@ export function CardPanel({
         <button type="button" className="secondary" onClick={onClose}>
           キャンセル
         </button>
-        <button type="button" className="primary save-card" disabled={!savable} onClick={() => void save()}>
+        <button
+          type="button"
+          className="primary save-card"
+          disabled={!savable}
+          onClick={() => void save()}
+        >
           保存
         </button>
       </footer>
@@ -449,7 +508,11 @@ function TagsInput({
     <>
       <div className="tags-input">
         {chips.map((tag) => (
-          <span key={tag.id} className="tag-chip tags-input-chip" style={{ background: tag.color }}>
+          <span
+            key={tag.id}
+            className="tag-chip tags-input-chip"
+            style={{ background: tag.color }}
+          >
             {tag.name}
             <button
               type="button"
@@ -466,7 +529,9 @@ function TagsInput({
         <input
           className="tags-input-field"
           value={typed}
-          placeholder={chips.length === 0 ? "タグを打って Enter（無ければ作ります）" : ""}
+          placeholder={
+            chips.length === 0 ? "タグを打って Enter（無ければ作ります）" : ""
+          }
           aria-labelledby="card-tags-label"
           onChange={(event) => {
             setTyped(event.target.value);
@@ -482,7 +547,11 @@ function TagsInput({
             // 空の欄での Backspace は末尾のチップを外す。打ち間違えたタグを、
             // チップまでポインタを運ばずに取り消せるようにする。
             const last = chips[chips.length - 1];
-            if (event.key === "Backspace" && typed === "" && last !== undefined) {
+            if (
+              event.key === "Backspace" &&
+              typed === "" &&
+              last !== undefined
+            ) {
               event.preventDefault();
               onToggle(last.id);
             }
@@ -549,7 +618,10 @@ function ChecklistRow({
       ref={setNodeRef}
       className="checklist-row"
       data-dragging={isDragging || undefined}
-      style={{ transform: CSS.Translate.toString(transform), transition: transition ?? undefined }}
+      style={{
+        transform: CSS.Translate.toString(transform),
+        transition: transition ?? undefined,
+      }}
     >
       <button
         type="button"
@@ -602,7 +674,12 @@ function ChecklistRow({
       >
         ↓
       </button>
-      <button type="button" className="secondary" aria-label="項目を削除" onClick={onDelete}>
+      <button
+        type="button"
+        className="secondary"
+        aria-label="項目を削除"
+        onClick={onDelete}
+      >
         削除
       </button>
     </div>
@@ -626,7 +703,13 @@ function FieldError({ message }: { message: string }) {
 }
 
 /// Rust が入力欄に返した理由を、その欄の脇に出す（`docs/DESIGN.md`「コマンドとイベント」）。
-function FieldFailure({ failure, field }: { failure: AppError | null; field: Field }) {
+function FieldFailure({
+  failure,
+  field,
+}: {
+  failure: AppError | null;
+  field: Field;
+}) {
   if (failure?.field !== field) return null;
   return <FieldError message={failure.detail} />;
 }

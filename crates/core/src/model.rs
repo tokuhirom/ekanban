@@ -1,4 +1,4 @@
-use chrono::NaiveDate;
+use chrono::{Datelike, NaiveDate, TimeDelta};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use ts_rs::TS;
@@ -391,14 +391,119 @@ pub fn due_status(due_date: Option<NaiveDate>, today: NaiveDate) -> DueStatus {
     }
 }
 
-pub fn parse_due_date(value: &str) -> Result<Option<NaiveDate>, BoardError> {
-    let value = value.trim();
-    if value.is_empty() {
+/// 期限として打たれた文字を読む（#134、[ADR 0031]）。
+///
+/// **基準日は引数で受けます。** ここで時計を読むと、`due_status` を出した日と
+/// 「明日」が数えた日が食い違います（`docs/DESIGN.md`「絞り込みと検索」）。
+///
+/// 受ける形は次のとおりです。全角で打たれたものは、検索と同じ
+/// `normalize_search_text` で半角・小文字に均してから読みます。
+///
+/// | 打つもの | 読み |
+/// | --- | --- |
+/// | `2026-09-12` | そのまま |
+/// | `9/12`、`9-12` | 今年。過ぎていれば来年 |
+/// | `今日` `明日` `明後日` / `today` `tomorrow` | そのまま |
+/// | `月`（`月曜`・`月曜日`）/ `mon` `monday` … | 次に来るその曜日。今日が同じ曜日なら 7 日後 |
+/// | `+3` | 3 日後 |
+/// | `来週` | 次の月曜 |
+/// | `今週末` | 今日を含めて次に来る土曜 |
+///
+/// **`今週末` だけ今日を含めます。** 今日が土曜なら今日が「今週末」です。曜日
+/// そのものを打ったときは今日を含めません——`土` と打つ人は今日のことを
+/// 言っていないためです。
+///
+/// 読めなかった文字列は `InvalidDueDate` で返し、入力欄の脇に理由を出します
+/// （`docs/DESIGN.md`「アプリが伝えること」）。
+///
+/// [ADR 0031]: ../../../docs/adr/0031-typing-a-due-date.md
+pub fn parse_due_date(value: &str, today: NaiveDate) -> Result<Option<NaiveDate>, BoardError> {
+    let raw = value.trim();
+    if raw.is_empty() {
         return Ok(None);
     }
-    NaiveDate::parse_from_str(value, "%Y-%m-%d")
+    let text = normalize_search_text(raw);
+    let text = text.trim();
+    read_due_date(text, today)
         .map(Some)
-        .map_err(|_| BoardError::InvalidDueDate(value.to_string()))
+        .ok_or_else(|| BoardError::InvalidDueDate(raw.to_string()))
+}
+
+/// 曜日を表す語を、月曜を 0 とした番号にする。
+fn weekday_index(text: &str) -> Option<i64> {
+    // 「月曜日」「月曜」「月」のどれでも同じ。英語は 3 文字と綴り全体を受ける。
+    let trimmed = text
+        .strip_suffix("曜日")
+        .or_else(|| text.strip_suffix("曜"))
+        .unwrap_or(text);
+    let names: [(&str, &str, &str); 7] = [
+        ("月", "mon", "monday"),
+        ("火", "tue", "tuesday"),
+        ("水", "wed", "wednesday"),
+        ("木", "thu", "thursday"),
+        ("金", "fri", "friday"),
+        ("土", "sat", "saturday"),
+        ("日", "sun", "sunday"),
+    ];
+    names
+        .iter()
+        .position(|(japanese, short, long)| {
+            trimmed == *japanese || trimmed == *short || trimmed == *long
+        })
+        .map(|index| index as i64)
+}
+
+/// 均したあとの文字を日付にする。読めなければ `None`。
+fn read_due_date(text: &str, today: NaiveDate) -> Option<NaiveDate> {
+    // 月曜を 0 とした今日の曜日。`num_days_from_monday()` がそのまま返す。
+    let from_monday = i64::from(today.weekday().num_days_from_monday());
+
+    match text {
+        "今日" | "きょう" | "today" => return Some(today),
+        "明日" | "あした" | "tomorrow" => return today.checked_add_signed(TimeDelta::days(1)),
+        "明後日" | "あさって" => return today.checked_add_signed(TimeDelta::days(2)),
+        // 次の月曜。今日が月曜なら 7 日後で、「来週」が今日にならない。
+        "来週" => return today.checked_add_signed(TimeDelta::days(7 - from_monday)),
+        // 今日を含めて次に来る土曜。
+        "今週末" => {
+            return today.checked_add_signed(TimeDelta::days((5 - from_monday).rem_euclid(7)))
+        }
+        _ => {}
+    }
+
+    if let Some(days) = text.strip_prefix('+') {
+        let days: i64 = days.parse().ok()?;
+        return today.checked_add_signed(TimeDelta::days(days));
+    }
+
+    if let Some(index) = weekday_index(text) {
+        // 「次に来る」ほうを採る。今日が同じ曜日なら 7 日後。
+        let ahead = (index - from_monday).rem_euclid(7);
+        let ahead = if ahead == 0 { 7 } else { ahead };
+        return today.checked_add_signed(TimeDelta::days(ahead));
+    }
+
+    if let Ok(date) = NaiveDate::parse_from_str(text, "%Y-%m-%d") {
+        return Some(date);
+    }
+
+    read_month_and_day(text, today)
+}
+
+/// `9/12` と `9-12`。年は今年で、今日より前になるなら来年。
+fn read_month_and_day(text: &str, today: NaiveDate) -> Option<NaiveDate> {
+    let (month, day) = text
+        .split_once('/')
+        .or_else(|| text.split_once('-'))
+        .filter(|(month, day)| !month.is_empty() && !day.is_empty())?;
+    let month: u32 = month.parse().ok()?;
+    let day: u32 = day.parse().ok()?;
+    let this_year = NaiveDate::from_ymd_opt(today.year(), month, day)?;
+    if this_year >= today {
+        return Some(this_year);
+    }
+    // 2/29 は来年に無いことがある。無ければ読めなかったことにする。
+    NaiveDate::from_ymd_opt(today.year() + 1, month, day)
 }
 
 pub fn parse_wip_limit(value: &str) -> Result<Option<i64>, BoardError> {
@@ -3067,17 +3172,101 @@ mod tests {
         assert!(board.set_card_due_date(card_id, None).unwrap());
     }
 
+    /// 2026-09-09 は水曜。曜日をまたぐ数え方はここを基準に読む。
+    fn base_day() -> NaiveDate {
+        NaiveDate::from_ymd_opt(2026, 9, 9).unwrap()
+    }
+
+    fn parsed(value: &str) -> Option<NaiveDate> {
+        parse_due_date(value, base_day()).unwrap()
+    }
+
+    fn day(year: i32, month: u32, day: u32) -> Option<NaiveDate> {
+        NaiveDate::from_ymd_opt(year, month, day)
+    }
+
     #[test]
     fn parses_and_rejects_due_date_strings() {
+        assert_eq!(parsed("2028-02-29"), day(2028, 2, 29));
+        assert_eq!(parse_due_date(" ", base_day()).unwrap(), None);
         assert_eq!(
-            parse_due_date("2028-02-29").unwrap(),
-            Some(NaiveDate::from_ymd_opt(2028, 2, 29).unwrap())
-        );
-        assert_eq!(parse_due_date(" ").unwrap(), None);
-        assert_eq!(
-            parse_due_date("2028-02-30"),
+            parse_due_date("2028-02-30", base_day()),
             Err(BoardError::InvalidDueDate("2028-02-30".to_string()))
         );
+    }
+
+    #[test]
+    fn reads_a_month_and_day_as_this_year_until_it_has_passed() {
+        assert_eq!(parsed("9/12"), day(2026, 9, 12));
+        assert_eq!(parsed("9-12"), day(2026, 9, 12));
+        // 今日そのものは過ぎていない。
+        assert_eq!(parsed("9/9"), day(2026, 9, 9));
+        // 過ぎているものは来年として読む。
+        assert_eq!(parsed("9/8"), day(2027, 9, 8));
+        assert_eq!(parsed("1/5"), day(2027, 1, 5));
+    }
+
+    #[test]
+    fn reads_the_words_for_nearby_days() {
+        assert_eq!(parsed("今日"), day(2026, 9, 9));
+        assert_eq!(parsed("today"), day(2026, 9, 9));
+        assert_eq!(parsed("明日"), day(2026, 9, 10));
+        assert_eq!(parsed("tomorrow"), day(2026, 9, 10));
+        assert_eq!(parsed("明後日"), day(2026, 9, 11));
+        assert_eq!(parsed("+3"), day(2026, 9, 12));
+        assert_eq!(parsed("+0"), day(2026, 9, 9));
+    }
+
+    /// 2026-09-09 は水曜。「来週」は次の月曜、「今週末」は今週の土曜。
+    #[test]
+    fn reads_next_week_and_the_weekend_from_monday_and_saturday() {
+        assert_eq!(parsed("来週"), day(2026, 9, 14));
+        assert_eq!(parsed("今週末"), day(2026, 9, 12));
+        // 月曜に打った「来週」は今日ではなく次の月曜。
+        let monday = NaiveDate::from_ymd_opt(2026, 9, 14).unwrap();
+        assert_eq!(
+            parse_due_date("来週", monday).unwrap(),
+            day(2026, 9, 21),
+            "「来週」は今日にならない"
+        );
+        // 土曜に打った「今週末」は今日。
+        let saturday = NaiveDate::from_ymd_opt(2026, 9, 12).unwrap();
+        assert_eq!(
+            parse_due_date("今週末", saturday).unwrap(),
+            day(2026, 9, 12)
+        );
+    }
+
+    #[test]
+    fn reads_a_weekday_as_the_next_one_to_come() {
+        assert_eq!(parsed("金"), day(2026, 9, 11));
+        assert_eq!(parsed("金曜"), day(2026, 9, 11));
+        assert_eq!(parsed("金曜日"), day(2026, 9, 11));
+        assert_eq!(parsed("fri"), day(2026, 9, 11));
+        assert_eq!(parsed("friday"), day(2026, 9, 11));
+        assert_eq!(parsed("月"), day(2026, 9, 14));
+        // 今日と同じ曜日は 7 日後。今日のことを言っていないため。
+        assert_eq!(parsed("水"), day(2026, 9, 16));
+    }
+
+    /// 全角で打たれたものも、検索と同じ均し方で読む。
+    #[test]
+    fn reads_full_width_digits_and_upper_case() {
+        assert_eq!(parsed("９/１２"), day(2026, 9, 12));
+        assert_eq!(parsed("＋３"), day(2026, 9, 12));
+        assert_eq!(parsed("Tomorrow"), day(2026, 9, 10));
+        assert_eq!(parsed("　明日　"), day(2026, 9, 10));
+    }
+
+    #[test]
+    fn rejects_what_it_cannot_read() {
+        for value in ["きのう", "9/", "/12", "+", "+ 3", "13/40", "来年"] {
+            assert_eq!(
+                parse_due_date(value, base_day()),
+                Err(BoardError::InvalidDueDate(value.to_string())),
+                "{value} は読めない"
+            );
+        }
     }
 
     #[test]

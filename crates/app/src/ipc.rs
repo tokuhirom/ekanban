@@ -364,6 +364,14 @@ fn reveal(app: &AppHandle, path: &Path) {
     }
 }
 
+// ---------------------------------------------------------------- 期限の下読み
+
+/// 打った文字を期限としてどう読んだかを返す（#134）。盤面は変えません。
+#[tauri::command]
+pub fn due_date_preview(value: String) -> Option<commands::DueDatePreview> {
+    commands::due_date_preview(&value)
+}
+
 // ---------------------------------------------------------------- 説明のリンク
 
 #[tauri::command]
