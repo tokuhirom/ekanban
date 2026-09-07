@@ -269,6 +269,34 @@ test("選んだカードは Enter で開き、Escape で閉じる", async ({ pag
   await expect(page.locator(".card-panel")).toBeHidden();
 });
 
+// ---------------------------------------------------------------- パネルの並び
+
+/// パネルは「カードを大きくしたもの」（#144）。上から順に、タイトル、期限と
+/// タグの 1 行、説明、チェックリスト。見出しは出さず、名前は読み上げに残す。
+test("パネルの上の 2 行に、タイトルと期限とタグが出る", async ({ page }) => {
+  await openBoard(page);
+  await openFirstCard(page);
+
+  const title = page.getByRole("textbox", { name: "タイトル" });
+  const due = page.getByRole("textbox", { name: "期限" });
+  const tags = page.getByRole("textbox", { name: "タグ" });
+  await expect(title).toBeVisible();
+  await expect(due).toBeVisible();
+  await expect(tags).toBeVisible();
+
+  // 期限とタグは同じ行。タイトルはその上。
+  const titleBox = await title.boundingBox();
+  const dueBox = await due.boundingBox();
+  const tagsBox = await tags.boundingBox();
+  expect(dueBox?.y).toBeGreaterThan(titleBox?.y ?? 0);
+  expect(Math.abs((dueBox?.y ?? 0) - (tagsBox?.y ?? 0))).toBeLessThan(
+    (dueBox?.height ?? 0) + 4,
+  );
+
+  // 見出しの文字は出さない（名前は placeholder と aria-label が言う）。
+  await expect(page.locator(".panel-body .field-label")).toHaveCount(0);
+});
+
 // ------------------------------------------------ 欄ごとに確定する（#141）
 
 /// 保存済みのカードは、欄を離れた時点で確定します（ADR 0032）。押すものは
