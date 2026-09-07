@@ -44,6 +44,22 @@ export function newChecklistItem(): DraftChecklistItem {
   return { key: `new-${nextChecklistKey}`, id: null, text: "", checked: false };
 }
 
+/// 指した行の直後に、空の項目を 1 つ差し込む（#138）。
+///
+/// 続けて打てるようにするためのもので、フォーカスをどこへ移すかは
+/// `CardPanel` が新しい項目の `key` から決めます。範囲の外を指されたら
+/// 末尾に足します。
+export function insertChecklistItemAfter(
+  checklist: readonly DraftChecklistItem[],
+  index: number,
+): { checklist: DraftChecklistItem[]; key: string } {
+  const item = newChecklistItem();
+  const at = index < 0 || index >= checklist.length ? checklist.length : index + 1;
+  const next = [...checklist];
+  next.splice(at, 0, item);
+  return { checklist: next, key: item.key };
+}
+
 /// Rust に渡す形にする。**`key` はここで落とします。**
 export function checklistToSend(
   checklist: readonly DraftChecklistItem[],

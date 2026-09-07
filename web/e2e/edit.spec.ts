@@ -589,6 +589,69 @@ test("チェックリストの項目数が増えても、カードの高さが�
   expect(withTwelve?.height).toBe(withOne?.height);
 });
 
+/// 箇条書きと同じ流れで打てる（#138）。押すのは「＋ 項目を追加」1 回だけで、
+/// あとは `Enter` で次の行が生まれ、そこに打てる。
+test("＋ を 1 回押したら、Enter だけで項目を続けて打てる", async ({ page }) => {
+  await openBoard(page);
+  await openFirstCard(page);
+  const cardId = Number(
+    await page.locator(".column").first().locator(".card").first().getAttribute("data-card"),
+  );
+  const before = await page.locator(".checklist-text").count();
+
+  await page.locator(".add-checklist-item").click();
+  await page.keyboard.type("あ");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("い");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("う");
+  await expect(page.locator(".checklist-text")).toHaveCount(before + 3);
+
+  await page.locator(".save-card").click();
+  await expect
+    .poll(async () =>
+      (await storedBoard()).columns
+        .flatMap((column) => column.cards)
+        .find((card) => card.id === cardId)
+        ?.checklistItems.map((item) => item.text)
+        .slice(-3),
+    )
+    .toEqual(["あ", "い", "う"]);
+});
+
+test("末尾の空行で Enter を押すと、その行が消える", async ({ page }) => {
+  await openBoard(page);
+  await openFirstCard(page);
+  const before = await page.locator(".checklist-text").count();
+
+  await page.locator(".add-checklist-item").click();
+  await expect(page.locator(".checklist-text")).toHaveCount(before + 1);
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".checklist-text")).toHaveCount(before);
+});
+
+test("空の行で Backspace を押すと、その行が消える", async ({ page }) => {
+  await openBoard(page);
+  await openFirstCard(page);
+  const before = await page.locator(".checklist-text").count();
+
+  await page.locator(".add-checklist-item").click();
+  await page.keyboard.press("Backspace");
+  await expect(page.locator(".checklist-text")).toHaveCount(before);
+});
+
+/// 変換を確定する `Enter` で行が増えてはいけない（#124、ADR 0029）。
+test("変換中の Enter では、チェックリストの行が増えない", async ({ page }) => {
+  await openBoard(page);
+  await openFirstCard(page);
+
+  await page.locator(".add-checklist-item").click();
+  await page.keyboard.type("あ");
+  const rows = await page.locator(".checklist-text").count();
+  await pressWhileComposing(page.locator(".checklist-text").last(), "Enter");
+  await expect(page.locator(".checklist-text")).toHaveCount(rows);
+});
+
 // ---------------------------------------------------------------- タグ
 
 test("タグを作り、カードに付け、名前を変えて消せる", async ({ page }) => {
