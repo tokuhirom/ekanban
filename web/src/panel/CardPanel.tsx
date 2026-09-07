@@ -47,6 +47,7 @@ import {
   draftOf,
   emptyDraft,
   insertChecklistItemAfter,
+  syncChecklistIds,
   moveChecklistItem,
   newChecklistItem,
   reorderChecklist,
@@ -97,6 +98,12 @@ export function CardPanel({
   // ——並べ替えや削除で添字は別の行を指すようになります。当てたら、その行の
   // `onFocus` でここを空にします（effect の中で状態を書かないため）。
   const [focusChecklistKey, setFocusChecklistKey] = useState<string | null>(null);
+  // いま画面に出ている下書き。**確定はここから送ります**——欄を離れたときの
+  // ハンドラは、その描画のときの下書きを掴んでいるので、あとから確定が届くと
+  // 古い内容で上書きしてしまいます（#141）。
+  const latest = useRef(draft);
+  // 確定を 1 本に並べるための待ち行列。
+  const pending = useRef<Promise<AppError | null>>(Promise.resolve(null));
   // 押しただけでドラッグが始まらないよう、盤面と同じだけ動かしてから掴んだと
   // 判定します。行には入力欄があるので、これが無いと文字を選ぶだけの操作が
   // ドラッグになります。
@@ -126,10 +133,102 @@ export function CardPanel({
   // **下書きを持っているのはここ**なので、受けるのもここ（`shell/actions.ts`）。
   useAppActions({
     saveEdit: () => {
-      void save();
+      // 保存済みのカードは欄ごとに確定しているので、ここでするのは
+      // 打ちかけの欄を確定することです（#141）。
+      if (editing.kind === "card") void commit();
+      else void save();
     },
-    cancelEdit: onClose,
+    cancelEdit: () => {
+      void close();
+    },
   });
+
+  /// 閉じる。**打ちかけの欄があれば、閉じる前に確定します**（#141、#142）。
+  ///
+  /// 新しいカードは今までどおり下書きなので、閉じれば捨てられます——タイトルを
+  /// 入れずに閉じたカードは一度も存在しません（`docs/DESIGN.md`「無題のカードを
+  /// 作らない」）。
+  async function close(): Promise<void> {
+    // 断られたら閉じません。閉じてしまうと、打った値の直しようがなくなります。
+    if ((await commit()) !== null) return;
+    onClose();
+  }
+
+  /// 保存済みのカードで、いまの下書きをそのまま書き戻す（#141、ADR 0032）。
+  ///
+  /// **欄を離れるたびに呼びます。**「保存」を押し忘れて全部消える、チェック 1 つに
+  /// 保存が要る、別のカードを開くと下書きが消える、が無くなります（#139、#142）。
+  ///
+  /// 送るのは `update_card` 1 つだけです。欄ごとに別のコマンドを割り当てると、
+  /// 欄ごとに「下書きと盤面のどちらが正か」が変わります。
+  ///
+  /// **タイトルが空のときは元のタイトルで送ります。** 無題のカードは作れない
+  /// ままにするためで、欄の中の空文字はそのあと元に戻します。
+  async function commitNow(next: CardDraft): Promise<AppError | null> {
+    if (editing.kind !== "card" || card === null) return null;
+    const title = next.title.trim() === "" ? card.title : next.title;
+    const saved: { items: { id: number }[] } = { items: [] };
+    const failure = await run(async () => {
+      const snapshot = await ipc.updateCard(
+        editing.cardId,
+        title,
+        next.description,
+        next.dueDate,
+        next.tagIds,
+        checklistToSend(next.checklist),
+      );
+      saved.items = findCard(snapshot.board, editing.cardId)?.checklistItems ?? [];
+      return snapshot;
+    });
+    setFailed(failure);
+    if (failure !== null) return failure;
+    // **`latest` から作ります。** React の状態は描画のための写しで、こちらより
+    // 遅れていることがあります。遅れたほうを土台にすると、打ったばかりの文字が
+    // 消え、項目 ID もずれた並びで突き合わせることになります。
+    edit({
+      ...latest.current,
+      // 断られなかったので、欄の中の空タイトルは元に戻す。
+      title: latest.current.title.trim() === "" ? title : latest.current.title,
+      checklist: syncChecklistIds(latest.current.checklist, saved.items),
+    });
+    return null;
+  }
+
+  /// 確定を 1 本に並べる。
+  ///
+  /// **重ねて呼ばれても、送るのはいつも最新の下書きです。** 欄を離れるたびに
+  /// 呼ぶので、前の確定が飛んでいる間に次が始まりえます。並べずに投げると、
+  /// 古い下書きを持った確定があとから届いて、打ったばかりの文字を消します。
+  function commit(next?: CardDraft): Promise<AppError | null> {
+    if (editing.kind !== "card") return Promise.resolve(null);
+    if (next !== undefined) latest.current = next;
+    const queued = pending.current.then(() => commitNow(latest.current));
+    pending.current = queued;
+    return queued;
+  }
+
+  /// 下書きを書き換えて、そのまま確定する（保存済みのカードだけ）。
+  ///
+  /// 押した瞬間に決まるもの（チェック、タグ、項目の削除・並べ替え）に使います。
+  /// 打っている途中の文字は、欄を離れたときの `commit` が運びます。
+  /// 下書きを書き換える。**確定に使う `latest` も同時に進めます。**
+  ///
+  /// React の状態だけを進めると、次の描画までの間に確定が走ったときに、打った
+  /// ばかりの文字を落とした下書きが飛びます。落とした側の並びで項目 ID を
+  /// 突き合わせることになるので、次の確定がもう無い項目を指します。
+  function edit(next: CardDraft): void {
+    latest.current = next;
+    setDraft(next);
+  }
+
+  function change(update: (current: CardDraft) => CardDraft): void {
+    // **いま確定に使う下書きから作ります**（`latest`）。描画のときの下書きから
+    // 作ると、確定が飛んでいる間に押された分が、返ってきた項目 ID を落として
+    // しまいます——その次の確定が、もう無い項目を指すことになります。
+    const next = update(latest.current);
+    edit(next);
+    void commit(next);
+  }
 
   async function save() {
     if (!savable) return;
@@ -172,10 +271,7 @@ export function CardPanel({
     setFailed(failure);
     const tagId = created.id;
     if (failure !== null || tagId === null) return;
-    setDraft((current) => ({
-      ...current,
-      tagIds: toggleTag(current.tagIds, tagId),
-    }));
+    change((current) => ({ ...current, tagIds: toggleTag(current.tagIds, tagId) }));
   }
 
   const columnName =
@@ -198,7 +294,7 @@ export function CardPanel({
         // （`shell/ime.ts`）。
         if (event.key !== "Escape" || isComposing(event.nativeEvent)) return;
         event.stopPropagation();
-        onClose();
+        void close();
       }}
     >
       <header className="panel-header">
@@ -228,7 +324,9 @@ export function CardPanel({
             type="button"
             className="ghost"
             aria-label="閉じる"
-            onClick={onClose}
+            onClick={() => {
+              void close();
+            }}
           >
             ✕
           </button>
@@ -282,15 +380,19 @@ export function CardPanel({
           placeholder="カードのタイトル"
           autoFocus
           onChange={(event) => {
-            setDraft({ ...draft, title: event.target.value });
+            edit({ ...latest.current, title: event.target.value });
           }}
-          // 1 行の欄なので Enter は改行ではなく保存（`docs/DESIGN.md`）。
-          // カードを足すときはタイトルを打つのが最後の操作なので、そのまま
-          // 終われないと保存ボタンまで手が要ります。
+          // 保存済みのカードは、欄を離れた時点で確定します（#141）。
+          onBlur={() => {
+            if (editing.kind === "card") void commit();
+          }}
+          // 1 行の欄なので Enter は改行ではなく確定（`docs/DESIGN.md`）。
+          // 新しいカードでは、打ち終わってそのまま足せます。
           onKeyDown={(event) => {
             if (event.key !== "Enter" || isComposing(event.nativeEvent)) return;
             event.preventDefault();
-            void save();
+            if (editing.kind === "card") void commit();
+            else void save();
           }}
         />
         {draft.title.trim() === "" && (
@@ -306,8 +408,17 @@ export function CardPanel({
           value={draft.description}
           platform={platform}
           onChange={(description) => {
-            setDraft({ ...draft, description });
+            edit({ ...latest.current, description });
           }}
+          // 説明は欄を離れたときと、打ち止まって 1 秒で確定します（#141）。
+          // 複数行なので `Enter` は改行のままです。
+          onCommit={
+            editing.kind === "card"
+              ? (description) => {
+                  void commit({ ...latest.current, description });
+                }
+              : undefined
+          }
         />
 
         {/* 期限・チェックリスト・タグは、新しいカードにも出します（#127）。
@@ -330,7 +441,16 @@ export function CardPanel({
             autoComplete="off"
             value={draft.dueDate}
             onChange={(event) => {
-              setDraft({ ...draft, dueDate: event.target.value });
+              edit({ ...latest.current, dueDate: event.target.value });
+            }}
+            onBlur={() => {
+              if (editing.kind === "card") void commit();
+            }}
+            // 1 行の欄なので `Enter` で確定（`docs/DESIGN.md`）。
+            onKeyDown={(event) => {
+              if (event.key !== "Enter" || isComposing(event.nativeEvent)) return;
+              event.preventDefault();
+              if (editing.kind === "card") void commit();
             }}
           />
           {draft.dueDate !== "" && (
@@ -340,7 +460,7 @@ export function CardPanel({
               aria-label="期限を外す"
               title="期限を外す"
               onClick={() => {
-                setDraft({ ...draft, dueDate: "" });
+                change((current) => ({ ...current, dueDate: "" }));
               }}
             >
               ×
@@ -368,14 +488,12 @@ export function CardPanel({
           collisionDetection={closestCenter}
           onDragEnd={(event: DragEndEvent) => {
             if (event.over === null) return;
-            setDraft({
-              ...draft,
-              checklist: reorderChecklist(
-                draft.checklist,
-                String(event.active.id),
-                String(event.over.id),
-              ),
-            });
+            const from = String(event.active.id);
+            const to = String(event.over.id);
+            change((current) => ({
+              ...current,
+              checklist: reorderChecklist(current.checklist, from, to),
+            }));
           }}
         >
           <SortableContext
@@ -387,33 +505,35 @@ export function CardPanel({
                 key={item.key}
                 item={item}
                 index={index}
+                // チェックは押した瞬間に確定します（#139）。付けたあと
+                // `Escape` で閉じても残ります。
                 onToggle={() => {
-                  setDraft({
-                    ...draft,
-                    checklist: toggleChecklistItem(draft.checklist, index),
-                  });
+                  change((current) => ({
+                    ...current,
+                    checklist: toggleChecklistItem(current.checklist, index),
+                  }));
                 }}
                 onChangeText={(text) => {
-                  setDraft({
-                    ...draft,
-                    checklist: setChecklistText(draft.checklist, index, text),
+                  edit({
+                    ...latest.current,
+                    checklist: setChecklistText(latest.current.checklist, index, text),
                   });
+                }}
+                // 打った文字は、その行を離れたときに確定します（#141）。
+                onCommitText={() => {
+                  if (editing.kind === "card") void commit();
                 }}
                 onMove={(direction) => {
-                  setDraft({
-                    ...draft,
-                    checklist: moveChecklistItem(
-                      draft.checklist,
-                      index,
-                      direction,
-                    ),
-                  });
+                  change((current) => ({
+                    ...current,
+                    checklist: moveChecklistItem(current.checklist, index, direction),
+                  }));
                 }}
                 onDelete={() => {
-                  setDraft({
-                    ...draft,
-                    checklist: deleteChecklistItem(draft.checklist, index),
-                  });
+                  change((current) => ({
+                    ...current,
+                    checklist: deleteChecklistItem(current.checklist, index),
+                  }));
                 }}
                 focused={focusChecklistKey === item.key}
                 onFocused={() => {
@@ -422,25 +542,25 @@ export function CardPanel({
                 // `Enter` で次の行、末尾の空行なら畳んで抜ける（#138）。
                 onSplit={() => {
                   const lastAndEmpty =
-                    index + 1 === draft.checklist.length && item.text.trim() === "";
+                    index + 1 === latest.current.checklist.length && item.text.trim() === "";
                   if (lastAndEmpty) {
-                    setDraft({
-                      ...draft,
-                      checklist: deleteChecklistItem(draft.checklist, index),
+                    edit({
+                      ...latest.current,
+                      checklist: deleteChecklistItem(latest.current.checklist, index),
                     });
                     setFocusChecklistKey(null);
                     return;
                   }
-                  const inserted = insertChecklistItemAfter(draft.checklist, index);
-                  setDraft({ ...draft, checklist: inserted.checklist });
+                  const inserted = insertChecklistItemAfter(latest.current.checklist, index);
+                  edit({ ...latest.current, checklist: inserted.checklist });
                   setFocusChecklistKey(inserted.key);
                 }}
                 // 空の行で `Backspace` なら、その行を消して上の行の末尾へ。
                 onBackspaceEmpty={() => {
-                  setDraft({
-                    ...draft,
-                    checklist: deleteChecklistItem(draft.checklist, index),
-                  });
+                  change((current) => ({
+                    ...current,
+                    checklist: deleteChecklistItem(current.checklist, index),
+                  }));
                   setFocusChecklistKey(draft.checklist[index - 1]?.key ?? null);
                 }}
               />
@@ -455,7 +575,7 @@ export function CardPanel({
               // 名前を入れないままにした行は、保存のときに Rust が落とします
               // （#114）。消しにいかなくても保存できます。
               const item = newChecklistItem();
-              setDraft({ ...draft, checklist: [...draft.checklist, item] });
+              edit({ ...latest.current, checklist: [...latest.current.checklist, item] });
               // 足した行にフォーカスを移します（#138）。押してから欄を押し直す
               // 往復が、続けて打つときにいちばん効きます。
               setFocusChecklistKey(item.key);
@@ -472,25 +592,47 @@ export function CardPanel({
           tags={board.tags}
           selected={draft.tagIds}
           failure={failed}
+          // タグは付け外しした瞬間に確定します（#141）。右クリックメニューから
+          // 付け外しするのと、同じ意味になります。
           onToggle={(tagId) => {
-            setDraft({ ...draft, tagIds: toggleTag(draft.tagIds, tagId) });
+            change((current) => ({
+              ...current,
+              tagIds: toggleTag(current.tagIds, tagId),
+            }));
           }}
           onCreate={createTag}
         />
       </div>
 
+      {/* 保存済みのカードには「保存 / キャンセル」がありません（#141、ADR 0032）
+          ——欄を離れた時点で確定しているので、押すものがありません。新しい
+          カードだけは下書きのままなので、足す 1 回の操作が要ります。 */}
       <footer className="panel-footer">
-        <button type="button" className="secondary" onClick={onClose}>
-          キャンセル
-        </button>
-        <button
-          type="button"
-          className="primary save-card"
-          disabled={!savable}
-          onClick={() => void save()}
-        >
-          保存
-        </button>
+        {editing.kind === "card" ? (
+          <button
+            type="button"
+            className="secondary close-card"
+            onClick={() => {
+              void close();
+            }}
+          >
+            閉じる
+          </button>
+        ) : (
+          <>
+            <button type="button" className="secondary" onClick={onClose}>
+              キャンセル
+            </button>
+            <button
+              type="button"
+              className="primary save-card"
+              disabled={!savable}
+              onClick={() => void save()}
+            >
+              保存
+            </button>
+          </>
+        )}
       </footer>
     </aside>
   );
@@ -630,6 +772,7 @@ function ChecklistRow({
   onFocused,
   onSplit,
   onBackspaceEmpty,
+  onCommitText,
 }: {
   item: DraftChecklistItem;
   index: number;
@@ -644,6 +787,8 @@ function ChecklistRow({
   onSplit: () => void;
   /** 空の行で `Backspace`。 */
   onBackspaceEmpty: () => void;
+  /** 打った文字を確定する（保存済みのカードだけ、#141）。 */
+  onCommitText: () => void;
 }) {
   const {
     attributes,
@@ -707,6 +852,7 @@ function ChecklistRow({
           onChangeText(event.target.value);
         }}
         onFocus={onFocused}
+        onBlur={onCommitText}
         // 箇条書きと同じ流れで打てるようにします（#138）。**変換中の
         // `Enter` は取りません**——確定しただけで行が増えます（ADR 0029）。
         // 並べ替えは `Alt+↑` / `Alt+↓`（#137）。`↑` `↓` のボタンを畳んでも、

@@ -60,6 +60,28 @@ export function insertChecklistItemAfter(
   return { checklist: next, key: item.key };
 }
 
+/// 確定したあとの下書きに、保存されたカードの項目 ID を写す（#141）。
+///
+/// **これが無いと、次の確定で同じ項目がもう 1 つ増えます。** `update_card` は
+/// `id === null` の項目を「新しい項目」として読むので、確定のたびに増え続けます。
+/// 送った順とそのまま返ってくる順は同じなので、位置で突き合わせます。
+export function syncChecklistIds(
+  checklist: readonly DraftChecklistItem[],
+  saved: readonly { id: number }[],
+): DraftChecklistItem[] {
+  // **項目名が空の行は数に入れません。** 保存のときに落ちるので（#114）、
+  // 返ってきた並びには入っていません。数に入れると、そこから下の行に 1 つ
+  // ずれた ID が付き、次の確定が別の項目を指します。空の行は ID も手放します
+  // ——保存されていない行に、保存された項目の ID を持たせないためです。
+  let position = 0;
+  return checklist.map((item) => {
+    if (item.text.trim() === "") return item.id === null ? item : { ...item, id: null };
+    const id = saved[position]?.id;
+    position += 1;
+    return item.id === null && id !== undefined ? { ...item, id } : item;
+  });
+}
+
 /// Rust に渡す形にする。**`key` はここで落とします。**
 export function checklistToSend(
   checklist: readonly DraftChecklistItem[],
