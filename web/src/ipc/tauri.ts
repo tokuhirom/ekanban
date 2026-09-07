@@ -48,6 +48,8 @@ export const tauriIpc: Ipc = {
   restoreCard: (cardId) => invoke<Snapshot>("restore_card", { cardId }),
   setCardTags: (cardId, tagIds) =>
     invoke<Snapshot>("set_card_tags", { cardId, tagIds }),
+  setCardDueDate: (cardId, dueDate) =>
+    invoke<Snapshot>("set_card_due_date", { cardId, dueDate }),
   addColumn: (name) => invoke<Snapshot>("add_column", { name }),
   renameColumn: (columnId, name) =>
     invoke<Snapshot>("rename_column", { columnId, name }),

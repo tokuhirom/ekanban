@@ -271,6 +271,59 @@ test("選んだカードは Enter で開き、Escape で閉じる", async ({ pag
 
 // ---------------------------------------------------------------- 期限
 
+/// 右クリックからその場で期限を当てられる（#132）。呼ぶのは
+/// `set_card_due_date` の 1 コマンドなので、Undo も 1 回で戻る。
+test("右クリックから期限を当てて、Undo 1 回で戻せる", async ({ page }) => {
+  await openBoard(page);
+  const card = page.locator(".column").first().locator(".card").first();
+  const cardId = Number(await card.getAttribute("data-card"));
+  const before = (await storedBoard()).columns
+    .flatMap((column) => column.cards)
+    .find((each) => each.id === cardId)?.dueDate;
+
+  // 「明日」は Rust が返した `Snapshot.today` から数える（ブラウザの時計ではなく）。
+  const today = ((await (await invoke("snapshot")).json()) as Snapshot).today;
+  const tomorrow = new Date(Date.parse(`${today}T00:00:00Z`) + 86_400_000)
+    .toISOString()
+    .slice(0, 10);
+
+  await card.click({ button: "right" });
+  await page.locator(".card-menu").getByRole("button", { name: "明日" }).click();
+  await expect
+    .poll(async () =>
+      (await storedBoard()).columns
+        .flatMap((column) => column.cards)
+        .find((each) => each.id === cardId)?.dueDate,
+    )
+    .toBe(tomorrow);
+
+  await page.locator(".board-content").click({ position: { x: 5, y: 5 } });
+  await page.keyboard.press("ControlOrMeta+z");
+  await expect
+    .poll(async () =>
+      (await storedBoard()).columns
+        .flatMap((column) => column.cards)
+        .find((each) => each.id === cardId)?.dueDate,
+    )
+    .toBe(before);
+});
+
+test("右クリックの「なし」で期限が外れる", async ({ page }) => {
+  await openBoard(page);
+  const card = page.locator(".column").first().locator(".card").first();
+  const cardId = Number(await card.getAttribute("data-card"));
+
+  await card.click({ button: "right" });
+  await page.locator(".card-menu").getByRole("button", { name: "なし" }).click();
+  await expect
+    .poll(async () =>
+      (await storedBoard()).columns
+        .flatMap((column) => column.cards)
+        .find((each) => each.id === cardId)?.dueDate,
+    )
+    .toBeNull();
+});
+
 /// 期限はカレンダーから選ぶ欄（#120）。`type="date"` なので、打ち込める形は
 /// `"YYYY-MM-DD"` だけ。ポップアップそのものは OS が出すので、ここでは見られない。
 test("欄に打った日付が、そのまま保存される", async ({ page }) => {

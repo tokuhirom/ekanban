@@ -583,6 +583,7 @@ export function Board() {
             card={menuCard}
             tags={board.tags}
             at={{ x: cardMenu.x, y: cardMenu.y }}
+            today={today}
             onClose={() => {
               setCardMenu(null);
             }}
@@ -594,6 +595,9 @@ export function Board() {
                 ? menuCard.tagIds.filter((id) => id !== tagId)
                 : [...menuCard.tagIds, tagId];
               void run(() => ipc.setCardTags(menuCard.id, next));
+            }}
+            onSetDueDate={(dueDate) => {
+              void run(() => ipc.setCardDueDate(menuCard.id, dueDate));
             }}
           />
         </>

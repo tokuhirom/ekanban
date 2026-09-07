@@ -177,6 +177,12 @@ fn invoke(command: &str, args: Value, state: &AppState) -> Result<Value, AppErro
     }
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
+    struct CardDueDate {
+        card_id: i64,
+        due_date: String,
+    }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
     struct ColumnId {
         column_id: i64,
     }
@@ -358,6 +364,10 @@ fn invoke(command: &str, args: Value, state: &AppState) -> Result<Value, AppErro
         "set_card_tags" => {
             let a: CardTags = read(args)?;
             ok(commands::set_card_tags(state, a.card_id, a.tag_ids)?)
+        }
+        "set_card_due_date" => {
+            let a: CardDueDate = read(args)?;
+            ok(commands::set_card_due_date(state, a.card_id, &a.due_date)?)
         }
         "add_column" => ok(commands::add_column(state, &read::<Name>(args)?.name)?),
         "rename_column" => {
