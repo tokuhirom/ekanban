@@ -4,6 +4,7 @@ import {
   PointerSensor,
   closestCenter,
   closestCorners,
+  pointerWithin,
   useSensor,
   useSensors,
   type CollisionDetection,
@@ -50,20 +51,34 @@ import { Sidebar } from "./Sidebar";
 /// カラムの中にカードの並べ替えが入れ子になっているので、絞らないとカラムを
 /// 掴んだときにカードが `over` に選ばれ、掴んでも何も起きません。
 ///
-/// カードは角どうしの近さで見ます——中心どうしだと、背の高いカードの上に
-/// 小さいカードを重ねたときに入れ替わりが起きない。カラムは幅が揃っていて
-/// 縦に長いので、中心どうしのほうが素直に決まります。
+/// **カードは、まずポインタが乗っているものを採ります**（#161）。カードの上に
+/// いればそのカード、カラムの空きの上にいればそのカラム。角どうしの近さだけで
+/// 決めていたころは、**1 枚も無いカラムに落とせませんでした**——空のカラムは
+/// 縦に長く、その角はポインタから遠いので、隣のカラムのカードのほうが必ず
+/// 近く出ます。
+///
+/// どこにも乗っていないとき（カラムの外の余白、キーボードでの操作）は、
+/// 今までどおり角どうしの近さで決めます。中心どうしにしないのは、背の高い
+/// カードの上に小さいカードを重ねたときに入れ替わりが起きないためです。
+/// カラムは幅が揃っていて縦に長いので、そちらは中心どうしのほうが素直です。
 const collisionDetection: CollisionDetection = (args) => {
   const kind = droppableKind(String(args.active.id));
-  const droppableContainers = args.droppableContainers.filter(
-    (container) => droppableKind(String(container.id)) === kind,
-  );
-  if (kind === "column") return closestCenter({ ...args, droppableContainers });
+  if (kind === "column") {
+    return closestCenter({
+      ...args,
+      droppableContainers: args.droppableContainers.filter(
+        (container) => droppableKind(String(container.id)) === "column",
+      ),
+    });
+  }
+
   // カードは、カード同士に加えてカラムそのもの（空きの部分）にも落とせる。
-  return closestCorners({
-    ...args,
-    droppableContainers: args.droppableContainers,
-  });
+  const under = pointerWithin(args);
+  const card = under.find((collision) => droppableKind(String(collision.id)) === "card");
+  if (card !== undefined) return [card];
+  const column = under.find((collision) => droppableKind(String(collision.id)) === "column");
+  if (column !== undefined) return [column];
+  return closestCorners(args);
 };
 
 /// 確認ダイアログ 1 回ぶん。出すのは「Undo で戻せない」か「1 操作で複数件が
