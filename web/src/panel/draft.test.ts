@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import {
   checklistToSend,
   deleteChecklistItem,
+  insertChecklistItemAfter,
   draftIsSavable,
   emptyDraft,
   moveChecklistItem,
@@ -137,5 +138,29 @@ describe("下書きの鍵", () => {
       { id: 2, text: "い", checked: false },
       { id: null, text: "", checked: false },
     ]);
+  });
+});
+
+describe("insertChecklistItemAfter", () => {
+  const list = [
+    { key: "a", id: 1, text: "あ", checked: false },
+    { key: "b", id: 2, text: "い", checked: false },
+  ];
+
+  it("指した行の直後に空の項目を入れる", () => {
+    const { checklist, key } = insertChecklistItemAfter(list, 0);
+    expect(checklist.map((item) => item.text)).toEqual(["あ", "", "い"]);
+    expect(checklist[1]?.key).toBe(key);
+    expect(checklist[1]?.id).toBeNull();
+  });
+
+  it("末尾の行の直後は末尾に足す", () => {
+    const { checklist } = insertChecklistItemAfter(list, 1);
+    expect(checklist.map((item) => item.text)).toEqual(["あ", "い", ""]);
+  });
+
+  it("範囲の外を指されたら末尾に足す", () => {
+    expect(insertChecklistItemAfter(list, 9).checklist).toHaveLength(3);
+    expect(insertChecklistItemAfter([], 0).checklist).toHaveLength(1);
   });
 });

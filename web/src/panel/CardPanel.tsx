@@ -25,7 +25,7 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useIpc } from "../ipc";
 import type { AppError } from "../ipc/types/AppError";
@@ -46,6 +46,7 @@ import {
   draftIsSavable,
   draftOf,
   emptyDraft,
+  insertChecklistItemAfter,
   moveChecklistItem,
   newChecklistItem,
   reorderChecklist,
@@ -92,6 +93,10 @@ export function CardPanel({
   // 往復するのは文字列と、読めた 1 日付だけです（`Description` と同じ考え方）。
   const [duePreview, setDuePreview] = useState<DueDatePreview | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  // 次にフォーカスを移すチェックリストの行（#138）。**添字ではなく鍵で指します**
+  // ——並べ替えや削除で添字は別の行を指すようになります。当てたら、その行の
+  // `onFocus` でここを空にします（effect の中で状態を書かないため）。
+  const [focusChecklistKey, setFocusChecklistKey] = useState<string | null>(null);
   // 押しただけでドラッグが始まらないよう、盤面と同じだけ動かしてから掴んだと
   // 判定します。行には入力欄があるので、これが無いと文字を選ぶだけの操作が
   // ドラッグになります。
@@ -411,6 +416,34 @@ export function CardPanel({
                     checklist: deleteChecklistItem(draft.checklist, index),
                   });
                 }}
+                focused={focusChecklistKey === item.key}
+                onFocused={() => {
+                  setFocusChecklistKey(null);
+                }}
+                // `Enter` で次の行、末尾の空行なら畳んで抜ける（#138）。
+                onSplit={() => {
+                  const lastAndEmpty =
+                    index + 1 === draft.checklist.length && item.text.trim() === "";
+                  if (lastAndEmpty) {
+                    setDraft({
+                      ...draft,
+                      checklist: deleteChecklistItem(draft.checklist, index),
+                    });
+                    setFocusChecklistKey(null);
+                    return;
+                  }
+                  const inserted = insertChecklistItemAfter(draft.checklist, index);
+                  setDraft({ ...draft, checklist: inserted.checklist });
+                  setFocusChecklistKey(inserted.key);
+                }}
+                // 空の行で `Backspace` なら、その行を消して上の行の末尾へ。
+                onBackspaceEmpty={() => {
+                  setDraft({
+                    ...draft,
+                    checklist: deleteChecklistItem(draft.checklist, index),
+                  });
+                  setFocusChecklistKey(draft.checklist[index - 1]?.key ?? null);
+                }}
               />
             ))}
           </SortableContext>
@@ -422,10 +455,11 @@ export function CardPanel({
             onClick={() => {
               // 名前を入れないままにした行は、保存のときに Rust が落とします
               // （#114）。消しにいかなくても保存できます。
-              setDraft({
-                ...draft,
-                checklist: [...draft.checklist, newChecklistItem()],
-              });
+              const item = newChecklistItem();
+              setDraft({ ...draft, checklist: [...draft.checklist, item] });
+              // 足した行にフォーカスを移します（#138）。押してから欄を押し直す
+              // 往復が、続けて打つときにいちばん効きます。
+              setFocusChecklistKey(item.key);
             }}
           >
             ＋ 項目を追加
@@ -594,6 +628,10 @@ function ChecklistRow({
   onChangeText,
   onMove,
   onDelete,
+  focused,
+  onFocused,
+  onSplit,
+  onBackspaceEmpty,
 }: {
   item: DraftChecklistItem;
   index: number;
@@ -602,6 +640,13 @@ function ChecklistRow({
   onChangeText: (text: string) => void;
   onMove: (direction: "up" | "down") => void;
   onDelete: () => void;
+  /** この行に打ち込ませたい（#138）。 */
+  focused: boolean;
+  onFocused: () => void;
+  /** `Enter`。次の行を作るか、末尾の空行なら畳んで抜ける。 */
+  onSplit: () => void;
+  /** 空の行で `Backspace`。 */
+  onBackspaceEmpty: () => void;
 }) {
   const {
     attributes,
@@ -612,6 +657,18 @@ function ChecklistRow({
     transition,
     isDragging,
   } = useSortable({ id: item.key });
+  const input = useRef<HTMLInputElement>(null);
+
+  // 足された行・分けた行に打ち込めるようにする（#138）。当たったことは
+  // `onFocus` が親に返すので、ここで状態は書きません。
+  useEffect(() => {
+    if (!focused) return;
+    const element = input.current;
+    if (element === null) return;
+    element.focus();
+    // 上の行へ戻ったときは、続きから打てるように末尾へ。
+    element.setSelectionRange(element.value.length, element.value.length);
+  }, [focused]);
 
   return (
     <div
@@ -644,12 +701,28 @@ function ChecklistRow({
         {item.checked ? "☑" : "□"}
       </button>
       <input
+        ref={input}
         className="field-input checklist-text"
         value={item.text}
         placeholder="項目"
         aria-label={`チェックリストの ${index + 1} 番目`}
         onChange={(event) => {
           onChangeText(event.target.value);
+        }}
+        onFocus={onFocused}
+        // 箇条書きと同じ流れで打てるようにします（#138）。**変換中の
+        // `Enter` は取りません**——確定しただけで行が増えます（ADR 0029）。
+        onKeyDown={(event) => {
+          if (isComposing(event.nativeEvent)) return;
+          if (event.key === "Enter") {
+            event.preventDefault();
+            onSplit();
+            return;
+          }
+          if (event.key === "Backspace" && item.text === "") {
+            event.preventDefault();
+            onBackspaceEmpty();
+          }
         }}
       />
       <button
