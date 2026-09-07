@@ -25,17 +25,22 @@ export function findTagByName(tags: readonly Tag[], name: string): Tag | null {
 
 /// 候補に出すタグ。
 ///
+/// **何も打っていないうちは 1 つも出しません**（#169）。以前は選んでいないタグを
+/// 全部並べていましたが、ボードのタグが増えるほど、カード 1 枚を書いている場所を
+/// ボード全体のタグの一覧が埋めます（`docs/DESIGN.md`「常用しない操作を画面に
+/// 常時出さない」）。どんなタグがあるかを見るのはタグ整理パネルの仕事で、ここは
+/// 打った文字に当たるものを出す場所です。
+///
 /// 既に選んであるものは出しません（付いていることはチップで見えている）。
-/// 打ちかけの文字があれば、それを含むものだけに絞ります。
 export function suggestTags(
   tags: readonly Tag[],
   selected: readonly number[],
   typed: string,
 ): Tag[] {
   const needle = typed.trim().toLocaleLowerCase();
+  if (needle === "") return [];
   return tags.filter(
     (tag) =>
-      !selected.includes(tag.id) &&
-      (needle === "" || tag.name.toLocaleLowerCase().includes(needle)),
+      !selected.includes(tag.id) && tag.name.toLocaleLowerCase().includes(needle),
   );
 }

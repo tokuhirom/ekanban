@@ -28,7 +28,8 @@ describe("findTagByName", () => {
 
 describe("suggestTags", () => {
   it("既に選んであるタグは候補に出さない", () => {
-    expect(suggestTags(tags, [1], "").map((tag) => tag.id)).toEqual([2, 3]);
+    expect(suggestTags(tags, [1], "仕").map((tag) => tag.id)).toEqual([]);
+    expect(suggestTags(tags, [1], "s").map((tag) => tag.id)).toEqual([2]);
   });
 
   it("打ちかけの文字で絞る。大文字小文字は同じものとして扱う", () => {
@@ -36,7 +37,8 @@ describe("suggestTags", () => {
     expect(suggestTags(tags, [], "買").map((tag) => tag.id)).toEqual([3]);
   });
 
-  it("何も打っていなければ、選んでいないものを全部出す", () => {
-    expect(suggestTags(tags, [], "").map((tag) => tag.id)).toEqual([1, 2, 3]);
+  it("何も打っていなければ、1 つも出さない", () => {
+    expect(suggestTags(tags, [], "")).toEqual([]);
+    expect(suggestTags(tags, [], "   ")).toEqual([]);
   });
 });
