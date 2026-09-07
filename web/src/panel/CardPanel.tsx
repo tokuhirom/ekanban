@@ -369,8 +369,8 @@ export function CardPanel({
         )}
       </header>
 
-      {/* 並びは「カードを大きくしたもの」です（#144）——タイトル、期限とタグの
-          1 行、説明、チェックリスト。見出しは出さず、欄の名前は placeholder と
+      {/* 並びは「カードを大きくしたもの」です（#144）——タイトル、期限、タグ、
+          説明、チェックリスト。見出しは出さず、欄の名前は placeholder と
           `aria-label` が言います（`docs/DESIGN.md`「案内は placeholder で出す」）。 */}
       <div className="panel-body">
         <input
@@ -401,75 +401,77 @@ export function CardPanel({
         )}
         <FieldFailure failure={failed} field="cardTitle" />
 
-        {/* 期限とタグは、タイトルの直下に 1 行で並べます（#144）。カード表面の
-            メタ情報と同じ並びで、読む順が画面とパネルで変わりません。期限・
-            チェックリスト・タグは新しいカードにも出します（#127）。 */}
-        <div className="card-meta">
-          {/* 期限は文字で打ちます（#134、ADR 0031）。`type="date"` をやめたのは、
-              カレンダーの見た目と操作が webview ごとに違い、キーボードから速く
-              打てないためです。**読み方は Rust に 1 つだけ**——「明日」が何日かを
-              ここでも数えると、`due_statuses` を出した判定と食い違います。 */}
-          {/* 外す × は欄に重ねず右へ並べます。期限が入っているときだけ出すので、
-              期限なしのカードでは欄が入力 1 つになります（#128）。 */}
-          <div className="due-field">
-            <input
-              id="card-due-date"
-              type="text"
-              className="field-input card-due-input"
-              aria-label="期限"
-              placeholder="期限（9/12、明日、金、+3）"
-              autoComplete="off"
-              value={draft.dueDate}
-              onChange={(event) => {
-                edit({ ...latest.current, dueDate: event.target.value });
-              }}
-              onBlur={() => {
-                if (editing.kind === "card") void commit();
-              }}
-              // 1 行の欄なので `Enter` で確定（`docs/DESIGN.md`）。
-              onKeyDown={(event) => {
-                if (event.key !== "Enter" || isComposing(event.nativeEvent)) return;
-                event.preventDefault();
-                if (editing.kind === "card") void commit();
-              }}
-            />
-            {draft.dueDate !== "" && (
-              <button
-                type="button"
-                className="ghost due-clear"
-                aria-label="期限を外す"
-                title="期限を外す"
-                onClick={() => {
-                  change((current) => ({ ...current, dueDate: "" }));
-                }}
-              >
-                ×
-              </button>
-            )}
-          </div>
-          <TagsInput
-            tags={board.tags}
-            selected={draft.tagIds}
-            failure={failed}
-            // タグは付け外しした瞬間に確定します（#141）。右クリックメニューから
-            // 付け外しするのと、同じ意味になります。
-            onToggle={(tagId) => {
-              change((current) => ({
-                ...current,
-                tagIds: toggleTag(current.tagIds, tagId),
-              }));
+        {/* 期限とタグは、タイトルの直下にこの順で並べます。カード表面のメタ情報と
+            同じ並びなので、読む順が画面とパネルで変わりません。**1 行に押し込む
+            のはやめました**（#169）——欄が 2 つ横に並ぶと、どちらも幅が足りず、
+            期限の placeholder が切れてタグのチップは 1 つで折り返していました。
+            期限・チェックリスト・タグは新しいカードにも出します（#127）。 */}
+        {/* 期限は文字で打ちます（#134、ADR 0031）。`type="date"` をやめたのは、
+            カレンダーの見た目と操作が webview ごとに違い、キーボードから速く
+            打てないためです。**読み方は Rust に 1 つだけ**——「明日」が何日かを
+            ここでも数えると、`due_statuses` を出した判定と食い違います。 */}
+        {/* 外す × は欄に重ねず右へ並べます。期限が入っているときだけ出すので、
+            期限なしのカードでは欄が入力 1 つになります（#128）。 */}
+        <div className="due-field">
+          <input
+            id="card-due-date"
+            type="text"
+            className="field-input card-due-input"
+            aria-label="期限"
+            placeholder="期限（9/12、明日、金、+3）"
+            autoComplete="off"
+            value={draft.dueDate}
+            onChange={(event) => {
+              edit({ ...latest.current, dueDate: event.target.value });
             }}
-            onCreate={createTag}
+            onBlur={() => {
+              if (editing.kind === "card") void commit();
+            }}
+            // 1 行の欄なので `Enter` で確定（`docs/DESIGN.md`）。
+            onKeyDown={(event) => {
+              if (event.key !== "Enter" || isComposing(event.nativeEvent)) return;
+              event.preventDefault();
+              if (editing.kind === "card") void commit();
+            }}
           />
+          {draft.dueDate !== "" && (
+            <button
+              type="button"
+              className="ghost due-clear"
+              aria-label="期限を外す"
+              title="期限を外す"
+              onClick={() => {
+                change((current) => ({ ...current, dueDate: "" }));
+              }}
+            >
+              ×
+            </button>
+          )}
         </div>
         {/* 打った文字がどう読まれたかを、確定する前に見せます。読めない間は
             何も出しません——打っている途中の文字はまだ間違いではないので、
-            断りは確定のときに欄の脇へ出ます。**メタ行の外に置きます**——中に
-            置くと、期限とタグが 1 行に収まりません（#144）。 */}
+            断りは確定のときに欄の脇へ出ます。**期限の欄の直後に置きます**——
+            1 行だったころはタグの後ろに回していましたが（#144）、行が分かれた
+            いまは間にタグが挟まると、どの欄の読みなのか分かりません（#169）。 */}
         {duePreview !== null && (
           <p className="field-note due-preview">→ {duePreview.label}</p>
         )}
         <FieldFailure failure={failed} field="dueDate" />
+
+        <TagsInput
+          tags={board.tags}
+          selected={draft.tagIds}
+          failure={failed}
+          // タグは付け外しした瞬間に確定します（#141）。右クリックメニューから
+          // 付け外しするのと、同じ意味になります。
+          onToggle={(tagId) => {
+            change((current) => ({
+              ...current,
+              tagIds: toggleTag(current.tagIds, tagId),
+            }));
+          }}
+          onCreate={createTag}
+        />
 
         <Description
           id="card-description"
@@ -736,7 +738,9 @@ function TagsInput({
         />
       </div>
       <FieldFailure failure={failure} field="tagName" />
-      {/* どんなタグがあるかを見せる道は残す。打つと候補が絞られる。 */}
+      {/* 候補は打っているあいだだけ出す（#169）。開いた時点でまだ付けていない
+          タグを全部並べると、ボードのタグが増えるほどカード 1 枚の編集画面が
+          埋まる。どんなタグがあるかを一覧するのはタグ整理パネルの仕事。 */}
       {suggestions.length > 0 && (
         <div className="button-row tag-suggestions">
           {suggestions.map((tag) => (

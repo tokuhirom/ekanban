@@ -623,40 +623,20 @@ button.danger {
   border-color: var(--color-info);
 }
 
-.card-meta {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-}
-
-.card-meta > .due-field {
-  flex: 0 1 auto;
-}
-
-.card-meta > .due-field > .card-due-input {
-  /* パネルは 340px。タグと 1 行に並ぶ幅にする（#144）。 */
-  width: 7.5em;
-  min-width: 0;
-}
-
 /* タイトルや説明と同じく、枠と余白は据え置きで色だけ変える（#168）。 */
-.card-meta > .due-field > .card-due-input:focus {
+.card-due-input:focus {
   outline: none;
   border-color: var(--color-info);
-}
-
-.card-meta > .tags-input {
-  flex: 1 1 120px;
-  min-width: 0;
 }
 
 .checklist {
   display: contents;
 }
 
-/* 期限の欄。外す × は入力に重ねず右へ並べる（#128）——`type="date"` が
- * 右端に出すカレンダーアイコンの位置が webview ごとに違うため。 */
+/* 期限の欄。行を丸ごと使う（#169）——タグと 1 行に並べていたころは 7.5em に
+ * 詰めていて、placeholder の「期限（9/12、明日、金、+3）」が切れていた。
+ * 外す × は入力に重ねず右へ並べる（#128）——`type="date"` が右端に出す
+ * カレンダーアイコンの位置が webview ごとに違うため。 */
 .due-field {
   display: flex;
   align-items: center;

@@ -336,9 +336,11 @@ test("選んだカードは Enter で開き、Escape で閉じる", async ({ pag
 
 // ---------------------------------------------------------------- パネルの並び
 
-/// パネルは「カードを大きくしたもの」（#144）。上から順に、タイトル、期限と
-/// タグの 1 行、説明、チェックリスト。見出しは出さず、名前は読み上げに残す。
-test("パネルの上の 2 行に、タイトルと期限とタグが出る", async ({ page }) => {
+/// パネルは「カードを大きくしたもの」（#144）。上から順に、タイトル、期限、
+/// タグ、説明、チェックリスト。**3 つとも別の行**（#169）——期限とタグを 1 行に
+/// 押し込んでいたころは、期限の placeholder が切れ、タグのチップが 1 つで
+/// 折り返していた。見出しは出さず、名前は読み上げに残す。
+test("パネルの上に、タイトル・期限・タグがそれぞれの行で出る", async ({ page }) => {
   await openBoard(page);
   await openFirstCard(page);
 
@@ -349,14 +351,16 @@ test("パネルの上の 2 行に、タイトルと期限とタグが出る", as
   await expect(due).toBeVisible();
   await expect(tags).toBeVisible();
 
-  // 期限とタグは同じ行。タイトルはその上。
+  // 上から順に、重ならずに並ぶ。横に並んでいれば行が重なる。
   const titleBox = await title.boundingBox();
   const dueBox = await due.boundingBox();
   const tagsBox = await tags.boundingBox();
-  expect(dueBox?.y).toBeGreaterThan(titleBox?.y ?? 0);
-  expect(Math.abs((dueBox?.y ?? 0) - (tagsBox?.y ?? 0))).toBeLessThan(
-    (dueBox?.height ?? 0) + 4,
-  );
+  expect(titleBox).not.toBeNull();
+  expect(dueBox).not.toBeNull();
+  expect(tagsBox).not.toBeNull();
+  if (titleBox === null || dueBox === null || tagsBox === null) return;
+  expect(dueBox.y).toBeGreaterThanOrEqual(titleBox.y + titleBox.height);
+  expect(tagsBox.y).toBeGreaterThanOrEqual(dueBox.y + dueBox.height);
 
   // 見出しの文字は出さない（名前は placeholder と aria-label が言う）。
   await expect(page.locator(".panel-body .field-label")).toHaveCount(0);
@@ -949,6 +953,8 @@ test("タグを作り、カードに付け、名前を変えて消せる", async
   const cardId = Number(
     await page.locator(".column").first().locator(".card").first().getAttribute("data-card"),
   );
+  // 候補は打っているあいだだけ出ます（#169）。打ってから候補を押す。
+  await page.locator(".tags-input-field").fill("あたらしい");
   await page.locator(".tag-suggestions").getByRole("button", { name: "あたらしいタグ" }).click();
   await page.locator(".close-card").click();
 
@@ -1058,6 +1064,25 @@ test("チップの ✕ でカードからタグが外れ、ボードのタグは
     .toContain("設計");
 });
 
+/// 候補は打っているあいだだけ出る（#169）。開いただけで、まだ付けていないタグが
+/// 全部並ぶことはない。
+test("タグの候補は、打っているあいだだけ出る", async ({ page }) => {
+  await openBoard(page);
+  await openFirstCard(page);
+
+  // 開いただけでは 1 つも出ない。シードには「調査」があり、1 枚目には付いていない。
+  await expect(page.locator(".tag-suggestions")).toHaveCount(0);
+
+  await page.locator(".tags-input-field").fill("調");
+  await expect(
+    page.locator(".tag-suggestions").getByRole("button", { name: "調査" }),
+  ).toBeVisible();
+
+  // 消せばまた引っこむ。
+  await page.locator(".tags-input-field").fill("");
+  await expect(page.locator(".tag-suggestions")).toHaveCount(0);
+});
+
 test("カードのタグを押すと、そのタグで絞り込む", async ({ page }) => {
   await openBoard(page);
 
@@ -1068,6 +1093,7 @@ test("カードのタグを押すと、そのタグで絞り込む", async ({ pa
   await page.locator(".open-tag-panel").click();
 
   await openFirstCard(page);
+  await page.locator(".tags-input-field").fill("絞り込み");
   await page.locator(".tag-suggestions").getByRole("button", { name: "絞り込み用" }).click();
   await page.locator(".close-card").click();
   await expect(page.locator(".card-panel")).toBeHidden();
