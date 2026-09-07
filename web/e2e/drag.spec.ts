@@ -159,3 +159,29 @@ test("入力欄にいる間は、盤面の割り当てを取らない", async ({
   await page.waitForTimeout(200);
   expect(await shape(page)).toEqual(before);
 });
+
+/// 空のカラムにも落とせる（#161）。カードが 1 枚も無いカラムは縦に長く、その角は
+/// ポインタから遠いので、角どうしの近さだけで決めると隣のカラムのカードに取られる。
+///
+/// **窓を広げてから測ります。** 出来合いの盤面は 4 本あり、5 本目を足すと既定の
+/// 窓では左端のカードが画面の外へ出て、掴むところから始められません。
+test.describe("空のカラム", () => {
+  test.use({ viewport: { width: 1600, height: 900 } });
+
+  test("1 枚も無いカラムにカードを落とせる", async ({ page }) => {
+    await openBoard(page);
+    await page.locator(".add-column").click();
+    await page.locator(".new-column-name").fill("からっぽ");
+    await page.locator(".new-column-name").press("Enter");
+    const empty = page.locator(".column", { hasText: "からっぽ" });
+    await expect(empty.locator(".column-empty")).toBeVisible();
+
+    const moved = await page.locator(".column").first().locator(".card-title").first().innerText();
+    const from = await centerOf(page, ".column >> nth=0 >> .card >> nth=0");
+    const target = await boxOf(empty.locator(".column-cards"));
+    await dragTo(page, from, { x: target.x + target.width / 2, y: target.y + 60 });
+    await page.mouse.up();
+
+    await expect.poll(async () => (await shape(page)).at(-1)).toEqual(["からっぽ", [moved]]);
+  });
+});
