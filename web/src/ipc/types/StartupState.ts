@@ -26,4 +26,18 @@ platform: Platform, filter: FilterState, windowBounds: WindowBoundsState | null,
 /**
  * 保存されている割り当て。登録できるかどうかは別の話（`docs/DESIGN.md`「クイックキャプチャ」）。
  */
-quickCaptureShortcut: string | null, };
+quickCaptureShortcut: string | null, 
+/**
+ * 動いているアプリの版（#147）。
+ *
+ * **出どころは `CARGO_PKG_VERSION` の 1 つだけ**です。webview 側の
+ * `package.json` の版はアプリの版ではないので、そちらは見ません。
+ */
+version: string, 
+/**
+ * いま開いているデータベースのフルパス（#147）。
+ *
+ * `EKANBAN_DATABASE` で差し替えていればそれが入ります。「場所を開く」で
+ * 開けるだけでは、どのファイルを見ているのかを文字で読めませんでした。
+ */
+databasePath: string, };

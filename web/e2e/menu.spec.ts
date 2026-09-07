@@ -160,8 +160,15 @@ test("盤面の上の Ctrl+Z は盤面を巻き戻す", async ({ page }) => {
   await expect.poll(storedTitles).not.toContain("キーで取り消すカード");
 });
 
-test("「ekanbanについて」はダイアログを出す", async ({ page }) => {
+/// 「ekanban について」に版とデータベースの場所が出る（#147）。パスは
+/// ハーネスが開いている一時ファイルなので、ここで実物と突き合わせられる。
+test("「ekanban について」に版と、開いているデータベースのパスが出る", async ({ page }) => {
   await openBoard(page);
+  const startup = await storedStartup();
+
   await chooseMenu(page, "about");
-  await expect(page.getByRole("dialog")).toContainText("ekanbanについて");
+  const dialog = page.locator(".dialog");
+  await expect(dialog.locator(".dialog-title")).toHaveText(`ekanban v${startup.version}`);
+  await expect(dialog.locator(".dialog-detail")).toContainText(startup.databasePath);
+  await expect(dialog.getByRole("button", { name: "場所を開く" })).toBeVisible();
 });

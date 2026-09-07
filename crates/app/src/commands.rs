@@ -73,6 +73,8 @@ pub fn startup_state(state: &AppState) -> Result<StartupState, AppError> {
         sidebar_collapsed: database.load_sidebar_collapsed().unwrap_or(false),
         capture_target: read_capture_target(&mut database)?,
         quick_capture_shortcut: database.load_quick_capture_shortcut().unwrap_or(None),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        database_path: state.database_path().to_string_lossy().into_owned(),
     })
 }
 
