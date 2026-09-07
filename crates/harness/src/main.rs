@@ -18,11 +18,12 @@
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::path::PathBuf;
 
-use ekanban_app::capture::QuickCaptureStatus;
 use ekanban_app::commands::{self, ExportFormat};
+use ekanban_app::dispatch;
 use ekanban_app::error::{AppError, ErrorKind};
 use ekanban_app::shortcut::{KeyPress, Shortcut};
-use ekanban_app::{AppState, ThemePreference};
+use ekanban_app::state::Source;
+use ekanban_app::{AppState, QuickCaptureStatus};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tiny_http::{Header, Method, Request, Response, Server};
@@ -40,14 +41,15 @@ fn main() {
     if let Some(parent) = database_path.parent() {
         std::fs::create_dir_all(parent).expect("データベースの置き場所を作れません");
     }
-    let (state, _) = commands::load_startup_state(&database_path).unwrap_or_else(|error| {
-        eprintln!(
-            "{} を開けませんでした: {}",
-            database_path.display(),
-            error.detail
-        );
-        std::process::exit(1);
-    });
+    let (state, _) = commands::load_startup_state(Source::Sqlite(database_path.clone()))
+        .unwrap_or_else(|error| {
+            eprintln!(
+                "{} を開けませんでした: {}",
+                database_path.display(),
+                error.detail
+            );
+            std::process::exit(1);
+        });
 
     let address = SocketAddrV4::new(Ipv4Addr::LOCALHOST, port);
     let server = Server::http(address).expect("ポートを開けません");
@@ -110,10 +112,13 @@ fn handle(mut request: Request, state: &AppState) {
     let _ = request.respond(cors(response));
 }
 
-/// コマンド名で振り分ける。**名前は Tauri 側（`crates/app/src/ipc.rs`）と同じ**。
+/// コマンド名で振り分ける。
 ///
-/// 引数の読み取り以外のことをここに書かないでください。判断が入りはじめたら、
-/// それは Tauri 側とハーネスで違う動きになるということです。
+/// **盤面に関わるものは `ekanban_app::dispatch` が引き受けます**——表を 2 つ
+/// 持たないためで、ブラウザ向けの組み立て（`crates/web`、[ADR 0035]）も同じ表を
+/// 通ります。ここに残っているのは、**環境で答えが変わるものだけ**です。
+///
+/// [ADR 0035]: ../../../docs/adr/0035-a-browser-build-of-the-real-core.md
 fn invoke(command: &str, args: Value, state: &AppState) -> Result<Value, AppError> {
     fn ok<T: serde::Serialize>(value: T) -> Result<Value, AppError> {
         serde_json::to_value(value).map_err(|error| {
@@ -136,131 +141,6 @@ fn invoke(command: &str, args: Value, state: &AppState) -> Result<Value, AppErro
 
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
-    struct BoardId {
-        board_id: i64,
-    }
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct Name {
-        name: String,
-    }
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct AddCard {
-        column_id: i64,
-        title: String,
-        description: String,
-        due_date: String,
-        tag_ids: Vec<i64>,
-        checklist: Vec<ekanban_core::model::ChecklistItemDraft>,
-    }
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct UpdateCard {
-        card_id: i64,
-        title: String,
-        description: String,
-        due_date: String,
-        tag_ids: Vec<i64>,
-        checklist: Vec<ekanban_core::model::ChecklistItemDraft>,
-    }
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct CardId {
-        card_id: i64,
-    }
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct CardTags {
-        card_id: i64,
-        tag_ids: Vec<i64>,
-    }
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct CardDueDate {
-        card_id: i64,
-        due_date: String,
-    }
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct ColumnId {
-        column_id: i64,
-    }
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct ColumnName {
-        column_id: i64,
-        name: String,
-    }
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct AddTag {
-        name: String,
-        color: String,
-    }
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct TagName {
-        tag_id: i64,
-        name: String,
-    }
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct TagColor {
-        tag_id: i64,
-        color: String,
-    }
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct TagId {
-        tag_id: i64,
-    }
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct MoveCard {
-        card_id: i64,
-        to_column_id: i64,
-        to_index: usize,
-    }
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct MoveColumn {
-        column_id: i64,
-        to_index: usize,
-    }
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct Filter {
-        query: String,
-        tag_id: Option<i64>,
-    }
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct FilterState {
-        filter: ekanban_core::db::FilterState,
-    }
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct Collapsed {
-        collapsed: bool,
-    }
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct Message {
-        message: String,
-    }
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct Theme {
-        preference: ThemePreference,
-    }
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct Format {
-        format: ExportFormat,
-    }
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
     struct FileName {
         file_name: String,
     }
@@ -277,25 +157,8 @@ fn invoke(command: &str, args: Value, state: &AppState) -> Result<Value, AppErro
     }
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
-    struct DueText {
-        value: String,
-    }
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
     struct Url {
         url: String,
-    }
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct CaptureColumn {
-        // ここの `ColumnId` はモデルのほう。すぐ上の `ColumnId` は、引数を
-        // 1 つだけ受け取るための入れ物で、別のもの。
-        column_id: Option<ekanban_core::model::ColumnId>,
-    }
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct Title {
-        title: String,
     }
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
@@ -304,121 +167,6 @@ fn invoke(command: &str, args: Value, state: &AppState) -> Result<Value, AppErro
     }
 
     match command {
-        "startup_state" => ok(commands::startup_state(state)?),
-        "snapshot" => ok(state.snapshot()?),
-        "switch_board" => ok(commands::switch_board(
-            state,
-            read::<BoardId>(args)?.board_id,
-        )?),
-        "create_board" => ok(commands::create_board(state, &read::<Name>(args)?.name)?),
-        "rename_board" => ok(commands::rename_board(state, &read::<Name>(args)?.name)?),
-        "delete_board" => ok(commands::delete_board(
-            state,
-            read::<BoardId>(args)?.board_id,
-        )?),
-        "add_card" => {
-            let a: AddCard = read(args)?;
-            ok(commands::add_card(
-                state,
-                a.column_id,
-                &a.title,
-                &a.description,
-                &a.due_date,
-                a.tag_ids,
-                a.checklist,
-            )?)
-        }
-        "update_card" => {
-            let a: UpdateCard = read(args)?;
-            ok(commands::update_card(
-                state,
-                a.card_id,
-                &a.title,
-                &a.description,
-                &a.due_date,
-                a.tag_ids,
-                a.checklist,
-            )?)
-        }
-        "copy_card" => ok(commands::copy_card(state, read::<CardId>(args)?.card_id)?),
-        "delete_card" => ok(commands::delete_card(state, read::<CardId>(args)?.card_id)?),
-        "archive_card" => ok(commands::archive_card(
-            state,
-            read::<CardId>(args)?.card_id,
-        )?),
-        "restore_card" => ok(commands::restore_card(
-            state,
-            read::<CardId>(args)?.card_id,
-        )?),
-        "set_card_tags" => {
-            let a: CardTags = read(args)?;
-            ok(commands::set_card_tags(state, a.card_id, a.tag_ids)?)
-        }
-        "set_card_due_date" => {
-            let a: CardDueDate = read(args)?;
-            ok(commands::set_card_due_date(state, a.card_id, &a.due_date)?)
-        }
-        "add_column" => ok(commands::add_column(state, &read::<Name>(args)?.name)?),
-        "rename_column" => {
-            let a: ColumnName = read(args)?;
-            ok(commands::rename_column(state, a.column_id, &a.name)?)
-        }
-        "remove_column" => ok(commands::remove_column(
-            state,
-            read::<ColumnId>(args)?.column_id,
-        )?),
-        "archive_column" => ok(commands::archive_column(
-            state,
-            read::<ColumnId>(args)?.column_id,
-        )?),
-        "add_tag" => {
-            let a: AddTag = read(args)?;
-            ok(commands::add_tag(state, &a.name, &a.color)?)
-        }
-        "rename_tag" => {
-            let a: TagName = read(args)?;
-            ok(commands::rename_tag(state, a.tag_id, &a.name)?)
-        }
-        "set_tag_color" => {
-            let a: TagColor = read(args)?;
-            ok(commands::set_tag_color(state, a.tag_id, &a.color)?)
-        }
-        "remove_tag" => ok(commands::remove_tag(state, read::<TagId>(args)?.tag_id)?),
-        "move_card" => {
-            let a: MoveCard = read(args)?;
-            ok(commands::move_card(
-                state,
-                a.card_id,
-                a.to_column_id,
-                a.to_index,
-            )?)
-        }
-        "move_column" => {
-            let a: MoveColumn = read(args)?;
-            ok(commands::move_column(state, a.column_id, a.to_index)?)
-        }
-        "filter_cards" => {
-            let a: Filter = read(args)?;
-            ok(commands::filter_cards(state, &a.query, a.tag_id))
-        }
-        "set_filter_state" => ok(commands::set_filter_state(
-            state,
-            &read::<FilterState>(args)?.filter,
-        )?),
-        "set_sidebar_collapsed" => ok(commands::set_sidebar_collapsed(
-            state,
-            read::<Collapsed>(args)?.collapsed,
-        )?),
-        "set_theme_preference" => ok(commands::set_theme_preference(
-            state,
-            read::<Theme>(args)?.preference,
-        )?),
-        "undo" => ok(commands::undo(state)?),
-        "redo" => ok(commands::redo(state)?),
-        "suggested_export_name" => ok(commands::suggested_export_name(
-            state,
-            read::<Format>(args)?.format,
-        )),
         // ブラウザに OS の保存ダイアログはありません。**選ぶところだけ**を
         // データベースの隣に決め打ちで返し、書き出しの経路はそのまま通します。
         // 開発とテストのためのもので、配るものには入りません。
@@ -442,13 +190,6 @@ fn invoke(command: &str, args: Value, state: &AppState) -> Result<Value, AppErro
         // 場所を開く相手（OS のファイル管理）がブラウザにはいない。押しても
         // 何も起きないことだけが本物と違う。
         "reveal_path" | "reveal_database" | "reveal_backups" => ok(()),
-        "due_date_preview" => ok(commands::due_date_preview(&read::<DueText>(args)?.value)),
-        "capture_target" => ok(commands::capture_target(state)?),
-        "set_capture_column" => ok(commands::set_capture_column(
-            state,
-            read::<CaptureColumn>(args)?.column_id,
-        )?),
-        "capture_card" => ok(commands::capture_card(state, &read::<Title>(args)?.title)?),
         // ブラウザにグローバルホットキーはありません。登録できるかどうかは
         // 本物の窓の話なので、ここでは「使える」ことにして、割り当ての読み取りと
         // 保存だけを本物と同じ経路に通します。
@@ -484,15 +225,8 @@ fn invoke(command: &str, args: Value, state: &AppState) -> Result<Value, AppErro
             }
             ok(())
         }
-        "log_frontend_error" => {
-            commands::log_frontend_error(&read::<Message>(args)?.message);
-            ok(())
-        }
-        _ => Err(AppError::new(
-            ErrorKind::BoardIo,
-            "知らないコマンドです",
-            format!("{command} は ekanban-harness に出ていません"),
-        )),
+        _ => dispatch::invoke(command, args, state)
+            .unwrap_or_else(|| Err(dispatch::unknown_command(command, "ekanban-harness"))),
     }
 }
 

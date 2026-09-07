@@ -102,6 +102,17 @@ export interface Ipc {
   /** データベースの控えを取る。書けたパスが返る。 */
   backupDatabase(destination: string): Promise<string>;
   databaseLocation(): Promise<string>;
+  /**
+   * 「場所を開く」を出せるか。
+   *
+   * ブラウザだけで動く組み立てには、開く相手（OS のファイル管理）がいません
+   * （[ADR 0035]）。**押しても何も起きないボタンを出さない**ために、出す前に
+   * ここを見ます。ダウンロードとして受け取ったファイルの居場所は、そもそも
+   * ページが知りません。
+   *
+   * [ADR 0035]: ../../../docs/adr/0035-a-browser-build-of-the-real-core.md
+   */
+  readonly canRevealPaths: boolean;
   /** OS のファイル管理で場所を開く。 */
   revealPath(path: string): Promise<void>;
   revealDatabase(): Promise<void>;

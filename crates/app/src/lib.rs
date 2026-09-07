@@ -10,23 +10,35 @@
 //!
 //! [ADR 0018]: ../../../docs/adr/0018-rust-owns-the-board-state.md
 
-pub mod capture;
 pub mod commands;
+pub mod dispatch;
 pub mod error;
 pub mod events;
-pub mod ipc;
 pub mod menu;
-pub mod run;
 pub mod shortcut;
 pub mod snapshot;
 pub mod state;
+
+// Tauri の殻。`shell` を外すと、コマンドの層だけが残ります（`crates/web`、
+// [ADR 0035]）。**ここに並ぶものだけが Tauri を知っています。**
+//
+// [ADR 0035]: ../../../docs/adr/0035-a-browser-build-of-the-real-core.md
+#[cfg(feature = "shell")]
+pub mod capture;
+#[cfg(feature = "shell")]
+pub mod ipc;
+#[cfg(feature = "shell")]
+pub mod run;
+#[cfg(feature = "shell")]
 pub mod window;
 
 pub use error::{AppError, ErrorKind, Field};
 pub use menu::{Action, AppAction, WindowAction};
+#[cfg(feature = "shell")]
 pub use run::run;
 pub use snapshot::{
-    CaptureTarget, CardDueStatus, Platform, Snapshot, StartupState, ThemePreference,
+    CaptureTarget, CardDueStatus, Platform, QuickCaptureStatus, Snapshot, StartupState,
+    ThemePreference,
 };
 pub use state::AppState;
 

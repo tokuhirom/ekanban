@@ -142,6 +142,9 @@ export function harnessIpc(base: string): Ipc {
     backupDatabase: (destination) =>
       call<string>(base, "backup_database", { destination }),
     databaseLocation: () => call<string>(base, "database_location"),
+    // ハーネスは本物と同じ経路を通します。開く相手がいないので何も起きない、
+    // という違いだけが残ります（本物では OS のファイル管理が開きます）。
+    canRevealPaths: true,
     revealPath: async (path) => {
       await call(base, "reveal_path", { path });
     },

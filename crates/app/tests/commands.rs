@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use ekanban_app::commands;
 use ekanban_app::error::{ErrorKind, Field};
 use ekanban_app::snapshot::ThemePreference;
+use ekanban_app::state::Source;
 use ekanban_app::AppState;
 use ekanban_core::db::{Database, FilterState, WindowBoundsState};
 use ekanban_core::model::{Board, CardId, ChecklistItemDraft, ColumnId};
@@ -33,7 +34,8 @@ impl Harness {
                 .save_board(&mut fixture)
                 .expect("the fixture board is saved");
         }
-        let (state, _) = commands::load_startup_state(&path).expect("the startup state is read");
+        let (state, _) = commands::load_startup_state(Source::Sqlite(path.clone()))
+            .expect("the startup state is read");
         Self {
             _directory: directory,
             path,
@@ -85,7 +87,8 @@ fn the_startup_state_carries_everything_the_window_needs_to_open() {
             .expect("stored");
     }
 
-    let (_, startup) = commands::load_startup_state(&harness.path).expect("the state is read");
+    let (_, startup) = commands::load_startup_state(Source::Sqlite(harness.path.clone()))
+        .expect("the state is read");
 
     assert_eq!(startup.theme, ThemePreference::Dark);
     assert!(startup.sidebar_collapsed);
@@ -105,7 +108,8 @@ fn a_missing_last_board_falls_back_to_the_first_one() {
     let created_id = created.board.id;
     commands::delete_board(&harness.state, created_id).expect("the board is deleted");
 
-    let (_, startup) = commands::load_startup_state(&harness.path).expect("the state is read");
+    let (_, startup) = commands::load_startup_state(Source::Sqlite(harness.path.clone()))
+        .expect("the state is read");
     assert_ne!(startup.snapshot.board.id, created_id);
 }
 
@@ -602,7 +606,8 @@ fn the_display_state_survives_a_restart() {
     )
     .expect("stored");
 
-    let (_, startup) = commands::load_startup_state(&harness.path).expect("the state is read");
+    let (_, startup) = commands::load_startup_state(Source::Sqlite(harness.path.clone()))
+        .expect("the state is read");
     assert_eq!(startup.filter.search, "SQLite");
     assert_eq!(startup.theme, ThemePreference::Dark);
     assert!(startup.sidebar_collapsed);
@@ -836,7 +841,8 @@ fn a_capture_target_that_no_longer_exists_falls_back_to_none() {
         .expect("the target is stored");
     commands::remove_column(&harness.state, column_id).expect("the column is removed");
 
-    let (_, startup) = commands::load_startup_state(&harness.path).expect("the state is read");
+    let (_, startup) = commands::load_startup_state(Source::Sqlite(harness.path.clone()))
+        .expect("the state is read");
     assert_eq!(startup.capture_target, None);
 }
 
@@ -848,7 +854,8 @@ fn the_quick_capture_shortcut_is_remembered_as_it_was_given() {
     // （`shortcut.rs`）。
     commands::set_quick_capture_shortcut(&harness.state, Some("ctrl-shift-n")).expect("stored");
 
-    let (_, startup) = commands::load_startup_state(&harness.path).expect("the state is read");
+    let (_, startup) = commands::load_startup_state(Source::Sqlite(harness.path.clone()))
+        .expect("the state is read");
     assert_eq!(
         startup.quick_capture_shortcut.as_deref(),
         Some("ctrl-shift-n")

@@ -17,7 +17,8 @@ use std::path::{Path, PathBuf};
 
 use chrono::NaiveDate;
 
-use crate::db::{Database, DbError};
+use crate::db::Database;
+use crate::store::StoreError;
 
 /// 残す世代の数。1 日に 1 つしか取らないので、毎日起動する人で 7 日ぶん。
 pub const GENERATIONS: usize = 7;
@@ -44,7 +45,7 @@ pub enum BackupError {
         source: std::io::Error,
     },
     #[error("could not copy the database: {0}")]
-    Database(#[from] DbError),
+    Database(#[from] StoreError),
 }
 
 fn io_error(path: &Path, source: std::io::Error) -> BackupError {

@@ -104,6 +104,7 @@ export const tauriIpc: Ipc = {
   backupDatabase: (destination) =>
     invoke<string>("backup_database", { destination }),
   databaseLocation: () => invoke<string>("database_location"),
+  canRevealPaths: true,
   revealPath: async (path) => {
     await invoke("reveal_path", { path });
   },

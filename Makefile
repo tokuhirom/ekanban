@@ -5,7 +5,7 @@ RELEASE_APP := $(BUNDLE)/macos/$(APP_NAME).app
 # 画面側の依存として入っている Tauri の CLI。別に入れる必要はない。
 TAURI := ../../web/node_modules/.bin/tauri
 
-.PHONY: help build release dev web-install web-check e2e test types types-check fmt fmt-check lint deps-check check screenshots icon bundle bundle-debug open install install-linux uninstall-linux clean
+.PHONY: help build release dev web-install web-check e2e web-demo web-demo-dev e2e-demo test types types-check fmt fmt-check lint deps-check check screenshots icon bundle bundle-debug open install install-linux uninstall-linux clean
 
 help: ## このヘルプを表示する
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -32,6 +32,15 @@ e2e: web-install ## ハーネスを上げて Playwright を走らせる (Chromiu
 	cargo build -p ekanban-harness --example manual_screenshot_seed
 	cargo build -p ekanban-harness
 	npm --prefix web run e2e
+
+web-demo: web-install ## ブラウザ版を組み立てる (web/dist-demo/、ADR 0035)
+	script/build-web-demo
+
+web-demo-dev: web-demo ## ブラウザ版を手元で開く
+	npm --prefix web run dev:demo
+
+e2e-demo: web-demo ## ブラウザ版の e2e を走らせる (Chromium)
+	npm --prefix web run e2e:demo
 
 test: ## テストを実行する
 	cargo test --workspace --all-features

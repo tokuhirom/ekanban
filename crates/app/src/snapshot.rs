@@ -6,8 +6,8 @@
 //! 差分に落とします。
 
 use chrono::NaiveDate;
-use ekanban_core::db::WindowBoundsState;
 use ekanban_core::model::{due_status, Board, BoardId, BoardSummary, CardId, ColumnId, DueStatus};
+use ekanban_core::store::WindowBoundsState;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -121,8 +121,13 @@ impl ThemePreference {
 /// 文字列で、実際 Playwright の Safari 模擬は Linux 上で `Macintosh` を名乗り
 /// ます。ここは Rust がコンパイル時に知っていることなので、そちらから渡します。
 ///
+/// **例外はブラウザだけで動く組み立てです**（`crates/web`、[ADR 0035]）。
+/// `wasm32-unknown-unknown` は macOS でも Linux でもないので、そこだけは
+/// ページが名乗ったものを受け取ります。配るアプリの経路は変わりません。
+///
 /// [ADR 0009]: ../../../docs/adr/0009-per-platform-key-bindings.md
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+/// [ADR 0035]: ../../../docs/adr/0035-a-browser-build-of-the-real-core.md
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub enum Platform {
@@ -141,6 +146,23 @@ impl Platform {
             Self::Linux
         }
     }
+}
+
+/// 割り当てのダイアログが開くときに読むもの。
+///
+/// 型がここにあるのは、**殻を外した組み立てでも返す必要がある**ためです
+/// （`crates/web`、[ADR 0035]）。中身を埋めるのは殻を持っている側
+/// （`capture::status`）で、ブラウザでは「使えない理由」だけが入ります。
+///
+/// [ADR 0035]: ../../../docs/adr/0035-a-browser-build-of-the-real-core.md
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct QuickCaptureStatus {
+    /// この環境でグローバルホットキーを使えないなら、その理由。使えるなら `null`。
+    pub unavailable: Option<String>,
+    /// 保存されているのに登録できていない理由。効いているなら `null`。
+    pub failure: Option<String>,
 }
 
 /// クイックキャプチャが書き込む先。アプリ全体で 1 つ（`docs/DESIGN.md`）。
@@ -169,7 +191,7 @@ pub struct StartupState {
     pub snapshot: Snapshot,
     /// 動いている OS。キーの割り当てを決めるのに使います。
     pub platform: Platform,
-    pub filter: ekanban_core::db::FilterState,
+    pub filter: ekanban_core::store::FilterState,
     pub window_bounds: Option<WindowBoundsState>,
     pub theme: ThemePreference,
     pub sidebar_collapsed: bool,

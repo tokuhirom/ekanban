@@ -14,11 +14,12 @@ use tauri::{AppHandle, Emitter as _, State, WebviewWindow};
 use tauri_plugin_dialog::DialogExt as _;
 use tauri_plugin_opener::OpenerExt as _;
 
-use crate::capture::{QuickCaptureStatus, Registration};
+use crate::capture::Registration;
 use crate::commands::{self, ExportFormat};
 use crate::error::AppError;
 use crate::events;
 use crate::shortcut::KeyPress;
+use crate::snapshot::QuickCaptureStatus;
 use crate::snapshot::{CaptureTarget, Snapshot, StartupState, ThemePreference};
 use crate::state::AppState;
 

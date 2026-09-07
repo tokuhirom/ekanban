@@ -16,6 +16,9 @@ README が使う人向けの入口、[マニュアル](MANUAL.md) が使い方�
 
 - **`crates/core`（`ekanban-core`）に UI ツールキットを依存させない。** `model.rs` / `db/mod.rs` / `backup.rs` / `paths.rs` / `instance.rs` / `diagnostics.rs` は画面の作りを知らない。これが、テストを GUI のランタイム無しで走らせ続ける条件であり、アプリと開発用のハーネスが同じコードを使える条件でもある。依存の依存から入り込むほうがありがちなので、解決した依存グラフを `script/check-core-independence` が CI で見る
 - **`crates/app/src/commands.rs` に `tauri` を出さない。** `ipc.rs` の `#[tauri::command]` は、その関数を呼ぶだけの包み。判断を包みの側に置かないことは設計そのもので、開発用のハーネス（`crates/harness`）が同じ関数を HTTP に出せるのはこれによる
+- **盤面の置き場所は差し替えられる。モデルは差し替えない。** `crates/core/src/store.rs` の `Store` が口で、配るアプリは SQLite（`db/mod.rs`、`sqlite` feature）、ブラウザ版は JSON（`store::JsonStore`）。**分かれているのは「どう置くか」だけ**で、採番も並べ替えも Undo も `model.rs` の 1 つのまま。`Store` に盤面の判断を書かない（[ADR 0036](adr/0036-one-model-two-places-to-put-it.md)）
+- **`crates/app` の `shell` feature の外に、Tauri を出さない。** 窓・ネイティブのメニュー・OS のダイアログ・グローバルホットキーがその内側で、外に残るのは `commands` / `dispatch` / `state` / `snapshot` / `error` と、メニューの「データとしての構成」。ブラウザだけで動く版（`crates/web`）が、殻を外したこの層をそのまま使う（[ADR 0035](adr/0035-a-browser-build-of-the-real-core.md)）
+- **コマンド名で振り分ける表を 2 つ持たない。** `crates/app/src/dispatch.rs` の 1 つを、開発用のハーネスとブラウザ版が通る。環境で答えが変わるもの（保存先を選ぶ、場所を開く、URL を開く）だけが呼ぶ側に残る
 - **SQL は `crates/core/src/db/` に閉じる。** `tauri-plugin-sql` は使わない。スキーマ移行も差分保存もここにあり、それを捨てる理由がない。`tauri-plugin-store` も使わない——表示の状態は `app_state` テーブルにあり、データの置き場所を 2 つに割る理由がない
 
 ### 状態の持ち主
@@ -183,7 +186,7 @@ README が「いちばん大事にしています」と書いているところ�
 
 層の分け方（中核 / コマンド / 画面 / 部品）と書き方は [開発の手引きの「テスト」](DEVELOPMENT.md#テスト) にある（[ADR 0021](adr/0021-two-layer-testing-for-the-webview.md)）。ここに置くのは、その形を保つための決まりごと。
 
-- **偽物のバックエンドを TypeScript で書かない。** `ekanban-harness` が `crates/app` のコマンドを同じ名前で HTTP に出し、答えるのは本物の `ekanban-core`。モデルの挙動がテストの中でだけ違う、が起きない
+- **偽物のバックエンドを TypeScript で書かない。** `ekanban-harness` が `crates/app` のコマンドを同じ名前で HTTP に出し、答えるのは本物の `ekanban-core`。モデルの挙動がテストの中でだけ違う、が起きない。**ブラウザで配る版（`crates/web`）も同じ**で、そちらは同じコマンドを wasm に組み直して動かす（[ADR 0035](adr/0035-a-browser-build-of-the-real-core.md)）
 - **画面の振る舞いは、本物の画面を開いて確かめる。** 純粋関数に切り出して単体で確かめるだけでは、配線（ハンドラの付け忘れ、入力欄にフォーカスがある間の抑止）が抜けても気づけない。切り出し自体は続けるが、それはテストの代わりにはならない
 - **画面のテストは、画面と SQLite の両方を見る。** `web/e2e/harness.ts` の `invoke()` で盤面を読み直す。画面に出ているだけでは、保存の配線が抜けていても気づけない
 - **待ち合わせは要素の出現で書き、実時間の `sleep` を入れない。** 入れると、保存の完了を待たないテストが偶然通るようになる
@@ -198,6 +201,9 @@ README が「いちばん大事にしています」と書いているところ�
 - **大文字と小文字だけが違うファイル名を作らない。** macOS と Windows のファイルシステムは大文字小文字を区別しないので、`Foo.tsx` と `foo.ts` が同じ名前に潰れ、Linux では通ったビルドがそこだけ落ちる
 - **配るものは Tauri のバンドラが作る。** macOS は `.app`（`.zip`）と `.dmg`、Linux は `.deb` と `.AppImage` に加えて `.tar.gz`（root を要求しない導線）、Windows は `.zip` と NSIS のインストーラ。ad-hoc 署名の指定は `tauri.conf.json` にあり、手元で組んだものと CI が組んだものが同じ署名になる（[ADR 0014](adr/0014-unsigned-apple-silicon-only-macos-builds.md)）
 - **`cargo run` はアプリを起動する。** ワークスペースの `default-members` を `crates/app` にしてある。**代わりに `--workspace` を省いた `cargo` のコマンドはそこだけを見る**ので、Makefile と CI は必ず `--workspace` を付ける
+- **ブラウザに SQLite を積まない。** `wasm32-unknown-unknown` に組んだ SQLite だけで 2.1 MB あり、こちらのコード全部より 5 倍大きい。ブラウザ版の置き場所は JSON で、盤面は文字列 1 つとして `localStorage` に入る（[ADR 0036](adr/0036-one-model-two-places-to-put-it.md)）
+- **ブラウザ版に、盤面の判断を書かない。** `crates/web` に入るのは環境の差だけ（保存先、ファイルの持ち出し方、URL の開き方）。メニューの構成も Rust が返し（`menu::web_sections`）、ページはそれを描く。ブラウザにできないことは**消さずに灰色にして、理由を文言に入れる**（[ADR 0035](adr/0035-a-browser-build-of-the-real-core.md)）
+- **ブラウザ版だけが、どの OS かをページから受け取る。** `wasm32-unknown-unknown` はどの OS でもないので、コンパイル時に決められない。配るアプリの経路は変えない（[ADR 0009](adr/0009-per-platform-key-bindings.md)）
 - **Node の依存を増やさない。** `cargo` だけで完結していたところに増やしたものなので、版はロックファイルで固定し、入れるのは `npm ci` だけにする
 
 ### 根拠の書き方

@@ -16,14 +16,19 @@
 //! テキスト編集（カット・コピー・ペースト・すべてを選択）と macOS のシステム
 //! 項目は [`Predefined`] に任せます。OS が持っている操作を自分で書き直しません。
 
+#[cfg(any(feature = "shell", test))]
 use std::collections::HashMap;
 
 use serde::Serialize;
+#[cfg(feature = "shell")]
 use tauri::menu::{
     AboutMetadata, Menu, MenuItemBuilder, MenuItemKind, PredefinedMenuItem, Submenu, SubmenuBuilder,
 };
+#[cfg(feature = "shell")]
 use tauri::{AppHandle, Runtime};
 use ts_rs::TS;
+
+use crate::snapshot::Platform;
 
 /// webview が受け取るメニューの操作。`app:action` の積荷です。
 ///
@@ -255,7 +260,19 @@ pub struct Section {
 ///
 /// [ADR 0015]: ../../../docs/adr/0015-a-menu-bar-on-every-platform.md
 pub fn sections() -> Vec<Section> {
-    if cfg!(target_os = "macos") {
+    sections_for(Platform::current())
+}
+
+/// 指定した OS のメニューバー。
+///
+/// `sections` が `cfg!` を読んでいたところを引数にしてあります。**ブラウザ向けの
+/// 組み立てには、コンパイル時に分かる OS がありません**——`wasm32-unknown-unknown`
+/// は macOS でもなければ Linux でもないので、どちらのメニューバーを出すかは
+/// ページが名乗った OS で決めます（[ADR 0035]）。
+///
+/// [ADR 0035]: ../../../docs/adr/0035-a-browser-build-of-the-real-core.md
+pub fn sections_for(platform: Platform) -> Vec<Section> {
+    if platform == Platform::Macos {
         macos_sections()
     } else {
         drawn_sections()
@@ -499,6 +516,142 @@ fn view_items(board_list: Option<&'static str>, fullscreen: Item) -> Vec<Item> {
     ]
 }
 
+/// ページが描くメニューバーの 1 つぶん（[ADR 0035]）。
+///
+/// [ADR 0035]: ../../../docs/adr/0035-a-browser-build-of-the-real-core.md
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct WebSection {
+    pub name: String,
+    pub items: Vec<WebItem>,
+}
+
+/// ページが描くメニューの 1 項目。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+#[ts(export)]
+pub enum WebItem {
+    #[serde(rename_all = "camelCase")]
+    Action {
+        action: AppAction,
+        label: String,
+        /// muda の書き方（`"CmdOrCtrl+N"`）のまま渡します。**押されたキーと
+        /// 突き合わせるのも、画面に出す形にするのもページの仕事**です——
+        /// ブラウザにはアクセラレータを引き受けるメニューバーが無いので、
+        /// `web/src/shell/accelerator.ts` が受けます。
+        accelerator: Option<String>,
+        enabled: bool,
+    },
+    Separator,
+}
+
+/// ブラウザで出すメニューバー（[ADR 0035]）。
+///
+/// [`sections_for`] から、**ブラウザに持っていけないものを落としただけ**の
+/// ものです。メニューの構成を 2 か所に書かないための形で、ここに項目を
+/// 足しません——足すと、殻のメニューに無いものがデモにだけ出ます。
+///
+/// 落とすのは 2 種類です。
+///
+/// - [`Item::Predefined`]。カット・コピー・ペーストも、隠す・終了も OS のもので、
+///   ブラウザの中に相手がいません。テキスト編集はブラウザ自身が持っています
+/// - [`WindowAction`]。閉じる・全画面・終了はウィンドウそのものの操作で、
+///   ページには手が届きません
+///
+/// 落とした結果として区切り線が続いたり、端に残ったりするので、そこも
+/// ならします。**ページ側で「前が区切り線だったか」を数えさせません。**
+///
+/// [ADR 0035]: ../../../docs/adr/0035-a-browser-build-of-the-real-core.md
+pub fn web_sections(platform: Platform) -> Vec<WebSection> {
+    sections_for(platform)
+        .into_iter()
+        .map(|section| WebSection {
+            name: section.name.to_string(),
+            items: tidy_separators(
+                section
+                    .items
+                    .into_iter()
+                    .filter_map(|item| match item {
+                        Item::Action {
+                            action: Action::App(action),
+                            label,
+                            accelerator,
+                            enabled,
+                        } => Some(browser_availability(WebItem::Action {
+                            action,
+                            label,
+                            accelerator: accelerator.map(str::to_string),
+                            enabled,
+                        })),
+                        Item::Separator => Some(WebItem::Separator),
+                        Item::Action {
+                            action: Action::Window(_),
+                            ..
+                        }
+                        | Item::Predefined(_) => None,
+                    })
+                    .collect(),
+            ),
+        })
+        .filter(|section| !section.items.is_empty())
+        .collect()
+}
+
+/// ブラウザに相手がいない項目を、**灰色にして理由を文言に入れる**。
+///
+/// 消しません。消すと「この機能はこのアプリに無い」に見えます（この規則は
+/// [`Item`] の `enabled` にも書いてあります）。灰色の項目は押せず、押せない以上
+/// 理由を出す先が無いので、`quick_capture_item` と同じように文言に入れます。
+///
+/// ファイル管理でフォルダを開くのと、データベースの控えがそれです。前者は
+/// ブラウザから OS のファイル管理を呼べないため、後者は**ブラウザ版に
+/// SQLite のファイルがそもそも無い**ためです（[ADR 0036]）。**盤面の持ち出しは
+/// 残ります**——「ボードを書き出す」の 2 つがダウンロードになります。
+///
+/// [ADR 0036]: ../../../docs/adr/0036-one-model-two-places-to-put-it.md
+fn browser_availability(item: WebItem) -> WebItem {
+    let WebItem::Action {
+        action,
+        label,
+        accelerator,
+        enabled,
+    } = item
+    else {
+        return item;
+    };
+    let unavailable = matches!(
+        action,
+        AppAction::RevealDatabase | AppAction::RevealBackups | AppAction::BackupDatabase
+    );
+    WebItem::Action {
+        action,
+        label: if unavailable {
+            format!("{label}（ブラウザでは使えません）")
+        } else {
+            label
+        },
+        accelerator,
+        enabled: enabled && !unavailable,
+    }
+}
+
+/// 端の区切り線と、続いた区切り線を落とす。
+fn tidy_separators(items: Vec<WebItem>) -> Vec<WebItem> {
+    let mut tidied: Vec<WebItem> = Vec::with_capacity(items.len());
+    for item in items {
+        if item == WebItem::Separator && matches!(tidied.last(), None | Some(WebItem::Separator)) {
+            continue;
+        }
+        tidied.push(item);
+    }
+    if tidied.last() == Some(&WebItem::Separator) {
+        tidied.pop();
+    }
+    tidied
+}
+
+#[cfg(feature = "shell")]
 /// [`sections`] を Tauri のメニューに変換する。
 pub fn build<R: Runtime>(app_handle: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     let menu = Menu::new(app_handle)?;
@@ -508,6 +661,7 @@ pub fn build<R: Runtime>(app_handle: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     Ok(menu)
 }
 
+#[cfg(feature = "shell")]
 /// メニューに付いているキーの割り当てを、付け外しする。
 ///
 /// **クイックキャプチャの割り当てを捕まえている間は外します**（`docs/DESIGN.md`
@@ -529,6 +683,7 @@ pub fn set_accelerators_active<R: Runtime>(app: &AppHandle<R>, active: bool) -> 
 }
 
 /// メニューの項目が、押されたキーをどう取るか。
+#[cfg(any(feature = "shell", test))]
 struct Binding {
     accelerator: Option<&'static str>,
     enabled: bool,
@@ -540,6 +695,7 @@ struct Binding {
 /// です。控えを持ち回すと、控えを取り損ねた経路が 1 つでもあれば割り当てが
 /// 消えたままになります。`enabled` も同じで、もともと灰色だった項目（使えない
 /// 環境のクイックキャプチャ）が戻すときに押せるようになりません。
+#[cfg(any(feature = "shell", test))]
 fn bindings() -> HashMap<&'static str, Binding> {
     sections()
         .iter()
@@ -562,6 +718,7 @@ fn bindings() -> HashMap<&'static str, Binding> {
         .collect()
 }
 
+#[cfg(feature = "shell")]
 /// `wanted` が `None` なら外し、`Some` ならその形に戻す。
 ///
 /// **外すのに 2 つ必要です。** muda はアクセラレータを外せる環境と外せない環境が
@@ -596,6 +753,7 @@ fn apply_bindings<R: Runtime>(
     Ok(())
 }
 
+#[cfg(feature = "shell")]
 fn submenu<R: Runtime>(app_handle: &AppHandle<R>, section: &Section) -> tauri::Result<Submenu<R>> {
     let mut builder = SubmenuBuilder::new(app_handle, section.name);
     for item in &section.items {
@@ -621,6 +779,7 @@ fn submenu<R: Runtime>(app_handle: &AppHandle<R>, section: &Section) -> tauri::R
     builder.build()
 }
 
+#[cfg(feature = "shell")]
 fn predefined_item<R: Runtime>(
     app_handle: &AppHandle<R>,
     predefined: Predefined,
@@ -993,5 +1152,106 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// ページが描くメニューに、OS のものが混ざらないこと（[ADR 0035]）。
+    ///
+    /// [`Predefined`] は OS が持っている項目で、ブラウザの中に相手がいません。
+    /// [`WindowAction`] はウィンドウそのものの操作で、ページには手が届きません。
+    /// **どちらも「押しても何も起きない項目」になる**ので、出しません。
+    ///
+    /// [ADR 0035]: ../../../docs/adr/0035-a-browser-build-of-the-real-core.md
+    #[test]
+    fn the_browser_menu_leaves_out_what_the_os_owns() {
+        for platform in [Platform::Macos, Platform::Windows, Platform::Linux] {
+            let actions: Vec<AppAction> = web_sections(platform)
+                .iter()
+                .flat_map(|section| section.items.iter())
+                .filter_map(|item| match item {
+                    WebItem::Action { action, .. } => Some(*action),
+                    WebItem::Separator => None,
+                })
+                .collect();
+            assert!(!actions.is_empty(), "{platform:?} のメニューが空");
+
+            // 殻のメニューにある AppAction だけが出ていること。
+            let shell: Vec<AppAction> = sections_for(platform)
+                .iter()
+                .flat_map(|section| section.items.iter())
+                .filter_map(|item| match item {
+                    Item::Action {
+                        action: Action::App(action),
+                        ..
+                    } => Some(*action),
+                    _ => None,
+                })
+                .collect();
+            for action in &actions {
+                assert!(
+                    shell.contains(action),
+                    "{action:?} は殻のメニューに無い。ページにだけ項目を足さない"
+                );
+            }
+        }
+    }
+
+    /// 区切り線が、端にも 2 つ続けても残らないこと。
+    ///
+    /// OS のものを落とすと、そのぶん区切り線が浮きます。**数えるのをページに
+    /// させません**——出す側で畳んでおけば、描くほうは並べるだけで済みます。
+    #[test]
+    fn the_browser_menu_has_no_stray_separators() {
+        for platform in [Platform::Macos, Platform::Windows, Platform::Linux] {
+            for section in web_sections(platform) {
+                assert_ne!(section.items.first(), Some(&WebItem::Separator));
+                assert_ne!(section.items.last(), Some(&WebItem::Separator));
+                for pair in section.items.windows(2) {
+                    assert!(
+                        pair != [WebItem::Separator, WebItem::Separator],
+                        "{}: 区切り線が続いている",
+                        section.name
+                    );
+                }
+            }
+        }
+    }
+
+    /// ブラウザに相手がいない項目は、消さずに灰色にして理由を出すこと。
+    ///
+    /// 消すと「この機能はこのアプリに無い」に見えます（`Item` の `enabled`）。
+    #[test]
+    fn the_browser_menu_greys_out_what_it_cannot_do() {
+        let items: Vec<WebItem> = web_sections(Platform::Linux)
+            .into_iter()
+            .flat_map(|section| section.items)
+            .collect();
+        let find = |wanted: AppAction| {
+            items
+                .iter()
+                .find_map(|item| match item {
+                    WebItem::Action {
+                        action,
+                        label,
+                        enabled,
+                        ..
+                    } if *action == wanted => Some((label.clone(), *enabled)),
+                    _ => None,
+                })
+                .expect("項目が出ている")
+        };
+
+        for action in [
+            AppAction::RevealDatabase,
+            AppAction::RevealBackups,
+            // ブラウザ版に SQLite のファイルが無い（ADR 0036）。
+            AppAction::BackupDatabase,
+        ] {
+            let (label, enabled) = find(action);
+            assert!(!enabled, "{action:?} は押せないはず");
+            assert!(label.contains("ブラウザでは使えません"), "{label}");
+        }
+        // 盤面の持ち出しは残る。ここまで灰色にしない。
+        assert!(find(AppAction::ExportBoardJson).1);
+        assert!(find(AppAction::ExportBoardMarkdown).1);
     }
 }

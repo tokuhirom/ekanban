@@ -8,19 +8,24 @@
 //! TypeScript で書かない**ための土台なので、この層が Tauri を知らないことは
 //! 都合ではなく設計です。
 
+// ファイルの読み書きは殻の側だけ（書き出し、控え、場所を開く、[ADR 0036]）。
+#[cfg(feature = "shell")]
 use std::path::{Path, PathBuf};
 
 use chrono::{Datelike, Local};
-use ekanban_core::db::{Database, FilterState, WindowBoundsState};
 use ekanban_core::model::{
     card_matches_search, parse_due_date, Board, BoardError, BoardId, CardId, ChecklistItemDraft,
     ColumnId, TagId,
 };
-use ekanban_core::{backup, diagnostics, export};
+use ekanban_core::store::{FilterState, Store, StoreError, WindowBoundsState};
+use ekanban_core::{diagnostics, export};
+
+#[cfg(feature = "shell")]
+use ekanban_core::backup;
 
 use crate::error::{AppError, ErrorKind};
 use crate::snapshot::{CaptureTarget, Platform, Snapshot, StartupState, ThemePreference};
-use crate::state::{snapshot_of, AppState};
+use crate::state::{snapshot_of, AppState, Source};
 
 // ---------------------------------------------------------------- 起動
 
@@ -28,19 +33,22 @@ use crate::state::{snapshot_of, AppState};
 ///
 /// 最後に開いていたボードが消えていれば先頭のボードに、絞り込みのタグや
 /// キャプチャ先が消えていれば既定に、それぞれ黙って戻します。起動を妨げません。
-pub fn load_startup_state(database_path: &Path) -> Result<(AppState, StartupState), AppError> {
-    let database = Database::open(database_path).map_err(open_failed)?;
-    let boards = database.load_boards().map_err(open_failed)?;
-    let board_id = database
+pub fn load_startup_state(source: Source) -> Result<(AppState, StartupState), AppError> {
+    let mut store = source.open().map_err(open_failed)?;
+    // 何も入っていなければ最初の盤面を蒔く。SQLite は開いた時点で蒔いてある。
+    store.seed_if_empty().map_err(open_failed)?;
+    let boards = store.load_boards().map_err(open_failed)?;
+    let board_id = store
         .load_last_board_id()
         .map_err(open_failed)?
         .filter(|board_id| boards.iter().any(|board| board.id == *board_id))
         .or_else(|| boards.first().map(|board| board.id))
-        .ok_or_else(|| open_failed(ekanban_core::db::DbError::NoBoard))?;
-    let board = database.load_board_by_id(board_id).map_err(open_failed)?;
-    database.set_last_board_id(board.id).map_err(open_failed)?;
+        .ok_or_else(|| open_failed(StoreError::NoBoard))?;
+    let board = store.load_board_by_id(board_id).map_err(open_failed)?;
+    store.set_last_board_id(board.id).map_err(open_failed)?;
 
-    let state = AppState::open(database_path, board);
+    drop(store);
+    let state = AppState::open(source, board);
     let startup = startup_state(&state)?;
     Ok((state, startup))
 }
@@ -52,49 +60,57 @@ pub fn load_startup_state(database_path: &Path) -> Result<(AppState, StartupStat
 /// 閉じている間もクイックキャプチャはカードを足せるので、メモリ上の値を
 /// 抱えて使い回さず、そのつどデータベースから読みます（`docs/DESIGN.md`）。
 pub fn startup_state(state: &AppState) -> Result<StartupState, AppError> {
-    let mut database = state.database().map_err(open_failed)?;
+    let mut store = state.store().map_err(open_failed)?;
 
-    let mut filter = database.load_filter_state().unwrap_or_default();
+    let mut filter = store.load_filter_state().unwrap_or_default();
     // 絞り込んでいたタグが消えていたら、黙って既定に戻す。起動を妨げない。
     let tag_is_gone = filter
         .tag_id
         .is_some_and(|tag_id| !state.lock().tags.iter().any(|tag| tag.id == tag_id));
     if tag_is_gone {
         filter.tag_id = None;
-        database.set_filter_state(&filter).map_err(open_failed)?;
+        store.set_filter_state(&filter).map_err(open_failed)?;
     }
 
+    // **開いてある置き場所からスナップショットを組みます。** `state.snapshot()`
+    // を呼ぶと、ここで持っている置き場所をもう 1 つ開くことになります
+    // （`AppState::store` の注意書き）。
+    let snapshot = {
+        let board = state.lock();
+        snapshot_of(&board, &store).map_err(open_failed)?
+    };
+
     Ok(StartupState {
-        snapshot: state.snapshot()?,
+        snapshot,
         platform: Platform::current(),
         filter,
-        window_bounds: database.load_window_bounds().ok().flatten(),
-        theme: ThemePreference::parse(database.load_theme_preference().ok().flatten().as_deref()),
-        sidebar_collapsed: database.load_sidebar_collapsed().unwrap_or(false),
-        capture_target: read_capture_target(&mut database)?,
-        quick_capture_shortcut: database.load_quick_capture_shortcut().unwrap_or(None),
+        window_bounds: store.load_window_bounds().ok().flatten(),
+        theme: ThemePreference::parse(store.load_theme_preference().ok().flatten().as_deref()),
+        sidebar_collapsed: store.load_sidebar_collapsed().unwrap_or(false),
+        capture_target: read_capture_target(&mut store)?,
+        quick_capture_shortcut: store.load_quick_capture_shortcut().unwrap_or(None),
         version: env!("CARGO_PKG_VERSION").to_string(),
-        database_path: state.database_path().to_string_lossy().into_owned(),
+        database_path: state.source().place(),
     })
 }
 
-fn open_failed(error: ekanban_core::db::DbError) -> AppError {
+fn open_failed(error: StoreError) -> AppError {
     AppError::from_db(ErrorKind::BoardIo, "ボードを読めませんでした", &error)
 }
 
 // ---------------------------------------------------------------- ボード
 
 pub fn create_board(state: &AppState, name: &str) -> Result<Snapshot, AppError> {
-    let mut database = state.database().map_err(|error| {
+    let mut store = state.store().map_err(|error| {
         AppError::from_db(ErrorKind::BoardIo, "ボードを作れませんでした", &error)
     })?;
-    let board = database.create_board(name).map_err(|error| {
+    let board = store.create_board(name).map_err(|error| {
         AppError::from_db(ErrorKind::BoardIo, "ボードを作れませんでした", &error)
     })?;
-    database.set_last_board_id(board.id).map_err(|error| {
+    store.set_last_board_id(board.id).map_err(|error| {
         AppError::from_db(ErrorKind::BoardIo, "ボードを作れませんでした", &error)
     })?;
-    let snapshot = snapshot_of(&board, &database).map_err(|error| {
+    let snapshot = snapshot_of(&board, &store).map_err(|error| {
         AppError::from_db(ErrorKind::BoardIo, "ボード一覧を読めませんでした", &error)
     })?;
     state.replace(board);
@@ -114,19 +130,19 @@ pub fn rename_board(state: &AppState, name: &str) -> Result<Snapshot, AppError> 
 ///
 /// 最後の 1 つは消せません（`Database::delete_board` が拒否します）。
 pub fn delete_board(state: &AppState, board_id: BoardId) -> Result<Snapshot, AppError> {
-    let fail = |error: &ekanban_core::db::DbError| {
+    let fail = |error: &StoreError| {
         AppError::from_db(ErrorKind::BoardIo, "ボードを削除できませんでした", error)
     };
-    let mut database = state.database().map_err(|e| fail(&e))?;
-    database.delete_board(board_id).map_err(|e| fail(&e))?;
+    let mut store = state.store().map_err(|e| fail(&e))?;
+    store.delete_board(board_id).map_err(|e| fail(&e))?;
 
     let next_id = if state.lock().id == board_id {
-        database
+        store
             .load_boards()
             .map_err(|e| fail(&e))?
             .first()
             .map(|summary| summary.id)
-            .ok_or_else(|| fail(&ekanban_core::db::DbError::NoBoard))?
+            .ok_or_else(|| fail(&StoreError::NoBoard))?
     } else {
         state.lock().id
     };
@@ -134,13 +150,13 @@ pub fn delete_board(state: &AppState, board_id: BoardId) -> Result<Snapshot, App
 }
 
 pub fn switch_board(state: &AppState, board_id: BoardId) -> Result<Snapshot, AppError> {
-    let fail = |error: &ekanban_core::db::DbError| {
+    let fail = |error: &StoreError| {
         AppError::from_db(ErrorKind::BoardIo, "ボードを開けませんでした", error)
     };
-    let database = state.database().map_err(|e| fail(&e))?;
-    let board = database.load_board_by_id(board_id).map_err(|e| fail(&e))?;
-    database.set_last_board_id(board.id).map_err(|e| fail(&e))?;
-    let snapshot = snapshot_of(&board, &database).map_err(|e| fail(&e))?;
+    let mut store = state.store().map_err(|e| fail(&e))?;
+    let board = store.load_board_by_id(board_id).map_err(|e| fail(&e))?;
+    store.set_last_board_id(board.id).map_err(|e| fail(&e))?;
+    let snapshot = snapshot_of(&board, &store).map_err(|e| fail(&e))?;
     state.replace(board);
     Ok(snapshot)
 }
@@ -389,19 +405,19 @@ pub fn filter_cards(state: &AppState, query: &str, tag_id: Option<TagId>) -> Vec
 fn store(
     state: &AppState,
     title: &'static str,
-    write: impl FnOnce(&Database) -> Result<(), ekanban_core::db::DbError>,
+    write: impl FnOnce(&mut Store<'_>) -> Result<(), StoreError>,
 ) -> Result<(), AppError> {
-    let database = state
-        .database()
+    let mut store = state
+        .store()
         .map_err(|error| AppError::from_db(ErrorKind::Save, title, &error))?;
-    write(&database).map_err(|error| AppError::from_db(ErrorKind::Save, title, &error))
+    write(&mut store).map_err(|error| AppError::from_db(ErrorKind::Save, title, &error))
 }
 
 pub fn set_filter_state(state: &AppState, filter: &FilterState) -> Result<(), AppError> {
     store(
         state,
         "絞り込みを覚えられませんでした",
-        |database| database.set_filter_state(filter),
+        |store| store.set_filter_state(filter),
     )
 }
 
@@ -409,7 +425,7 @@ pub fn set_theme_preference(state: &AppState, preference: ThemePreference) -> Re
     store(
         state,
         "テーマを覚えられませんでした",
-        |database| database.set_theme_preference(preference.as_str()),
+        |store| store.set_theme_preference(preference.as_str()),
     )
 }
 
@@ -417,7 +433,7 @@ pub fn set_sidebar_collapsed(state: &AppState, collapsed: bool) -> Result<(), Ap
     store(
         state,
         "サイドバーの状態を覚えられませんでした",
-        |database| database.set_sidebar_collapsed(collapsed),
+        |store| store.set_sidebar_collapsed(collapsed),
     )
 }
 
@@ -425,7 +441,7 @@ pub fn set_window_bounds(state: &AppState, bounds: WindowBoundsState) -> Result<
     store(
         state,
         "ウィンドウの位置を覚えられませんでした",
-        |database| database.set_window_bounds(bounds),
+        |store| store.set_window_bounds(bounds),
     )
 }
 
@@ -454,7 +470,10 @@ pub fn suggested_export_name(state: &AppState, format: ExportFormat) -> String {
     export::suggested_export_name(&state.lock().name, format.extension())
 }
 
-/// 選ばれたパスに拡張子を補う。
+/// 選ばれたパスに拡張子を補う。**書き出す先があるのは殻の側だけ**（[ADR 0036]）。
+///
+/// [ADR 0036]: ../../../docs/adr/0036-one-model-two-places-to-put-it.md
+#[cfg(feature = "shell")]
 ///
 /// 保存ダイアログで名前を打ち替えると、拡張子ごと消えることがあります。
 /// 拡張子の無いファイルを書くと、次に開くときに何のファイルか分かりません。
@@ -468,7 +487,36 @@ fn with_extension(destination: &Path, extension: &str) -> PathBuf {
     }
 }
 
+/// 開いているボードを、書き出す形の文字列にする。**まだ書きません。**
+///
+/// 書く先が無い環境があるので分けてあります（ブラウザ、[ADR 0035]）。そこでは
+/// この文字列がそのままページへ渡り、ダウンロードになります。**組み立てが
+/// 1 か所なのは、どちらの経路でも同じものが出るための条件**です。
+///
+/// [ADR 0035]: ../../../docs/adr/0035-a-browser-build-of-the-real-core.md
+pub fn export_board_contents(state: &AppState, format: ExportFormat) -> Result<String, AppError> {
+    match format {
+        ExportFormat::Json => {
+            let store = state.store().map_err(|error| {
+                AppError::from_db(ErrorKind::Export, "書き出せませんでした", &error)
+            })?;
+            let board = state.lock();
+            store.export_board_json(&board).map_err(|error| {
+                AppError::from_db(ErrorKind::Export, "書き出せませんでした", &error)
+            })
+        }
+        ExportFormat::Markdown => Ok(export::render_board_markdown(&state.lock())),
+    }
+}
+
 /// 開いているボードをファイルに書き出す。書けたパスを返す。
+///
+/// **書く先があるのは殻の側だけ**です。ブラウザには書き込めるファイルシステム
+/// が無いので、そちらは `export_board_contents` の文字列をダウンロードにします
+/// （[ADR 0035]）。
+///
+/// [ADR 0035]: ../../../docs/adr/0035-a-browser-build-of-the-real-core.md
+#[cfg(feature = "shell")]
 ///
 /// 行き先を選ぶのは呼ぶ側（OS のネイティブな保存ダイアログ、`docs/DESIGN.md`「アプリが伝えること」）です。ここは
 /// 中身を作って書くだけにして、ダイアログの都合をコマンドの層に持ち込みません。
@@ -478,18 +526,7 @@ pub fn export_board(
     destination: &Path,
 ) -> Result<PathBuf, AppError> {
     let destination = &with_extension(destination, format.extension());
-    let contents = match format {
-        ExportFormat::Json => {
-            let database = state.database().map_err(|error| {
-                AppError::from_db(ErrorKind::Export, "書き出せませんでした", &error)
-            })?;
-            let board = state.lock();
-            database.export_board_json(&board).map_err(|error| {
-                AppError::from_db(ErrorKind::Export, "書き出せませんでした", &error)
-            })?
-        }
-        ExportFormat::Markdown => export::render_board_markdown(&state.lock()),
-    };
+    let contents = export_board_contents(state, format)?;
     std::fs::write(destination, contents).map_err(|error| {
         AppError::new(
             ErrorKind::Export,
@@ -504,6 +541,13 @@ pub fn export_board(
 ///
 /// **いま使っているファイルそのものは断ります。** `backup_to` は上書きで開くので、
 /// 同じパスを渡すと控えを取ったつもりで元のファイルを触ることになります。
+///
+/// **殻の側だけ**です。控えは SQLite のファイルを写すもので、置き場所の口
+/// （`store::Store`）には無い操作です（[ADR 0036]）。ブラウザ版では
+/// 「データベースをコピー…」を灰色にしてあります。
+///
+/// [ADR 0036]: ../../../docs/adr/0036-one-model-two-places-to-put-it.md
+#[cfg(feature = "shell")]
 pub fn backup_database(state: &AppState, destination: &Path) -> Result<PathBuf, AppError> {
     let destination = &with_extension(destination, "sqlite3");
     if destination == state.database_path() {
@@ -513,7 +557,7 @@ pub fn backup_database(state: &AppState, destination: &Path) -> Result<PathBuf, 
             "控えの保存先には、いま使っているデータベースとは別のファイルを指定してください",
         ));
     }
-    let database = state.database().map_err(|error| {
+    let database = ekanban_core::db::Database::open(state.database_path()).map_err(|error| {
         AppError::from_db(ErrorKind::Export, "控えを保存できませんでした", &error)
     })?;
     database.backup_to(destination).map_err(|error| {
@@ -523,16 +567,20 @@ pub fn backup_database(state: &AppState, destination: &Path) -> Result<PathBuf, 
 }
 
 /// データベースそのものの場所。
+#[cfg(feature = "shell")]
 pub fn database_location(state: &AppState) -> PathBuf {
     state.database_path().to_path_buf()
 }
 
 /// 「場所を開く」で開く先。実際に開くのは呼ぶ側（`tauri-plugin-opener`、`docs/DESIGN.md`「アプリが伝えること」）。
+#[cfg(feature = "shell")]
 pub fn reveal_database(state: &AppState) -> PathBuf {
     state.database_path().to_path_buf()
 }
 
 /// 日ごとの控えが溜まるディレクトリ。
+#[cfg_attr(not(feature = "shell"), allow(dead_code))]
+#[cfg(feature = "shell")]
 ///
 /// まだ 1 つも取れていないうちに押されることがあります。開く先が無いだけなので
 /// `None` を返し、呼ぶ側は黙って何もしません（拒否は何も言わない、`docs/DESIGN.md`）。
@@ -589,16 +637,14 @@ pub fn openable_url(url: &str) -> Option<&str> {
 
 // ---------------------------------------------------------------- キャプチャ
 
-fn read_capture_target(database: &mut Database) -> Result<Option<CaptureTarget>, AppError> {
+fn read_capture_target(store: &mut Store<'_>) -> Result<Option<CaptureTarget>, AppError> {
     // キャプチャ先のボードやカラムが消えていたら、黙って既定に戻す。
     // 絞り込みの復元と同じ扱いで、起動を妨げない。
-    let Some((board_id, column_id)) = database.load_capture_target().unwrap_or(None) else {
+    let Some((board_id, column_id)) = store.load_capture_target().unwrap_or(None) else {
         return Ok(None);
     };
-    let column_name = database
-        .load_column_name(board_id, column_id)
-        .unwrap_or(None);
-    let board_name = database
+    let column_name = store.load_column_name(board_id, column_id).unwrap_or(None);
+    let board_name = store
         .load_boards()
         .unwrap_or_default()
         .into_iter()
@@ -612,7 +658,7 @@ fn read_capture_target(database: &mut Database) -> Result<Option<CaptureTarget>,
             column_name,
         })),
         _ => {
-            database.set_capture_target(None).map_err(|error| {
+            store.set_capture_target(None).map_err(|error| {
                 AppError::from_db(ErrorKind::Save, "キャプチャ先を消せませんでした", &error)
             })?;
             Ok(None)
@@ -630,16 +676,11 @@ fn read_capture_target(database: &mut Database) -> Result<Option<CaptureTarget>,
 /// 一番上と同じです。そのボードにカラムが 1 本も無ければ `None` です。
 ///
 /// [ADR 0028]: ../../../docs/adr/0028-a-single-default-quick-capture-target.md
-fn default_capture_target(database: &Database) -> Result<Option<CaptureTarget>, AppError> {
-    let Some(first) = database
-        .load_boards()
-        .unwrap_or_default()
-        .into_iter()
-        .next()
-    else {
+fn default_capture_target(store: &Store<'_>) -> Result<Option<CaptureTarget>, AppError> {
+    let Some(first) = store.load_boards().unwrap_or_default().into_iter().next() else {
         return Ok(None);
     };
-    let board = database.load_board_by_id(first.id).map_err(|error| {
+    let board = store.load_board_by_id(first.id).map_err(|error| {
         AppError::from_db(ErrorKind::BoardIo, "キャプチャ先を読めませんでした", &error)
     })?;
     Ok(board.columns.first().map(|column| CaptureTarget {
@@ -658,13 +699,13 @@ fn default_capture_target(database: &Database) -> Result<Option<CaptureTarget>, 
 /// 設定が指していたカラムが消えていたら、黙って設定を消して既定に戻します。
 /// 次のキャプチャを失敗させないためです。
 pub fn capture_target(state: &AppState) -> Result<Option<CaptureTarget>, AppError> {
-    let mut database = state.database().map_err(|error| {
+    let mut store = state.store().map_err(|error| {
         AppError::from_db(ErrorKind::BoardIo, "キャプチャ先を読めませんでした", &error)
     })?;
-    if let Some(target) = read_capture_target(&mut database)? {
+    if let Some(target) = read_capture_target(&mut store)? {
         return Ok(Some(target));
     }
-    default_capture_target(&database)
+    default_capture_target(&store)
 }
 
 /// クイックキャプチャからカードを 1 枚足す。
@@ -674,14 +715,14 @@ pub fn capture_target(state: &AppState) -> Result<Option<CaptureTarget>, AppErro
 /// そちらを読んで書き、開いている盤面はそのままにします。
 pub fn capture_card(state: &AppState, title: &str) -> Result<Snapshot, AppError> {
     const FAILED: &str = "カードを追加できませんでした";
-    let mut database = state
-        .database()
+    let mut store = state
+        .store()
         .map_err(|error| AppError::from_db(ErrorKind::Save, FAILED, &error))?;
-    let stored = read_capture_target(&mut database)?;
+    let stored = read_capture_target(&mut store)?;
     // 設定が無ければ既定（先頭のボードの先頭カラム）へ。
     let target = match stored {
         Some(target) => Some(target),
-        None => default_capture_target(&database)?,
+        None => default_capture_target(&store)?,
     }
     .ok_or_else(|| {
         AppError::new(
@@ -696,20 +737,26 @@ pub fn capture_card(state: &AppState, title: &str) -> Result<Snapshot, AppError>
     }
 
     if state.lock().id == target.board_id {
+        // **置き場所を放してから盤面の経路に渡します。** `mutate` は自分で
+        // 開き直すので、持ったままだと 2 度開くことになります
+        // （`AppState::store` の注意書き）。
+        drop(store);
         return state
             .mutate(FAILED, |board| board.add_card(target.column_id, title, ""))
             .map(|(_, snapshot)| snapshot);
     }
 
-    let mut other = database
+    let mut other = store
         .load_board_by_id(target.board_id)
         .map_err(|error| AppError::from_db(ErrorKind::Save, FAILED, &error))?;
     other
         .add_card(target.column_id, title, "")
         .map_err(|error| AppError::from_board(FAILED, &error))?;
-    database
+    store
         .save_board(&mut other)
         .map_err(|error| AppError::from_save(&error))?;
+    // 置き場所を放してから読み直す（`AppState::store` の注意書き）。
+    drop(store);
     state.snapshot()
 }
 
@@ -720,7 +767,7 @@ pub fn set_capture_target(
     store(
         state,
         "カードの追加先を覚えられませんでした",
-        |database| database.set_capture_target(target),
+        |store| store.set_capture_target(target),
     )
 }
 
@@ -739,10 +786,10 @@ pub fn set_capture_column(
 
 /// 保存されている割り当てを読む。無ければ `None`。
 pub fn quick_capture_shortcut(state: &AppState) -> Result<Option<String>, AppError> {
-    let database = state.database().map_err(|error| {
+    let store = state.store().map_err(|error| {
         AppError::from_db(ErrorKind::Save, "割り当てを読めませんでした", &error)
     })?;
-    database
+    store
         .load_quick_capture_shortcut()
         .map_err(|error| AppError::from_db(ErrorKind::Save, "割り当てを読めませんでした", &error))
 }
@@ -756,7 +803,7 @@ pub fn set_quick_capture_shortcut(
     store(
         state,
         "割り当てを覚えられませんでした",
-        |database| database.set_quick_capture_shortcut(shortcut),
+        |store| store.set_quick_capture_shortcut(shortcut),
     )
 }
 
@@ -773,6 +820,7 @@ pub fn log_frontend_error(message: &str) {
 ///
 /// 失敗しても起動は止めません（`docs/DESIGN.md`）。取るのは起動時で、終了時では
 /// ない——終了時に取ると、壊した状態のほうを保存することになります。
+#[cfg(feature = "shell")]
 pub fn run_daily_backup(database_path: &Path) {
     if let Err(error) = backup::run_daily(database_path, Local::now().date_naive()) {
         diagnostics::log(&format!(

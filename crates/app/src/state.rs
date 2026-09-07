@@ -2,12 +2,13 @@
 //!
 //! [ADR 0018]: ../../../docs/adr/0018-rust-owns-the-board-state.md
 
-use std::path::{Path, PathBuf};
-use std::sync::{Mutex, PoisonError};
+#[cfg(feature = "shell")]
+use std::path::Path;
+use std::sync::{Arc, Mutex, PoisonError, TryLockError};
 
 use chrono::Local;
-use ekanban_core::db::{Database, DbError};
 use ekanban_core::model::{Board, BoardError, BoardSummary, ColumnId};
+use ekanban_core::store::{JsonStore, Store, StoreError};
 
 use crate::error::{AppError, ErrorKind};
 use crate::snapshot::{due_statuses_of, window_title, Snapshot};
@@ -22,21 +23,84 @@ use crate::snapshot::{due_statuses_of, window_title, Snapshot};
 /// 盤面のロックが保存の順番もそのまま決めます。2 つ目のロックは、同じことを
 /// 2 か所で守る形になります。
 pub struct AppState {
-    database_path: PathBuf,
+    source: Source,
     board: Mutex<Board>,
 }
 
+/// 盤面をどこに置くか（[ADR 0036]）。
+///
+/// **開くたびに開き直します。** クイックキャプチャの窓が閉じている間にも書ける
+/// ので、メモリ上の写しを抱え続けると、そちらの変更が見えません。JSON の側は
+/// ページに 1 つしかないので、同じものを借り直します。
+///
+/// [ADR 0036]: ../../../docs/adr/0036-one-model-two-places-to-put-it.md
+#[derive(Clone)]
+pub enum Source {
+    #[cfg(feature = "shell")]
+    Sqlite(std::path::PathBuf),
+    Json {
+        store: Arc<Mutex<JsonStore>>,
+        /// 「どこにあるか」を人が読む形で。**パスではありません**——ブラウザに
+        /// ファイルシステム上の居場所は無いので、置いた側が名乗ります。
+        place: String,
+    },
+}
+
+impl Source {
+    /// 置き場所を開く。
+    pub fn open(&self) -> Result<Store<'_>, StoreError> {
+        match self {
+            #[cfg(feature = "shell")]
+            Self::Sqlite(path) => Ok(Store::Sqlite(ekanban_core::db::Database::open(path)?)),
+            // **待ちません。** 取れないのは、同じ置き場所を開いたまま
+            // もう 1 つ開いたときだけです（`AppState::store` の注意書き）。
+            // 待つと、相手が自分なので二度と空きません。
+            Self::Json { store, .. } => match store.try_lock() {
+                Ok(guard) => Ok(Store::Json(guard)),
+                Err(TryLockError::Poisoned(poisoned)) => Ok(Store::Json(poisoned.into_inner())),
+                Err(TryLockError::WouldBlock) => Err(StoreError::AlreadyOpen),
+            },
+        }
+    }
+
+    /// 盤面がどこにあるか。画面（「ekanban について」）に出す文言。
+    pub fn place(&self) -> String {
+        match self {
+            #[cfg(feature = "shell")]
+            Self::Sqlite(path) => path.to_string_lossy().into_owned(),
+            Self::Json { place, .. } => place.clone(),
+        }
+    }
+
+    /// SQLite のファイルの場所。JSON の置き場所には無い。
+    #[cfg(feature = "shell")]
+    pub fn path(&self) -> Option<&Path> {
+        match self {
+            Self::Sqlite(path) => Some(path),
+            Self::Json { .. } => None,
+        }
+    }
+}
+
 impl AppState {
-    /// データベースを開き、最後に開いていたボードを載せる。
-    pub fn open(database_path: impl Into<PathBuf>, board: Board) -> Self {
+    /// 置き場所を決め、最後に開いていたボードを載せる。
+    pub fn open(source: Source, board: Board) -> Self {
         Self {
-            database_path: database_path.into(),
+            source,
             board: Mutex::new(board),
         }
     }
 
+    pub fn source(&self) -> &Source {
+        &self.source
+    }
+
+    /// SQLite のファイルの場所。**殻を持っているときだけ**あります。
+    #[cfg(feature = "shell")]
     pub fn database_path(&self) -> &Path {
-        &self.database_path
+        self.source
+            .path()
+            .expect("殻の側は必ず SQLite のファイルを持つ")
     }
 
     /// 盤面のロックを取る。
@@ -48,8 +112,16 @@ impl AppState {
         self.board.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    pub(crate) fn database(&self) -> Result<Database, DbError> {
-        Database::open(&self.database_path)
+    /// 置き場所を開く。
+    ///
+    /// **開いたまま、もう 1 つ開かないでください。** SQLite は接続を 2 つ持てる
+    /// ので気づけませんが、ブラウザ版の置き場所はページに 1 つで、同じ
+    /// `Mutex` を 2 度取ると落ちます（[ADR 0036]）。持っている置き場所から
+    /// 組み立てるか、先に `drop` してください。
+    ///
+    /// [ADR 0036]: ../../../docs/adr/0036-one-model-two-places-to-put-it.md
+    pub(crate) fn store(&self) -> Result<Store<'_>, StoreError> {
+        self.source.open()
     }
 
     /// 盤面を変えて保存し、変更後のスナップショットを返す。
@@ -80,19 +152,19 @@ impl AppState {
             }
         };
 
-        let mut database = self.database().map_err(|error| {
+        let mut store = self.store().map_err(|error| {
             *board = before.clone();
             AppError::from_save(&error)
         })?;
 
         if value.changed() {
-            if let Err(error) = database.save_board(&mut board) {
+            if let Err(error) = store.save_board(&mut board) {
                 *board = before;
                 return Err(AppError::from_save(&error));
             }
         }
 
-        let snapshot = snapshot_of(&board, &database).map_err(|error| {
+        let snapshot = snapshot_of(&board, &store).map_err(|error| {
             AppError::from_db(ErrorKind::BoardIo, "ボード一覧を読めませんでした", &error)
         })?;
         Ok((value, snapshot))
@@ -101,10 +173,10 @@ impl AppState {
     /// いま開いている盤面のスナップショット。何も変えない。
     pub fn snapshot(&self) -> Result<Snapshot, AppError> {
         let board = self.lock();
-        let database = self.database().map_err(|error| {
+        let store = self.store().map_err(|error| {
             AppError::from_db(ErrorKind::BoardIo, "ボードを読めませんでした", &error)
         })?;
-        snapshot_of(&board, &database).map_err(|error| {
+        snapshot_of(&board, &store).map_err(|error| {
             AppError::from_db(ErrorKind::BoardIo, "ボード一覧を読めませんでした", &error)
         })
     }
@@ -131,11 +203,11 @@ impl AppState {
 /// [ADR 0028]: ../../../docs/adr/0028-a-single-default-quick-capture-target.md
 fn capture_column_of(
     board: &Board,
-    database: &Database,
+    store: &Store<'_>,
     boards: &[BoardSummary],
 ) -> Option<ColumnId> {
     let first_column = || board.columns.first().map(|column| column.id);
-    match database.load_capture_target().unwrap_or(None) {
+    match store.load_capture_target().unwrap_or(None) {
         Some((board_id, _)) if board_id != board.id => None,
         Some((_, column_id)) if board.columns.iter().any(|column| column.id == column_id) => {
             Some(column_id)
@@ -151,16 +223,16 @@ fn capture_column_of(
     }
 }
 
-pub(crate) fn snapshot_of(board: &Board, database: &Database) -> Result<Snapshot, DbError> {
+pub(crate) fn snapshot_of(board: &Board, store: &Store<'_>) -> Result<Snapshot, StoreError> {
     let today = Local::now().date_naive();
-    let boards = database.load_boards_as_of(today)?;
+    let boards = store.load_boards_as_of(today)?;
     Ok(Snapshot {
         board: board.clone(),
         can_undo: board.can_undo(),
         can_redo: board.can_redo(),
         due_statuses: due_statuses_of(board, today),
         today,
-        capture_column: capture_column_of(board, database, &boards),
+        capture_column: capture_column_of(board, store, &boards),
         window_title: window_title(&board.name),
         boards,
     })

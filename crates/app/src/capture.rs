@@ -12,15 +12,14 @@
 use std::sync::Mutex;
 
 use ekanban_core::diagnostics;
-use serde::Serialize;
 use tauri::{AppHandle, Manager as _, Runtime, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_global_shortcut::GlobalShortcutExt as _;
-use ts_rs::TS;
 
 use crate::commands;
 use crate::error::{AppError, ErrorKind};
 use crate::run::BOARD_WINDOW;
 use crate::shortcut::{platform_support, KeyPress, Shortcut};
+use crate::snapshot::QuickCaptureStatus;
 use crate::state::AppState;
 
 /// キャプチャの窓のラベル。
@@ -51,17 +50,6 @@ impl Registration {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
     }
-}
-
-/// 割り当てのダイアログが開くときに読むもの。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct QuickCaptureStatus {
-    /// この環境でグローバルホットキーを使えないなら、その理由。使えるなら `null`。
-    pub unavailable: Option<String>,
-    /// 保存されているのに登録できていない理由。効いているなら `null`。
-    pub failure: Option<String>,
 }
 
 /// いまの状態を読む。

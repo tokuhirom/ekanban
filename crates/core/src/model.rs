@@ -71,7 +71,7 @@ pub struct CardEvent {
     pub at: i64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct ChecklistItem {
@@ -93,7 +93,7 @@ pub struct ChecklistItemDraft {
     pub checked: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct Card {
@@ -110,7 +110,7 @@ pub struct Card {
     pub archived_at: Option<i64>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct Tag {
@@ -122,7 +122,7 @@ pub struct Tag {
     pub updated_at: i64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct Column {
@@ -2574,11 +2574,16 @@ impl Column {
     }
 }
 
+/// いまの時刻をミリ秒で。
+///
+/// `std::time::SystemTime` ではなく chrono を通します。**`wasm32-unknown-unknown`
+/// には `SystemTime` の実装が無く、呼ぶとパニックする**ためです（ブラウザ向けの
+/// 組み立て、[ADR 0035]）。chrono は同じ target でブラウザの `Date` に落ちます。
+/// ネイティブでは値も精度も変わりません。
+///
+/// [ADR 0035]: ../../../docs/adr/0035-a-browser-build-of-the-real-core.md
 fn timestamp() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("system clock is before UNIX epoch")
-        .as_millis() as i64
+    chrono::Utc::now().timestamp_millis()
 }
 
 #[cfg(test)]

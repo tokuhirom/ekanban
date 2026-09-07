@@ -38,12 +38,18 @@ export function useFileActions(notify: (alert: Alert) => void): FileActions {
         notify({
           title,
           detail: written,
-          action: {
-            label: "場所を開く",
-            act: () => {
-              void ipc.revealPath(written);
-            },
-          },
+          // 開く相手がいない環境では、この導線ごと出しません（ブラウザ、
+          // ADR 0035）。押しても何も起きないボタンは、壊れて見えます。
+          ...(ipc.canRevealPaths
+            ? {
+                action: {
+                  label: "場所を開く",
+                  act: () => {
+                    void ipc.revealPath(written);
+                  },
+                },
+              }
+            : {}),
         });
       } catch (error: unknown) {
         notify(describeFailure(error));

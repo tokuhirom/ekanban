@@ -17,25 +17,53 @@ license.workspace = true
 [[bin]]
 name = "ekanban"
 path = "src/main.rs"
+# 殻を外した組み立て（`crates/web`、[ADR 0035]）には実行ファイルがありません。
+# これが無いと `cargo build -p ekanban-app --no-default-features` が `run` の
+# 無いライブラリに対して `main.rs` を組もうとして落ちます。
+required-features = ["shell"]
+
+[features]
+default = ["shell"]
+# Tauri の殻。窓、ネイティブのメニュー、OS のダイアログ、グローバルホットキー。
+#
+# **外せるようにしてあるのは、コマンドの層をブラウザでも動かすため**です
+# （`crates/web`、[ADR 0035]）。外すと `commands` / `dispatch` / `state` /
+# `snapshot` / `error` と、メニューの「データとしての構成」だけが残ります。
+# 判断をこの feature の内側に置かないことは、ADR 0021 の「偽物のバックエンドを
+# 書かない」がブラウザでも成り立つための条件です。
+#
+# [ADR 0035]: ../../docs/adr/0035-a-browser-build-of-the-real-core.md
+shell = [
+  # 配るアプリの置き場所は SQLite（ADR 0036）。
+  "ekanban-core/sqlite",
+  "dep:tauri",
+  "dep:tauri-build",
+  "dep:tauri-plugin-dialog",
+  "dep:tauri-plugin-global-shortcut",
+  "dep:tauri-plugin-opener",
+  # 失敗の伝え方が SQLite のエラーコードごとに変わる（`error.rs`）。
+  "dep:rusqlite",
+]
 
 [build-dependencies]
-tauri-build.workspace = true
+tauri-build = { workspace = true, optional = true }
 
 [dependencies]
-ekanban-core.workspace = true
+ekanban-core = { workspace = true, default-features = false }
 chrono.workspace = true
-rusqlite.workspace = true
+rusqlite = { workspace = true, optional = true }
 serde.workspace = true
-tauri.workspace = true
+# コマンド名で振り分ける表（`dispatch.rs`）が、引数と答えを JSON で受け渡します。
+serde_json.workspace = true
 thiserror.workspace = true
-tauri-plugin-dialog.workspace = true
-tauri-plugin-global-shortcut.workspace = true
-tauri-plugin-opener.workspace = true
 ts-rs.workspace = true
+tauri = { workspace = true, optional = true }
+tauri-plugin-dialog = { workspace = true, optional = true }
+tauri-plugin-global-shortcut = { workspace = true, optional = true }
+tauri-plugin-opener = { workspace = true, optional = true }
 
 [dev-dependencies]
-ekanban-core = { workspace = true, features = ["test-fixtures"] }
-serde_json.workspace = true
+ekanban-core = { workspace = true, features = ["sqlite", "test-fixtures"] }
 tempfile.workspace = true
 
 [lints]

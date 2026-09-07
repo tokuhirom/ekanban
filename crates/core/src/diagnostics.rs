@@ -6,8 +6,9 @@
 use std::fmt::Write as _;
 use std::io::{IsTerminal as _, Write as _};
 use std::path::PathBuf;
+// ブラウザ（`wasm32-unknown-unknown`）に外部のプログラムを起こす手段はない。
+#[cfg(not(target_family = "wasm"))]
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 /// ログファイルの場所。
 pub fn log_path() -> PathBuf {
@@ -97,6 +98,18 @@ fn show_platform_dialog(body: &str) {
         .status();
 }
 
+/// ブラウザ（`wasm32-unknown-unknown`）向け。**出す先がありません。**
+///
+/// ダイアログも、それを出す外部プログラムも無く、`append_to_log` の書き込み先も
+/// 無いので、起動に失敗したことはブラウザのコンソールにしか残りません
+/// （[ADR 0035]）。ここで `web_sys` を呼びに行かないのは、中核が UI を知らない
+/// という決めごと（`docs/DESIGN.md`「層の分け方」）がブラウザでも変わらない
+/// ためです——伝え方を決めるのは `crates/web` の側です。
+///
+/// [ADR 0035]: ../../../docs/adr/0035-a-browser-build-of-the-real-core.md
+#[cfg(target_family = "wasm")]
+fn show_platform_dialog(_body: &str) {}
+
 #[cfg(all(unix, not(target_os = "macos")))]
 fn show_platform_dialog(body: &str) {
     // デスクトップ環境によって入っているものが違うので、順に試す。
@@ -130,11 +143,15 @@ fn show_platform_dialog(body: &str) {
 }
 
 /// `YYYY-MM-DDTHH:MM:SSZ` 形式の UTC タイムスタンプ。
+///
+/// 秒を取るのは chrono です。`std::time::SystemTime` は
+/// `wasm32-unknown-unknown` に実装が無く、呼ぶとパニックします（[ADR 0035]）。
+/// 組み立てはそのまま——chrono の書式化に替えると、下の `civil_from_days` が
+/// 誰にも呼ばれなくなります。
+///
+/// [ADR 0035]: ../../../docs/adr/0035-a-browser-build-of-the-real-core.md
 fn timestamp() -> String {
-    let seconds = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
+    let seconds = chrono::Utc::now().timestamp();
 
     let days = seconds.div_euclid(86_400);
     let time_of_day = seconds.rem_euclid(86_400);

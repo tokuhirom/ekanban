@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ekanban（ブラウザ版）</title>
+    <meta
+      name="description"
+      content="ekanban を、インストールせずブラウザで試せる版です。盤面はこのブラウザの localStorage にだけ残ります。"
+    />
+  </head>
+  <body>
+    <!-- wasm を読み込むあいだ、ここが出ています。React が差し替えます。
+         **白い画面のままにしません**——初回は 1 MB 弱を落とすので、回線に
+         よっては数秒かかります（ADR 0036）。 -->
+    <div id="root"><p class="loading">読み込んでいます…</p></div>
+    <script type="module" src="./main.tsx"></script>
+  </body>
+</html>

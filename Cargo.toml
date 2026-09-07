@@ -2,10 +2,11 @@
 #
 # `crates/core` が盤面のモデル・SQLite・控え・置き場所を持ち、UI ツールキットに
 # 依存しない。`crates/app` が Tauri のアプリ。`crates/harness` は開発とテスト
-# 専用で、そのコマンドを HTTP に出す。
+# 専用で、そのコマンドを HTTP に出す。`crates/web` は同じコマンドを
+# `wasm32-unknown-unknown` で動かす、ブラウザだけの組み立て（ADR 0035）。
 [workspace]
 resolver = "2"
-members = ["crates/app", "crates/core", "crates/harness"]
+members = ["crates/app", "crates/core", "crates/harness", "crates/web"]
 # `cargo run` にアプリを選ばせる。これが無いと「どのバイナリか決められない」と
 # 断られます (`ekanban` と `ekanban-harness` の 2 つがあるため)。
 #
@@ -22,8 +23,17 @@ edition = "2021"
 license = "MIT"
 
 [workspace.dependencies]
-ekanban-app = { path = "crates/app" }
-ekanban-core = { path = "crates/core" }
+# **既定を外してあります。** ブラウザ向けの組み立て (`crates/web`、ADR 0035) が
+# Tauri の殻を外して使うので、要る側が `features = ["shell"]` と書きます。
+ekanban-app = { path = "crates/app", default-features = false }
+# **既定を外してあります。** ブラウザ版 (`crates/web`、ADR 0036) が SQLite を
+# 積まずに使うので、要る側が `features = ["sqlite"]` と書きます。
+ekanban-core = { path = "crates/core", default-features = false }
+# ブラウザ向けの組み立て (`crates/web`、ADR 0035)。
+console_error_panic_hook = "0.1.7"
+js-sys = "0.3"
+wasm-bindgen = "0.2"
+web-sys = "0.3"
 # `serde` は期限 (`NaiveDate`) のためです。chrono の実装が "YYYY-MM-DD" の
 # 文字列に落とすので、`docs/DESIGN.md`「境界を越える値」の決めごとがそのまま出ます。
 chrono = { version = "0.4.45", features = ["clock", "serde"] }

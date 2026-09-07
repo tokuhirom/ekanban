@@ -5,6 +5,9 @@
 /assets/icon.icns
 /web/node_modules/
 /web/dist/
+# ブラウザ版（ADR 0035）。wasm-pack と vite が組み立てるもの。
+/web/dist-demo/
+/web/wasm/
 /crates/app/gen/
 /web/test-results/
 /web/playwright-report/
