@@ -200,7 +200,7 @@ Linux と Windows では、最後のウィンドウを閉じるとアプリも�
 | カードを選ぶ | 矢印キー |
 | 選んだカードを編集 | `Enter` |
 | タイトルを入れたカードを保存 | `Enter`（タイトル欄で） |
-| 選んだカードを削除 | `Delete` / `Backspace` |
+| 選んだカードを削除 | `Delete` / `Backspace`（確認は出ません。`Cmd+Z` / `Ctrl+Z` で戻せます） |
 | 選んだカードを移動 | `Cmd+Option+矢印` / `Ctrl+Alt+矢印` |
 
 入力欄や検索欄にフォーカスがある間、ボードのショートカットは効きません。日本語入力の変換を邪魔しないためです。
@@ -402,7 +402,7 @@ macOS の `Cmd` は、ほかの OS では `Ctrl` になります。`Cmd+Ctrl+F`�
 | カードを選ぶ | 矢印キー | 矢印キー |
 | 選んだカードを編集 | `Enter` | `Enter` |
 | タイトル欄でカードを保存 | `Enter` | `Enter` |
-| 選んだカードを削除 | `Delete` | `Delete` |
+| 選んだカードを削除 | `Delete` / `Backspace` | `Delete` / `Backspace` |
 | 選んだカードを移動 | `Cmd+Option+矢印` | `Ctrl+Alt+矢印` |
 
 ---
