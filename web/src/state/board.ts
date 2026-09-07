@@ -68,6 +68,8 @@ export interface BoardState {
   closePanel: () => void;
   /** 保存されているクイックキャプチャの割り当て。無ければ `null`。 */
   quickCaptureShortcut: string | null;
+  /** 動いているアプリの版と、開いているデータベースのフルパス（#147）。 */
+  about: { version: string; databasePath: string };
   setQuickCaptureShortcut: (shortcut: string | null) => void;
   /** アーカイブ表示。盤面の代わりに、アーカイブしたカードを並べる（ADR 0010）。 */
   showArchived: boolean;
@@ -132,6 +134,12 @@ export function useBoardState(): BoardState {
   // 表示だけの状態なので、覚えません。次に開いたときは盤面から始めます。
   const [showArchived, setShowArchived] = useState(false);
   const [quickCaptureShortcut, setQuickCaptureShortcut] = useState<string | null>(null);
+  // 版とデータベースの場所は起動のときに 1 回だけ受け取ります（#147）。
+  // ダイアログを開くたびに聞き直す理由がありません。
+  const [about, setAbout] = useState<{ version: string; databasePath: string }>({
+    version: "",
+    databasePath: "",
+  });
 
   const report = useCallback(
     (what: string, error: unknown) => {
@@ -180,6 +188,7 @@ export function useBoardState(): BoardState {
         setThemeValue(startup.theme);
         applyTheme(startup.theme);
         setQuickCaptureShortcut(startup.quickCaptureShortcut);
+        setAbout({ version: startup.version, databasePath: startup.databasePath });
       })
       .catch((error: unknown) => {
         if (!cancelled) report("ボードを読み込めませんでした", error);
@@ -484,6 +493,7 @@ export function useBoardState(): BoardState {
     dismissAlert,
     notify,
     quickCaptureShortcut,
+    about,
     setQuickCaptureShortcut,
     showArchived,
     toggleArchive,

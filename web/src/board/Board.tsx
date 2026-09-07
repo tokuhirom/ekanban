@@ -660,9 +660,18 @@ export function Board() {
         />
       )}
       {about && (
+        // 版とデータベースの場所を出します（#147）。**どちらも Rust から
+        // 起動のときに受け取った値**で、`package.json` の版は見ません。
+        // 「場所を開く」は既にある `reveal_database` を呼ぶだけです。
         <AlertDialog
-          title="ekanbanについて"
-          detail="ローカル SQLite で動作する Kanban アプリです。"
+          title={`ekanban v${state.about.version}`}
+          detail={`ひとり用の Kanban ボード。データはこの SQLite ファイルにあります:\n${state.about.databasePath}\n\nライセンス: MIT · https://github.com/tokuhirom/ekanban`}
+          action={{
+            label: "場所を開く",
+            act: () => {
+              void ipc.revealDatabase();
+            },
+          }}
           onDismiss={() => {
             setAbout(false);
           }}

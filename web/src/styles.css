@@ -1020,6 +1020,8 @@ button.danger {
   margin: 0;
   color: var(--color-muted-foreground);
   overflow-wrap: anywhere;
+  /* 「ekanban について」がパスを 1 行で見せる（#147）。改行を残す。 */
+  white-space: pre-line;
 }
 
 .dialog-input {

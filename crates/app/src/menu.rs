@@ -426,7 +426,7 @@ fn drawn_sections() -> Vec<Section> {
                     None,
                 ),
                 Item::Separator,
-                app(AppAction::About, "ekanbanについて", None),
+                app(AppAction::About, "ekanban について", None),
             ],
         },
     ]
@@ -636,7 +636,7 @@ fn predefined_item<R: Runtime>(
         Predefined::ShowAll => PredefinedMenuItem::show_all(app_handle, Some("すべてを表示")),
         Predefined::About => PredefinedMenuItem::about(
             app_handle,
-            Some("ekanbanについて"),
+            Some("ekanban について"),
             Some(AboutMetadata {
                 name: Some("ekanban".into()),
                 version: Some(env!("CARGO_PKG_VERSION").into()),
