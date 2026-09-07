@@ -477,8 +477,8 @@ test("チェックリストの項目を足し、並べ替え、チェックで�
   await page.locator(".add-checklist-item").click();
   await page.locator(".checklist-text").nth(before + 1).fill("につ目");
 
-  // 2 つ目を上げると入れ替わる。
-  await page.locator(".checklist-row").nth(before + 1).getByLabel("上へ").click();
+  // 2 つ目を上げると入れ替わる（`Alt+↑`、#137）。
+  await page.locator(".checklist-text").nth(before + 1).press("Alt+ArrowUp");
   await expect(page.locator(".checklist-text").nth(before)).toHaveValue("につ目");
 
   await page.locator(".checklist-row").nth(before).locator(".checklist-toggle").click();
@@ -650,6 +650,65 @@ test("変換中の Enter では、チェックリストの行が増えない", a
   const rows = await page.locator(".checklist-text").count();
   await pressWhileComposing(page.locator(".checklist-text").last(), "Enter");
   await expect(page.locator(".checklist-text")).toHaveCount(rows);
+});
+
+/// 1 項目は必ず 1 行（#137）。折り返すと、行ごとに折り返しの位置が揃わない。
+test("20 文字の項目を 5 つ入れても、各行が 1 行に収まる", async ({ page }) => {
+  await openBoard(page);
+  await openFirstCard(page);
+
+  await page.locator(".add-checklist-item").click();
+  for (let index = 0; index < 5; index += 1) {
+    await page.keyboard.type("あ".repeat(20));
+    if (index < 4) await page.keyboard.press("Enter");
+  }
+
+  const rows = page.locator(".checklist-row");
+  const heights = await rows.evaluateAll((elements) =>
+    elements.map((element) => element.getBoundingClientRect().height),
+  );
+  expect(heights.length).toBeGreaterThanOrEqual(5);
+  // どの行も同じ高さ = どれも折り返していない。
+  expect(new Set(heights).size).toBe(1);
+});
+
+/// `↑` `↓` のボタンは畳んだが、キーボードだけで並べ替える道は残る（#113、#137）。
+test("項目の欄で Alt+↑ を押すと、その項目が 1 つ上がる", async ({ page }) => {
+  await openBoard(page);
+  await openFirstCard(page);
+  const cardId = Number(
+    await page.locator(".column").first().locator(".card").first().getAttribute("data-card"),
+  );
+
+  await page.locator(".add-checklist-item").click();
+  await page.keyboard.type("あと");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("さき");
+  await page.keyboard.press("Alt+ArrowUp");
+  await page.locator(".save-card").click();
+
+  await expect
+    .poll(async () =>
+      (await storedBoard()).columns
+        .flatMap((column) => column.cards)
+        .find((card) => card.id === cardId)
+        ?.checklistItems.map((item) => item.text)
+        .slice(-2),
+    )
+    .toEqual(["さき", "あと"]);
+});
+
+test("行末の ✕ で項目が消える", async ({ page }) => {
+  await openBoard(page);
+  await openFirstCard(page);
+  const before = await page.locator(".checklist-row").count();
+
+  await page.locator(".add-checklist-item").click();
+  await page.keyboard.type("消す項目");
+  await expect(page.locator(".checklist-row")).toHaveCount(before + 1);
+
+  await page.locator(".checklist-remove").last().click();
+  await expect(page.locator(".checklist-row")).toHaveCount(before);
 });
 
 // ---------------------------------------------------------------- タグ

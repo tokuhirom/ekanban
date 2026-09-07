@@ -916,12 +916,44 @@ button.danger {
   min-width: 0;
 }
 
-.checklist-row,
 .tag-row {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 4px;
+}
+
+/* チェックリストの 1 項目は必ず 1 行（#137）。折り返すと、行ごとに折り返しの
+ * 位置が揃わず、リストとして読めなくなる。長い項目は欄の中でスクロールする。 */
+.checklist-row {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 4px;
+}
+
+/* 常時出すのはチェックと文字だけ。掴む `⠿` と消す `✕` は、乗せたときと
+ * この行にフォーカスがあるときだけ見せる（`docs/DESIGN.md`「常用しない操作を
+ * 画面に常時出さない」）。**要素は残す**ので、キーボードでも辿れる。 */
+.checklist-handle,
+.checklist-remove {
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+
+.checklist-row:hover .checklist-handle,
+.checklist-row:hover .checklist-remove,
+.checklist-row:focus-within .checklist-handle,
+.checklist-row:focus-within .checklist-remove,
+.checklist-handle:focus-visible,
+.checklist-remove:focus-visible {
+  opacity: 1;
+}
+
+.checklist-remove {
+  flex: 0 0 auto;
+  padding: 0 4px;
+  color: var(--color-muted-foreground);
 }
 
 .checklist-text,
