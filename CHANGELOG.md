@@ -1,5 +1,10 @@
 # Changelog
 
+## [v0.2.4](https://github.com/tokuhirom/ekanban/compare/v0.2.3...v0.2.4) - 2026-09-08
+
+### 変更
+- 打った文字の読み方と一致の判定を webview に移す by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/182
+
 ## [v0.2.3](https://github.com/tokuhirom/ekanban/compare/v0.2.2...v0.2.3) - 2026-09-08
 
 ### 変更
