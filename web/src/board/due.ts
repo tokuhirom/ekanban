@@ -8,7 +8,7 @@ import { addDays, formatIsoDate, parseIsoDate, weekdayFromMonday } from "../mode
 
 export interface DueChoice {
   label: string;
-  /** `set_card_due_date` に渡す形。`""` は期限なし。 */
+  /** `setCardDueDate` に渡す形（`"YYYY-MM-DD"`）。 */
   date: string;
 }
 

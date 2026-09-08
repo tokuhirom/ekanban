@@ -431,18 +431,22 @@ export function useBoardState(): BoardState {
   // 均し、`#12` のカード番号——は 1 か所（`model/search.ts`）にあり、
   // 盤面もここにあるので、聞きに行く相手がいません。答えを待つ間の
   // 「まだ絞り込めていない」状態も無くなります。
-  const filtering = search.trim() !== "" || tagId !== null;
+  // いま絞り込んでいるタグ。**盤面から引き直します**——タグを消したり名前を
+  // 変えたりしても、ヘッダの表示が古いままにならないように。
+  const activeTag = snapshot?.board.tags.find((tag) => tag.id === tagId) ?? null;
+
+  // **消えたタグでは絞り込みません。** 覚えてある `tagId` が指す先が無くなって
+  // いると、どのカードも一致せず、盤面が丸ごと暗くなります。起動を妨げない
+  // のと同じ扱いで、黙って「絞り込んでいない」に落とします。
+  const effectiveTagId = activeTag?.id ?? null;
+  const filtering = search.trim() !== "" || effectiveTagId !== null;
   const matched = useMemo(
     () =>
       snapshot === null || !filtering
         ? null
-        : new Set(filterCards(snapshot.board, search, tagId)),
-    [filtering, search, snapshot, tagId],
+        : new Set(filterCards(snapshot.board, search, effectiveTagId)),
+    [effectiveTagId, filtering, search, snapshot],
   );
-
-  // いま絞り込んでいるタグ。**盤面から引き直します**——タグを消したり名前を
-  // 変えたりしても、ヘッダの表示が古いままにならないように。
-  const activeTag = snapshot?.board.tags.find((tag) => tag.id === tagId) ?? null;
 
   // 期限の状態を、盤面が手元にあるうちに出す（`model/due.ts`）。
   //
@@ -776,7 +780,7 @@ export function useBoardState(): BoardState {
     toggleTagPanel,
     openTagPanel,
     search,
-    tagId,
+    tagId: effectiveTagId,
     activeTag,
     toggleTag,
     clearFilter,
