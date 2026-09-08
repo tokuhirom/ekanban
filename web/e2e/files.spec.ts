@@ -11,11 +11,11 @@ import { readFileSync } from "node:fs";
 
 import { expect, test, type Page } from "@playwright/test";
 
-import { invoke, openBoard, startHarness, stopHarness } from "./harness";
+import { editStoredBoard, openBoard, startHarness, stopHarness, storedBoard } from "./harness";
+import { archiveCard } from "../src/model/board";
 
 import type {} from "../src/ipc/harness";
 import type { AppAction } from "../src/ipc/types/AppAction";
-import type { Snapshot } from "../src/ipc/types/Snapshot";
 
 test.beforeEach(startHarness);
 test.afterEach(stopHarness);
@@ -24,12 +24,6 @@ async function chooseMenu(page: Page, action: AppAction): Promise<void> {
   await page.evaluate((name: AppAction) => {
     window.ekanbanMenu?.(name);
   }, action);
-}
-
-async function storedBoard(): Promise<Snapshot["board"]> {
-  const response = await invoke("snapshot");
-  const snapshot = (await response.json()) as Snapshot;
-  return snapshot.board;
 }
 
 /// ダイアログが出した書き出し先を読む。
@@ -68,7 +62,7 @@ test("アーカイブでは、絞り込みに外れたカードを隠す", async
   // 効き方で、アーカイブする道はもう上のテストが通っている。
   const board = await storedBoard();
   for (const card of board.columns[0]?.cards.slice(0, 2) ?? []) {
-    await invoke("archive_card", { cardId: card.id });
+    await editStoredBoard((document) => archiveCard(document, card.id));
   }
   await openBoard(page);
 

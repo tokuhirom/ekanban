@@ -1,26 +1,41 @@
-// スナップショットを保持し、コマンドを呼んで差し替える 1 本の経路。
+// 盤面を持ち、当てて、保存する 1 本の経路（[ADR 0039]）。
 //
-// 盤面は Rust が持ちます（ADR 0018）。ここが持つのは、その投影と、まだ確定して
-// いない表示の状態（検索語、サイドバーの開閉）だけです。**盤面の論理をこちらに
-// 書かないこと。** 書いた時点で真実が 2 つになります。
+// **盤面はここが持ちます。** 全部のボードを抱えるのは、ボードの切り替えも
+// 期限の件数も往復なしで済ませるためです。盤面の論理そのものは
+// `web/src/model/board.ts` にあり、ここはそれを当てて `save_document` で
+// 書くところです。置き場所が断ったら、当てた写しごと捨てます。
+//
+// [ADR 0039]: ../../../docs/adr/0039-the-board-model-moves-to-typescript.md
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { moveCardArgs, moveColumnArgs, parseHandle, previewMove } from "../board/dnd";
+import type { BoardDocument, Outcome } from "../model/board";
+import {
+  canRedo,
+  canUndo,
+  cloneDocument,
+  moveCard as moveCardIn,
+  moveColumn as moveColumnIn,
+  redo as redoIn,
+  restoreCard as restoreCardIn,
+  undo as undoIn,
+} from "../model/board";
 import type { DueCounts, DueStatus } from "../model/due";
 import { dueCounts, dueStatus } from "../model/due";
+import { resolveCaptureTarget } from "../model/capture";
 import { filterCards } from "../model/search";
 import { useIpc } from "../ipc";
 import { asAppError, describeFailure } from "../ipc/error";
 import type { AppError } from "../ipc/types/AppError";
 import type { Board } from "../ipc/types/Board";
-import type { BoardDocument as StoredDocument } from "../ipc/types/BoardDocument";
+import type { CaptureTarget } from "../ipc/types/CaptureTarget";
 import type { Platform } from "../ipc/types/Platform";
 import type { Tag } from "../ipc/types/Tag";
-import type { Snapshot } from "../ipc/types/Snapshot";
 import type { ThemePreference } from "../ipc/types/ThemePreference";
 import { applyTheme } from "../shell/theme";
 import { dayHasTurned, localDay } from "./day";
+import { describeBoardError } from "./errors";
 
 /** カードの編集パネルが開いている対象。新しいカードはまだ ID を持たない。 */
 export type Editing = { kind: "new"; columnId: number } | { kind: "card"; cardId: number };
@@ -34,7 +49,7 @@ export interface Alert {
 }
 
 export interface BoardState {
-  snapshot: Snapshot | null;
+  snapshot: BoardView | null;
   /** ドラッグ中は、動かした先を映した盤面。掴んでいないときは `snapshot` のまま。 */
   board: Board | null;
   /** 掴んでいるものの dnd-kit の ID。ゴーストを描くのに使う。 */
@@ -52,12 +67,20 @@ export interface BoardState {
    *
    * 盤面を変えるコマンドの失敗はここに来ません——`run` がダイアログに出します。 */
   failure: string | null;
-  /** コマンドを呼び、返った盤面で差し替える 1 本の経路。
+  /** 盤面を変えて保存する 1 本の経路（ADR 0039）。
    *
-   * 返るのは `Validation` の失敗だけです——それは呼んだ入力欄の脇に出すもの
-   * なので、呼び元しか置き場所を知りません。それ以外はここでダイアログに
-   * 積むので、呼び元は返り値を捨ててかまいません（ADR 0016）。 */
-  run: (call: () => Promise<Snapshot>) => Promise<AppError | null>;
+   * 渡すのは**盤面に当てる操作**で、当てるのも保存するのもここです。返るのは
+   * `Validation` の失敗だけ——それは呼んだ入力欄の脇に出すものなので、呼び元
+   * しか置き場所を知りません。それ以外はここでダイアログに積むので、呼び元は
+   * 返り値を捨ててかまいません（ADR 0016）。 */
+  run: (
+    act: (document: BoardDocument) => Outcome<unknown>,
+    boardId?: number,
+  ) => Promise<AppError | null>;
+  /** 盤面を id から引く。**全部手元にあります**（ADR 0039）。 */
+  boardOf: (boardId: number) => Board | null;
+  /** 開いているボードのカラムを、クイックキャプチャの入れ先にする。 */
+  setCaptureColumn: (columnId: number) => void;
   /** ダイアログに出す知らせ。読んだら `dismissAlert` で消す。 */
   alert: Alert | null;
   dismissAlert: () => void;
@@ -112,6 +135,9 @@ export interface BoardState {
   setSearch: (value: string) => void;
   toggleSidebar: () => void;
   switchBoard: (boardId: number) => void;
+  /** ボードを作る。置き場所が採番するので、モデルの操作ではない（ADR 0039）。 */
+  createBoard: (name: string) => Promise<AppError | null>;
+  deleteBoard: (boardId: number) => Promise<AppError | null>;
 }
 
 /// ボード一覧の 1 行。**件数は手元で数えます**（`model/due.ts`）。
@@ -129,9 +155,53 @@ export interface BoardRow {
   due: DueCounts;
 }
 
+/// 画面が読む形。**盤面を持っているのはここ**ですが（[ADR 0039]）、描く側から
+/// 見える形はいままでと同じにしてあります。
+///
+/// [ADR 0039]: ../../../docs/adr/0039-the-board-model-moves-to-typescript.md
+export interface BoardView {
+  board: Board;
+  boards: readonly { id: number; name: string; createdAt: number; updatedAt: number }[];
+  canUndo: boolean;
+  canRedo: boolean;
+  /** クイックキャプチャの入れ先が、このボードのどのカラムか。 */
+  captureColumn: number | null;
+  windowTitle: string;
+}
+
+/** 窓に出すアプリの名前。Rust の `ekanban_core::APP_NAME` と同じ綴り。 */
+const APP_NAME = "Ekanban";
+
+/// ウィンドウのタイトル。**空白だけの名前ではアプリ名だけ**にします。
+function titleOf(boardName: string): string {
+  const name = boardName.trim();
+  return name === "" ? APP_NAME : `${name} — ${APP_NAME}`;
+}
+
 export function useBoardState(): BoardState {
   const ipc = useIpc();
-  const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
+  // **盤面はここが持ちます**（ADR 0039）。全部のボードを抱えるのは、ボードの
+  // 切り替えと期限の件数が往復なしで済むからです。
+  const [documents, setDocuments] = useState<BoardDocument[]>([]);
+  const [openBoardId, setOpenBoardId] = useState<number | null>(null);
+  // クイックキャプチャの入れ先。覚えてあるものをそのまま持ちます。**既定に
+  // 落とすのはここ**——盤面は手元にあるので、指している先が生きているかどうかを
+  // 往復せずに見られます（ADR 0028、ADR 0039）。
+  const [storedCaptureTarget, setStoredCaptureTarget] = useState<CaptureTarget | null>(null);
+  // 確定を 1 本に並べるための待ち行列と、いまの文書。**描画の写しではなく
+  // これを土台にします**——前の確定が飛んでいる間に次が始まると、古い盤面から
+  // 作った変更があとから届きます（`CardPanel` の `latest` と同じ形）。
+  const documentsRef = useRef<BoardDocument[]>([]);
+  const openBoardIdRef = useRef<number | null>(null);
+  const queue = useRef<Promise<unknown>>(Promise.resolve());
+  const keep = useCallback((next: BoardDocument[], openId?: number | null) => {
+    documentsRef.current = next;
+    setDocuments(next);
+    if (openId !== undefined) {
+      openBoardIdRef.current = openId;
+      setOpenBoardId(openId);
+    }
+  }, []);
   const [failure, setFailure] = useState<string | null>(null);
   const [search, setSearchValue] = useState("");
   // 絞り込んでいるタグ。**検索語と並ぶもう 1 つの条件**で、条件はこの 2 つに
@@ -169,29 +239,110 @@ export function useBoardState(): BoardState {
     [ipc],
   );
 
-  // コマンドを呼んで盤面を差し替える 1 本の経路。**盤面を返すコマンドは全部
-  // ここを通します**——起動の読み込みだけが例外で、それは差し替えではなく
-  // 最初の 1 回だからです。ここを迂回すると、失敗の行き先も一緒に散ります。
-  const run = useCallback(
-    async (call: () => Promise<Snapshot>): Promise<AppError | null> => {
+  /// 置き場所から盤面を読み直す。
+  ///
+  /// **取り消しの履歴は残します。** 読み直す理由はほかの窓が書いたことで、
+  /// こちらが積んだ手が無かったことになるわけではありません。
+  const readDocuments = useCallback(
+    (openId?: number) => {
+      ipc
+        .loadDocuments()
+        .then((fresh) => {
+          const stacks = new Map(
+            documentsRef.current.map((document) => [
+              document.board.id,
+              { undoStack: document.undoStack, redoStack: document.redoStack },
+            ]),
+          );
+          const next = fresh.map((document) => ({
+            ...document,
+            pendingEvents: [],
+            undoStack: stacks.get(document.board.id)?.undoStack ?? [],
+            redoStack: stacks.get(document.board.id)?.redoStack ?? [],
+          }));
+          const open =
+            openId ??
+            (next.some((document) => document.board.id === openBoardIdRef.current)
+              ? openBoardIdRef.current
+              : (next[0]?.board.id ?? null));
+          keep(next, open);
+        })
+        .catch((error: unknown) => {
+          report("ボードを読み込めませんでした", error);
+        });
+    },
+    [ipc, keep, report],
+  );
+
+  /// 盤面を変えて保存する 1 本の経路。**盤面を変える操作は全部ここを通ります。**
+  ///
+  /// 写しに当ててから保存し、**両方成功してから画面を差し替えます**（ADR 0018
+  /// の、この一点は変わりません）。断られたら写しごと捨てるので、画面には何も
+  /// 届かず、巻き戻すものもありません。
+  ///
+  /// 確定は 1 本に並べます。重ねて呼ばれても、土台にするのはいつも 1 つ前の
+  /// 結果です。
+  const apply = useCallback(
+    async (
+      act: (document: BoardDocument) => Outcome<unknown>,
+      boardId?: number,
+    ): Promise<AppError | null> => {
+      const target = boardId ?? openBoardIdRef.current;
+      const open = documentsRef.current.find((document) => document.board.id === target);
+      if (open === undefined) return null;
+
+      const next = cloneDocument(open);
+      const outcome = act(next);
+      if (!outcome.ok) {
+        const failure = describeBoardError(outcome.error);
+        // 入力欄に返すものは、呼び元しか置き場所を知らない。ここでダイアログに
+        // 出すと、打ち直す先から離れたところに理由が出る（ADR 0016）。
+        if (failure.kind === "validation") return failure;
+        setAlert(failure);
+        void ipc.logFrontendError(`${failure.title}: ${failure.detail}`);
+        return failure;
+      }
+      // 変えていないなら保存しない。何も言わないのは今までどおり。
+      if (outcome.value === false) return null;
+
+      const events = next.pendingEvents;
       try {
-        setSnapshot(await call());
+        const saved = await ipc.saveDocument(next, events);
+        next.rev = saved.rev;
+        next.pendingEvents = [];
+        keep(
+          documentsRef.current.map((document) =>
+            document.board.id === next.board.id ? next : document,
+          ),
+        );
         return null;
       } catch (error: unknown) {
         const failure = asAppError(error);
-        if (failure !== null && failure.kind === "validation") {
-          // 入力欄に返すものは、呼び元しか置き場所を知らない。ここでダイアログに
-          // 出すと、打ち直す先から離れたところに理由が出る。
-          return failure;
-        }
         const alert: Alert = describeFailure(error);
         setAlert(alert);
         void ipc.logFrontendError(`${alert.title}: ${alert.detail}`);
+        // 書き負けたときは、置き場所にあるものを読み直します（ADR 0040）。
+        // 画面が古いまま押し続けると、断られ続けるだけになります。
+        readDocuments();
         return failure;
       }
     },
-    [ipc],
+    [ipc, keep, readDocuments],
   );
+
+  /// 確定を 1 本に並べる。**重ねて呼ばれても、土台はいつも 1 つ前の結果。**
+  const run = useCallback(
+    (
+      act: (document: BoardDocument) => Outcome<unknown>,
+      boardId?: number,
+    ): Promise<AppError | null> => {
+      const queued = queue.current.then(() => apply(act, boardId));
+      queue.current = queued;
+      return queued;
+    },
+    [apply],
+  );
+
 
   useEffect(() => {
     let cancelled = false;
@@ -199,7 +350,8 @@ export function useBoardState(): BoardState {
       .startupState()
       .then((startup) => {
         if (cancelled) return;
-        setSnapshot(startup.snapshot);
+        readDocuments(startup.openBoardId);
+        setStoredCaptureTarget(startup.captureTarget);
         setSearchValue(startup.filter.search);
         setTagIdValue(startup.filter.tagId);
         setSidebarCollapsed(startup.sidebarCollapsed);
@@ -215,36 +367,14 @@ export function useBoardState(): BoardState {
     return () => {
       cancelled = true;
     };
-  }, [ipc, report]);
+  }, [ipc, readDocuments, report]);
 
-  // ほかのボードの盤面。**期限の件数を数えるためだけ**に持ちます（ADR 0011）。
-  //
-  // 開いているボードは `snapshot` が持っているので、ここが要るのは残りです。
-  // 変わるのはクイックキャプチャが書いたときだけなので、読むのは起動の 1 回と
-  // `board:changed` のときだけです。
-  const [documents, setDocuments] = useState<StoredDocument[]>([]);
-  const readDocuments = useCallback(() => {
-    ipc
-      .loadDocuments()
-      .then(setDocuments)
-      .catch((error: unknown) => {
-        // ほかのボードの件数が出ないだけなので、ダイアログには上げない。
-        void ipc.logFrontendError(`failed to read the other boards: ${String(error)}`);
-      });
-  }, [ipc]);
-  useEffect(readDocuments, [readDocuments]);
 
   // クイックキャプチャが書いたとき、盤面はこちらが呼んでいないところで変わる
   // （`docs/DESIGN.md`「コマンドとイベント」）。**差し替えは `run` と同じ 1 本**で、届いた盤面をそのまま載せる。
-  useEffect(
-    () =>
-      ipc.onBoardChanged((fresh) => {
-        setSnapshot(fresh);
-        // 書いたのが開いていないボードなら、そちらの件数も動いている。
-        readDocuments();
-      }),
-    [ipc, readDocuments],
-  );
+  // ほかの窓が書いたら読み直す（`docs/DESIGN.md`「コマンドとイベント」）。
+  // クイックキャプチャは開いていないボードにも書けるので、全部読み直します。
+  useEffect(() => ipc.onBoardChanged(() => { readDocuments(); }), [ipc, readDocuments]);
 
   // 開きっぱなしで日付をまたいだら、基準日を進める（#135）。
   //
@@ -265,6 +395,35 @@ export function useBoardState(): BoardState {
       window.removeEventListener("focus", turn);
     };
   }, []);
+
+  /// いまのキャプチャ先。決め方はキャプチャの窓と同じ（`model/capture.ts`）。
+  const captureTarget = useMemo(
+    () => resolveCaptureTarget(documents, storedCaptureTarget),
+    [documents, storedCaptureTarget],
+  );
+
+  // 画面が読む形。盤面はここが持っているので、組み立てるのもここです。
+  const snapshot = useMemo<BoardView | null>(() => {
+    const open = documents.find((document) => document.board.id === openBoardId);
+    if (open === undefined) return null;
+    return {
+      board: open.board,
+      boards: documents.map((document) => ({
+        id: document.board.id,
+        name: document.board.name,
+        createdAt: document.board.createdAt,
+        updatedAt: document.board.updatedAt,
+      })),
+      canUndo: canUndo(open),
+      canRedo: canRedo(open),
+      // 入れ先の印は、指しているボードを開いているときだけ出します（ADR 0028）。
+      captureColumn:
+        captureTarget !== null && captureTarget.boardId === open.board.id
+          ? captureTarget.columnId
+          : null,
+      windowTitle: titleOf(open.board.name),
+    };
+  }, [captureTarget, documents, openBoardId]);
 
   // 一致するカードを、盤面が手元にあるうちに数える（`web/src/model/search.ts`）。
   //
@@ -363,8 +522,8 @@ export function useBoardState(): BoardState {
     remember({ search: "", tagId: null });
   }, [remember]);
 
-  // ウィンドウのタイトルは盤面から導く。**文言を組むのは Rust**で
-  // （`Snapshot.windowTitle`）、ここはそれを窓に渡すだけ。
+  // ウィンドウのタイトルは盤面から導く。**文言を組むのもここ**（`titleOf`）で、
+  // 窓に渡すだけを Rust に頼む。
   const windowTitle = snapshot?.windowTitle ?? null;
   useEffect(() => {
     if (windowTitle === null) return;
@@ -385,12 +544,54 @@ export function useBoardState(): BoardState {
   );
 
   const undo = useCallback(() => {
-    void run(() => ipc.undo());
-  }, [ipc, run]);
+    void run(undoIn);
+  }, [run]);
 
   const redo = useCallback(() => {
-    void run(() => ipc.redo());
-  }, [ipc, run]);
+    void run(redoIn);
+  }, [run]);
+
+  /// ボードを作る。**採番の名前空間を切るのは置き場所**なので、ここは頼むだけ
+  /// （ADR 0039）。返ってきたものを開きます。
+  const createBoard = useCallback(
+    async (name: string): Promise<AppError | null> => {
+      try {
+        const created = await ipc.createBoard(name);
+        keep(
+          [...documentsRef.current, { ...created, pendingEvents: [], undoStack: [], redoStack: [] }],
+          created.board.id,
+        );
+        return null;
+      } catch (error: unknown) {
+        const failure = asAppError(error);
+        if (failure !== null && failure.kind === "validation") return failure;
+        setAlert(describeFailure(error));
+        return failure;
+      }
+    },
+    [ipc, keep],
+  );
+
+  /// ボードを消す。**最後の 1 つは置き場所が断ります。**
+  const deleteBoard = useCallback(
+    async (boardId: number): Promise<AppError | null> => {
+      try {
+        await ipc.deleteBoard(boardId);
+        const rest = documentsRef.current.filter((document) => document.board.id !== boardId);
+        keep(
+          rest,
+          openBoardIdRef.current === boardId
+            ? (rest[0]?.board.id ?? null)
+            : openBoardIdRef.current,
+        );
+        return null;
+      } catch (error: unknown) {
+        setAlert(describeFailure(error));
+        return asAppError(error);
+      }
+    },
+    [ipc, keep],
+  );
 
   const toggleSidebar = useCallback(() => {
     setSidebarCollapsed((collapsed) => {
@@ -404,9 +605,35 @@ export function useBoardState(): BoardState {
 
   const switchBoard = useCallback(
     (boardId: number) => {
-      void run(() => ipc.switchBoard(boardId));
+      // 盤面は全部手元にあるので、開くボードを替えるだけ。**置き場所へは
+      // 「最後に開いていたボード」を覚えさせに行くだけ**です。
+      keep(documentsRef.current, boardId);
+      void ipc.setOpenBoard(boardId).catch((error: unknown) => {
+        report("開いているボードを覚えられませんでした", error);
+      });
     },
-    [ipc, run],
+    [ipc, keep, report],
+  );
+
+  /// 開いているボードのカラムを、クイックキャプチャの入れ先にする。
+  const setCaptureColumn = useCallback(
+    (columnId: number) => {
+      const boardId = openBoardIdRef.current;
+      if (boardId === null) return;
+      const target = { boardId, columnId };
+      setStoredCaptureTarget(target);
+      void ipc.setCaptureTarget(target).catch((error: unknown) => {
+        report("カードの追加先を覚えられませんでした", error);
+      });
+    },
+    [ipc, report],
+  );
+
+  /// 盤面を id から引く。全部手元にあるので、聞きに行く相手がいません。
+  const boardOf = useCallback(
+    (boardId: number): Board | null =>
+      documents.find((document) => document.board.id === boardId)?.board ?? null,
+    [documents],
   );
 
   const beginDrag = useCallback(
@@ -435,15 +662,15 @@ export function useBoardState(): BoardState {
         const handle = parseHandle(current.activeId);
         if (handle === null) return null;
 
-        let move: () => Promise<Snapshot>;
+        let move: (document: BoardDocument) => Outcome<unknown>;
         if (handle.kind === "card") {
           const args = moveCardArgs(current.original, current.preview, handle.id);
           if (args === null) return null;
-          move = () => ipc.moveCard(handle.id, args.toColumnId, args.toIndex);
+          move = (document) => moveCardIn(document, handle.id, args.toColumnId, args.toIndex);
         } else {
           const args = moveColumnArgs(current.original, current.preview, handle.id);
           if (args === null) return null;
-          move = () => ipc.moveColumn(handle.id, args.toIndex);
+          move = (document) => moveColumnIn(document, handle.id, args.toIndex);
         }
         // 保存が通ってから外す。先に外すと、確定した並びが出るまでの一瞬だけ
         // 元の位置に戻って見える（条件 7）。失敗しても外す——動かせなかった
@@ -454,14 +681,14 @@ export function useBoardState(): BoardState {
         return current;
       });
     },
-    [ipc, run],
+    [run],
   );
 
   const moveCard = useCallback(
     (cardId: number, toColumnId: number, toIndex: number) => {
-      void run(() => ipc.moveCard(cardId, toColumnId, toIndex));
+      void run((document) => moveCardIn(document, cardId, toColumnId, toIndex));
     },
-    [ipc, run],
+    [run],
   );
 
   // 開いていたカードが消えたら（削除・アーカイブ・別のボードへ切り替え）
@@ -514,9 +741,9 @@ export function useBoardState(): BoardState {
 
   const restoreCard = useCallback(
     (cardId: number) => {
-      void run(() => ipc.restoreCard(cardId));
+      void run((document) => restoreCardIn(document, cardId));
     },
-    [ipc, run],
+    [run],
   );
 
   return {
@@ -562,7 +789,11 @@ export function useBoardState(): BoardState {
     matched,
     dueStatuses,
     boards,
+    boardOf,
+    setCaptureColumn,
     today,
+    createBoard,
+    deleteBoard,
     setSearch,
     toggleSidebar,
     switchBoard,

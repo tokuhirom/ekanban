@@ -6,20 +6,14 @@
 
 import { expect, test, type Page } from "@playwright/test";
 
-import { invoke, openBoard, startHarness, stopHarness } from "./harness";
+import { openBoard, startHarness, stopHarness, storedBoard } from "./harness";
 
 // `window.ekanbanMenu` の宣言を読み込むためだけの取り込み（値は使わない）。
 import type {} from "../src/ipc/harness";
 import type { AppAction } from "../src/ipc/types/AppAction";
-import type { Snapshot } from "../src/ipc/types/Snapshot";
 
 test.beforeEach(startHarness);
 test.afterEach(stopHarness);
-
-async function storedSnapshot(): Promise<Snapshot> {
-  const response = await invoke("snapshot");
-  return (await response.json()) as Snapshot;
-}
 
 /// カラムの `…` から完了扱いを切り替える。常用しない操作はここに畳んである
 /// （`docs/DESIGN.md`「画面の作り」）。文言も一緒に確かめる——立っているかどうかは
@@ -68,8 +62,8 @@ test("完了扱いにすると、印が出て、カードが沈み、期限を�
   await expect(overdue).toHaveAttribute("data-done", "true");
   await expect(overdue).not.toHaveAttribute("data-dimmed", /.*/);
 
-  const after = await storedSnapshot();
-  expect(after.board.columns[0]?.done).toBe(true);
+  const after = await storedBoard();
+  expect(after.columns[0]?.done).toBe(true);
   await expect(page.locator(".due-jump[data-tone='danger']")).toHaveCount(0);
 });
 
@@ -84,8 +78,8 @@ test("完了扱いは何本でも立てられ、やめれば元に戻る", async
   await toggleDone(page, 0, "完了扱いにする");
 
   await expect(page.locator(".column-done")).toHaveCount(2);
-  const marked = await storedSnapshot();
-  expect(marked.board.columns.filter((column) => column.done)).toHaveLength(2);
+  const marked = await storedBoard();
+  expect(marked.columns.filter((column) => column.done)).toHaveLength(2);
 
   await toggleDone(page, 0, "完了扱いをやめる");
 
@@ -94,8 +88,8 @@ test("完了扱いは何本でも立てられ、やめれば元に戻る", async
     "data-done",
     /.*/,
   );
-  const cleared = await storedSnapshot();
-  expect(cleared.board.columns[0]?.done).toBe(false);
+  const cleared = await storedBoard();
+  expect(cleared.columns[0]?.done).toBe(false);
   await expect(page.locator(".due-jump[data-tone='danger']")).toHaveCount(1);
 });
 
@@ -103,10 +97,10 @@ test("完了扱いにした 1 手は、Undo で戻る", async ({ page }) => {
   await openBoard(page);
 
   await toggleDone(page, 0, "完了扱いにする");
-  expect((await storedSnapshot()).board.columns[0]?.done).toBe(true);
+  expect((await storedBoard()).columns[0]?.done).toBe(true);
 
   await chooseMenu(page, "undo");
 
   await expect(page.locator(".column").first().locator(".column-done")).toHaveCount(0);
-  expect((await storedSnapshot()).board.columns[0]?.done).toBe(false);
+  expect((await storedBoard()).columns[0]?.done).toBe(false);
 });

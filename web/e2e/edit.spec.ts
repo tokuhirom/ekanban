@@ -10,25 +10,25 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
 import { localDay } from "../src/state/day";
-import { invoke, openBoard, startHarness, stopHarness } from "./harness";
-
-import type { Snapshot } from "../src/ipc/types/Snapshot";
 import type { StartupState } from "../src/ipc/types/StartupState";
+import {
+  editStoredBoard,
+  openBoard,
+  startHarness,
+  stopHarness,
+  storedBoard,
+  storedStartup,
+} from "./harness";
+import { deleteCard, removeColumn } from "../src/model/board";
+
 
 test.beforeEach(startHarness);
 test.afterEach(stopHarness);
 
 /// 保存された盤面を読み直す。画面ではなく SQLite の側を見るための口。
-async function storedBoard(): Promise<Snapshot["board"]> {
-  const response = await invoke("snapshot");
-  const snapshot = (await response.json()) as Snapshot;
-  return snapshot.board;
-}
-
 /// 保存された絞り込みを読み直す。覚えているかどうかは `app_state` の側で見る。
 async function storedFilter(): Promise<StartupState["filter"]> {
-  const response = await invoke("startup_state");
-  return ((await response.json()) as StartupState).filter;
+  return (await storedStartup()).filter;
 }
 
 async function storedTitles(): Promise<string[]> {
@@ -1342,7 +1342,7 @@ test("最後の 1 本になったカラムは消せない", async ({ page }) => 
   // 状態で削除が押せないこと**で、そこへ辿り着くまでの操作ではない。
   const board = await storedBoard();
   for (const column of board.columns.slice(1)) {
-    expect((await invoke("remove_column", { columnId: column.id })).ok).toBe(true);
+    await editStoredBoard((document) => removeColumn(document, column.id));
   }
 
   await openBoard(page);
@@ -1449,7 +1449,7 @@ test("失敗はダイアログに出て、盤面はそのまま", async ({ page 
   // 返すものではない**失敗なので、ダイアログに出る（ADR 0016）。
   const card = page.locator(".column").first().locator(".card").first();
   const cardId = Number(await card.getAttribute("data-card"));
-  expect((await invoke("delete_card", { cardId })).ok).toBe(true);
+  await editStoredBoard((document) => deleteCard(document, cardId));
 
   await card.click({ button: "right" });
   await page.locator(".card-menu").getByRole("button", { name: "削除" }).click();

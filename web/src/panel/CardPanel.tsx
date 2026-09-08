@@ -4,7 +4,8 @@
 // ドロップ先が見えなくなるためです。
 //
 // **下書きはここが持ちます**（`docs/DESIGN.md`「状態の持ち主」）。打っている間は
-// Rust に渡さず、保存を押した 1 回だけ `add_card` か `update_card` を呼びます。
+// 盤面に当てず、保存を押した 1 回だけモデルの `addCardWithDetails` か
+// `updateCardDetails` を呼びます（[ADR 0039]）。
 // 出す欄は新しいカードでも保存済みのカードでも同じで、どちらも下書きを丸ごと
 // 渡します（#127）。違うのは呼ぶコマンドと、向ける先のあるカード操作（コピー・
 // アーカイブ・削除）を出すかどうかだけです。
@@ -27,14 +28,19 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { useIpc } from "../ipc";
 import { fieldFailure } from "../ipc/error";
 import type { AppError } from "../ipc/types/AppError";
 import type { Board } from "../ipc/types/Board";
 import type { Card } from "../ipc/types/Card";
 import type { Field } from "../ipc/types/Field";
 import type { Platform } from "../ipc/types/Platform";
-import type { Snapshot } from "../ipc/types/Snapshot";
+import type { BoardDocument, Outcome } from "../model/board";
+import {
+  addCardWithDetails,
+  addTag,
+  copyCard as copyCardIn,
+  updateCardDetails,
+} from "../model/board";
 import type { Tag } from "../ipc/types/Tag";
 import { useAppActions } from "../shell/actions";
 import { DUE_DATE_HELP, dueDatePreview, parseDueDate } from "../model/due";
@@ -71,7 +77,7 @@ interface Props {
   today: string;
   /** 説明の中のリンクを開く修飾キーを決めるのに使う（ADR 0002）。 */
   platform: Platform;
-  run: (call: () => Promise<Snapshot>) => Promise<AppError | null>;
+  run: (act: (document: BoardDocument) => Outcome<unknown>) => Promise<AppError | null>;
   onClose: () => void;
   /** 削除・アーカイブの確認を頼む。出すかどうかを決めるのは呼ぶ側。 */
   onDeleteCard: (cardId: number) => void;
@@ -88,7 +94,6 @@ export function CardPanel({
   onDeleteCard,
   onArchiveCard,
 }: Props) {
-  const ipc = useIpc();
   const card = editing.kind === "card" ? findCard(board, editing.cardId) : null;
   // 下書きは開いたときの 1 回だけ起こします。**そのあとは `card` を見ません**
   // ——保存のたびに新しいスナップショットが来るので、見ていると打っている内容が
@@ -126,10 +131,10 @@ export function CardPanel({
   ///
   /// **読めなければコマンドを呼びません。** 断りは入力欄の脇に出すもので、
   /// 呼んだところで同じ答えが返るだけです（ADR 0031）。
-  function readDueDate(value: string): { date: string } | { failure: AppError } {
+  function readDueDate(value: string): { date: string | null } | { failure: AppError } {
     const read = parseDueDate(value, today);
     return read.ok
-      ? { date: read.date ?? "" }
+      ? { date: read.date }
       : { failure: fieldFailure(CARD_FAILED, "dueDate", DUE_DATE_HELP, read.typed) };
   }
 
@@ -177,8 +182,9 @@ export function CardPanel({
     }
     const title = next.title.trim() === "" ? card.title : next.title;
     const saved: { items: { id: number }[] } = { items: [] };
-    const failure = await run(async () => {
-      const snapshot = await ipc.updateCard(
+    const failure = await run((document) => {
+      const outcome = updateCardDetails(
+        document,
         editing.cardId,
         title,
         next.description,
@@ -186,8 +192,12 @@ export function CardPanel({
         next.tagIds,
         checklistToSend(next.checklist),
       );
-      saved.items = findCard(snapshot.board, editing.cardId)?.checklistItems ?? [];
-      return snapshot;
+      // 採番された項目 ID は、当てたあとの盤面から引きます。`run` が返すのは
+      // `Validation` の失敗だけなので、盤面そのものはここで受け取ります。
+      if (outcome.ok) {
+        saved.items = findCard(document.board, editing.cardId)?.checklistItems ?? [];
+      }
+      return outcome;
     });
     setFailed(failure);
     if (failure !== null) return failure;
@@ -246,9 +256,10 @@ export function CardPanel({
       setFailed(due.failure);
       return;
     }
-    const failure = await run(() =>
+    const failure = await run((document) =>
       editing.kind === "new"
-        ? ipc.addCard(
+        ? addCardWithDetails(
+            document,
             editing.columnId,
             draft.title,
             draft.description,
@@ -256,7 +267,8 @@ export function CardPanel({
             draft.tagIds,
             checklistToSend(draft.checklist),
           )
-        : ipc.updateCard(
+        : updateCardDetails(
+            document,
             editing.cardId,
             draft.title,
             draft.description,
@@ -272,16 +284,16 @@ export function CardPanel({
 
   /// 打った名前のタグをその場で作り、この下書きに付ける（#115、ADR 0027）。
   ///
-  /// 作った ID は `add_tag` が返すスナップショットから引きます。`run()` が返すのは
-  /// `Validation` の失敗だけなので、盤面そのものはクロージャの中で受け取ります。
+  /// 作った ID はモデルの `addTag` がそのまま返します。`run()` が返すのは
+  /// `Validation` の失敗だけなので、採った番号はクロージャの中で受け取ります。
   /// 色は渡しません——決めていないタグには自動で色が付き（ADR 0044）、それを
   /// 塗り替えるのはタグ整理パネルの仕事です。
   async function createTag(name: string): Promise<void> {
     const created: { id: number | null } = { id: null };
-    const failure = await run(async () => {
-      const snapshot = await ipc.addTag(name, AUTO_TAG_COLOR);
-      created.id = findTagByName(snapshot.board.tags, name)?.id ?? null;
-      return snapshot;
+    const failure = await run((document) => {
+      const outcome = addTag(document, name, AUTO_TAG_COLOR);
+      if (outcome.ok) created.id = outcome.value;
+      return outcome;
     });
     setFailed(failure);
     const tagId = created.id;
@@ -355,7 +367,7 @@ export function CardPanel({
               className="ghost"
               onClick={() => {
                 setMenuOpen(false);
-                void run(() => ipc.copyCard(editing.cardId));
+                void run((document) => copyCardIn(document, editing.cardId));
               }}
             >
               コピー

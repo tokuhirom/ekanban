@@ -17,7 +17,7 @@ crates/
   core/           ekanban-core: 盤面のモデル、SQLite、控え、置き場所
     src/
       lib.rs          アプリ名・識別子・データベースの置き場所
-      model.rs        Board / Column / Card などのドメインモデルと移動・並べ替え
+      model.rs        Board / Column / Card などの形。行として成り立つかの検め
       backup.rs       起動時の日ごと世代バックアップ（置き場所・命名・世代数）
       instance.rs     同じデータベースを 2 プロセスに開かせないロック
       paths.rs        OS ごとのデータベースとログの配置の解決
@@ -37,10 +37,10 @@ crates/
       capture.rs      クイックキャプチャの窓とグローバルな割り当て
       shortcut.rs     割り当ての形。保存も登録もここを通る
       ipc.rs          `#[tauri::command]` の包み。中身は持たない
-      commands.rs     1 操作 1 コマンド。適用して保存して盤面を返す
+      commands.rs     置き場所の読み書きと、覚えておく設定。盤面は持たない
       dispatch.rs     コマンド名で振り分ける表。殻の外の呼び手が共有する
-      state.rs        開いている盤面。適用と保存をコマンドの中で終わらせる
-      snapshot.rs     コマンドが返す形。起動時に読むもの
+      state.rs        どこに置くか（SQLite か JSON か）。盤面は載せない
+      snapshot.rs     起動のときに読むものと、覚えてある設定の形
       error.rs        失敗の伝え方。入力欄に返すか、ダイアログに出すか
       events.rs       Rust から webview への 3 つのイベント
     tests/
@@ -49,7 +49,8 @@ web/             画面。TypeScript + React + Vite（ADR 0019）
   src/
     ipc/          Rust を呼ぶ唯一の口。tauri・harness・wasm の 3 実装。
                   `types/` は ts-rs の生成物（手で書かない）
-    state/        スナップショットの保持と、コマンドを呼んで差し替える 1 本の経路
+    model/        盤面のモデル（ADR 0039）。採番・並べ替え・Undo・タグ・期限・検索
+    state/        盤面の保持と、当てて保存する 1 本の経路（`run`）
     board/        サイドバー、ヘッダ、カラム、カード、D&D
       dnd.ts        どこに落ちるかの計算。**ライブラリの外に置く**（ADR 0022）
       keyboard.ts   矢印での選択と、修飾キー＋矢印での移動
@@ -67,7 +68,7 @@ web(crate)/      ekanban-web: 同じコマンドを wasm で動かす。ブラ�
 - **`ekanban-core` に UI ツールキットを足しません。** `tauri` に依存しないことが、テストを GUI のランタイム無しで走らせ続ける条件であり、Tauri のアプリと開発用のハーネスが同じコードを使える条件でもあります（[設計の記録](DESIGN.md)「層の分け方」）。依存の依存から入り込むほうがありがちなので、解決した依存グラフを `script/check-core-independence` が CI で見ています
 - **`crates/app/src/commands.rs` に `tauri` は出てきません。** `ipc.rs` の `#[tauri::command]` は、その関数を呼ぶだけの包みです。開発用のハーネス（[設計の記録](DESIGN.md)「テスト」）が同じ関数を HTTP に出すので、**判断を包みの側に置かないことは設計そのもの**です
 - **D&D の挿入位置と、キーボードの割り当ては `web/src/board/dnd.ts` と `keyboard.ts` に置きます。** dnd-kit に渡すのは掴む・運ぶ・オートスクロールだけです（[ADR 0022](adr/0022-dnd-kit-core-for-drag-and-drop.md)）。盤面の意味を決めるところをライブラリに預けると、外せなくなります
-- **盤面の置き場所は 2 つ、モデルは 1 つです。** `store::Store` が口で、配るアプリは SQLite、ブラウザ版は JSON です（[ADR 0036](adr/0036-one-model-two-places-to-put-it.md)）。**`Store` に盤面の判断を書かないでください**——採番も並べ替えも Undo も `model.rs` にあります。`cargo build -p ekanban-core --no-default-features` が、中核が SQLite に依らない層を持っていることの確かめ方です
+- **盤面の置き場所は 2 つ、モデルは 1 つです。** `store::Store` が口で、配るアプリは SQLite、ブラウザ版は JSON です（[ADR 0036](adr/0036-one-model-two-places-to-put-it.md)）。**`Store` に盤面の判断を書かないでください**——採番も並べ替えも Undo も `web/src/model/board.ts` にあります（[ADR 0039](adr/0039-the-board-model-moves-to-typescript.md)）。`cargo build -p ekanban-core --no-default-features` が、中核が SQLite に依らない層を持っていることの確かめ方です
 - **`crates/app` の `shell` feature を外すと、Tauri を知らない層だけが残ります。** ブラウザ版（`crates/web`、[ADR 0035](adr/0035-a-browser-build-of-the-real-core.md)）がそこを使います。`cargo build -p ekanban-app --no-default-features --target wasm32-unknown-unknown` が通ることが、「コマンドの層が Tauri を知らない」の実際の確かめ方です
 - **どの OS で動いているかを `navigator.userAgent` から決めません。** あれは webview が書き換えられる文字列です（Playwright の Safari 模擬は Linux 上で `Macintosh` を名乗ります）。`secondary` が Cmd か Ctrl かを取り違えると割り当てが丸ごと効かないので、Rust が `StartupState.platform` で渡します（[ADR 0009](adr/0009-per-platform-key-bindings.md)、[ADR 0023](adr/0023-verifying-the-webview-engines.md)）。**例外はブラウザ版だけ**です——`wasm32-unknown-unknown` はどの OS でもないので、そこだけはページが名乗ります（[ADR 0035](adr/0035-a-browser-build-of-the-real-core.md)）
 - **`crates/app` のコンパイルには `web/dist` が要ります。** `tauri::generate_context!` が画面を実行ファイルに埋め込むためです。checkout したてなら `npm --prefix web ci && npm --prefix web run build` を先に走らせてください（`make dev` と CI はそうしています）

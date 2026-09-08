@@ -20,7 +20,18 @@ import type { AppError } from "../ipc/types/AppError";
 import type { BoardRow } from "../state/board";
 import type { Column as ColumnData } from "../ipc/types/Column";
 import type { QuickCaptureStatus } from "../ipc/types/QuickCaptureStatus";
-import type { Snapshot } from "../ipc/types/Snapshot";
+import type { BoardDocument, Outcome } from "../model/board";
+import {
+  addColumn,
+  archiveCard,
+  archiveColumn,
+  copyCard,
+  deleteCard,
+  removeColumn,
+  renameBoard,
+  setCardDueDate,
+  setCardTags,
+} from "../model/board";
 import { Archive } from "../panel/Archive";
 import { CardPanel } from "../panel/CardPanel";
 import { TagPanel } from "../panel/TagPanel";
@@ -232,7 +243,7 @@ export function Board() {
         event.preventDefault();
         // 消す前に行き先を決める。消えたあとの盤面には、その手がかりが無い。
         const next = selectionAfterDelete(board, selectedCard);
-        void run(() => ipc.deleteCard(selectedCard)).then(() => {
+        void run((document) => deleteCard(document, selectedCard)).then(() => {
           selectCard(next);
         });
         return;
@@ -314,7 +325,7 @@ export function Board() {
   /// カラムをアーカイブする。**空でなければ確認する**——1 操作で複数件が
   /// まとめて動くので（`docs/DESIGN.md`）。
   function askArchiveColumn(column: ColumnData) {
-    const act = () => void run(() => ipc.archiveColumn(column.id));
+    const act = () => void run((document) => archiveColumn(document, column.id));
     if (column.cards.length === 0) {
       act();
       return;
@@ -328,7 +339,7 @@ export function Board() {
   }
 
   function askRemoveColumn(column: ColumnData) {
-    const act = () => void run(() => ipc.removeColumn(column.id));
+    const act = () => void run((document) => removeColumn(document, column.id));
     if (column.cards.length === 0) {
       act();
       return;
@@ -346,35 +357,31 @@ export function Board() {
       title: "ボードを削除しますか？",
       description: `「${summary.name}」と、その中のカードを削除します。`,
       okText: "削除",
-      act: () => void run(() => ipc.deleteBoard(summary.id)),
+      act: () => void state.deleteBoard(summary.id),
     });
   }
 
   /// ボード一覧の件数から、その状態の先頭カードへ辿る（#136）。
   ///
   /// **絞り込みも減光もしません。** 動かすのは選択と、そこまでのスクロール
-  /// だけです。ほかのボードの件数なら、まず切り替えて、返ってきた盤面から
-  /// 目当てのカードを引きます——切り替えは非同期なので、こちらの `board` は
-  /// まだ古いままです（`CardPanel` がタグを作るときと同じ形）。
-  async function jumpToDue(boardId: number, kind: DueKind) {
+  /// だけです。ほかのボードの件数なら、切り替えたうえで、そのボードの盤面から
+  /// 目当てのカードを引きます——盤面は全部手元にあるので、往復が要りません
+  /// （ADR 0039）。
+  function jumpToDue(boardId: number, kind: DueKind) {
     let target = firstDueCard(openBoard, state.dueStatuses, kind);
     if (boardId !== openBoard.id) {
-      const found: { id: number | null } = { id: null };
-      const failure = await run(async () => {
-        const fresh = await ipc.switchBoard(boardId);
-        // 切り替えた先の期限の状態は、返ってきた盤面から手元で出す
-        // （`model/due.ts`）。基準日は画面が持っているものと同じ。
-        const statuses = new Map(
-          fresh.board.columns
-            .flatMap((column) => column.cards)
-            .filter((card) => card.dueDate !== null)
-            .map((card) => [card.id, dueStatus(card.dueDate, today)] as const),
-        );
-        found.id = firstDueCard(fresh.board, statuses, kind);
-        return fresh;
-      });
-      if (failure !== null) return;
-      target = found.id;
+      const other = state.boardOf(boardId);
+      if (other === null) return;
+      state.switchBoard(boardId);
+      // 切り替えた先の期限の状態は、その盤面から手元で出す（`model/due.ts`）。
+      // 基準日は画面が持っているものと同じ。
+      const statuses = new Map(
+        other.columns
+          .flatMap((column) => column.cards)
+          .filter((card) => card.dueDate !== null)
+          .map((card) => [card.id, dueStatus(card.dueDate, today)] as const),
+      );
+      target = firstDueCard(other, statuses, kind);
     }
     if (target === null) return;
     selectCard(target);
@@ -396,14 +403,14 @@ export function Board() {
       okText: "作成",
       value: "",
       error: null,
-      submit: (value) => run(() => ipc.createBoard(value)),
+      submit: (value) => state.createBoard(value),
     });
   }
 
   /// ボードの名前を変える。
   ///
-  /// `rename_board` が名前を変えるのは**開いているボード**です（`docs/DESIGN.md`「コマンドとイベント」）。一覧の
-  /// ほかの行から呼ばれたときは、先にそのボードを開きます。
+  /// **一覧のどの行からでも変えられます。** 盤面は全部手元にあるので、当てる
+  /// 先を `run` に渡すだけで済みます（ADR 0039）。開くボードは動かしません。
   function askRenameBoard(target: { id: number; name: string }) {
     setPrompt({
       title: "ボードの名前を変更",
@@ -412,13 +419,7 @@ export function Board() {
       okText: "変更",
       value: target.name,
       error: null,
-      submit: async (value) => {
-        if (target.id !== openBoard.id) {
-          const failure = await run(() => ipc.switchBoard(target.id));
-          if (failure !== null) return failure;
-        }
-        return run(() => ipc.renameBoard(value));
-      },
+      submit: (value) => run((document) => renameBoard(document, value), target.id),
     });
   }
 
@@ -434,7 +435,7 @@ export function Board() {
         onRename={askRenameBoard}
         onDelete={askDeleteBoard}
         onJumpDue={(boardId, kind) => {
-          void jumpToDue(boardId, kind);
+          jumpToDue(boardId, kind);
         }}
       />
       <main className="board">
@@ -557,6 +558,7 @@ export function Board() {
                   selectedCard={selectedCard}
                   lastColumn={board.columns.length <= 1}
                   captureTarget={state.snapshot?.captureColumn === column.id}
+                  onSetCaptureColumn={state.setCaptureColumn}
                   run={run}
                   onSelectCard={selectCard}
                   onOpenCard={openCard}
@@ -627,8 +629,8 @@ export function Board() {
           platform={platform}
           run={run}
           onClose={state.closePanel}
-          onArchiveCard={(cardId) => void run(() => ipc.archiveCard(cardId))}
-          onDeleteCard={(cardId) => void run(() => ipc.deleteCard(cardId))}
+          onArchiveCard={(cardId) => void run((document) => archiveCard(document, cardId))}
+          onDeleteCard={(cardId) => void run((document) => deleteCard(document, cardId))}
         />
       )}
       {state.tagPanelOpen && (
@@ -658,17 +660,17 @@ export function Board() {
             onClose={() => {
               setCardMenu(null);
             }}
-            onCopy={() => void run(() => ipc.copyCard(menuCard.id))}
-            onArchive={() => void run(() => ipc.archiveCard(menuCard.id))}
-            onDelete={() => void run(() => ipc.deleteCard(menuCard.id))}
+            onCopy={() => void run((document) => copyCard(document, menuCard.id))}
+            onArchive={() => void run((document) => archiveCard(document, menuCard.id))}
+            onDelete={() => void run((document) => deleteCard(document, menuCard.id))}
             onToggleTag={(tagId) => {
               const next = menuCard.tagIds.includes(tagId)
                 ? menuCard.tagIds.filter((id) => id !== tagId)
                 : [...menuCard.tagIds, tagId];
-              void run(() => ipc.setCardTags(menuCard.id, next));
+              void run((document) => setCardTags(document, menuCard.id, next));
             }}
             onSetDueDate={(dueDate) => {
-              void run(() => ipc.setCardDueDate(menuCard.id, dueDate));
+              void run((document) => setCardDueDate(document, menuCard.id, dueDate));
             }}
           />
         </>
@@ -765,15 +767,14 @@ function AddColumn({
   open: boolean;
   onOpen: () => void;
   onClose: () => void;
-  run: (call: () => Promise<Snapshot>) => Promise<AppError | null>;
+  run: (act: (document: BoardDocument) => Outcome<unknown>) => Promise<AppError | null>;
 }) {
-  const ipc = useIpc();
   const [name, setName] = useState("");
   const [failed, setFailed] = useState<AppError | null>(null);
 
   async function save() {
     if (name.trim() === "") return;
-    const failure = await run(() => ipc.addColumn(name));
+    const failure = await run((document) => addColumn(document, name));
     setFailed(failure);
     if (failure === null) onClose();
   }

@@ -1,14 +1,15 @@
 //! ekanban のコマンド層（`docs/DESIGN.md`「状態の持ち主」「コマンドとイベント」）。
 //!
-//! 盤面は Rust が持ち（[ADR 0018]）、webview はその投影だけを描きます。盤面を
-//! 変えるコマンドは、モデルへの適用と SQLite への保存を続けて行い、**両方成功
-//! してから**スナップショットを返します。
+//! **盤面は webview が持ちます**（[ADR 0039]）。ここに残るのは、このアプリを
+//! ウェブアプリとして書いたとしてサーバ側に置くだろうもの——置き場所の読み書き
+//! （[ADR 0040]）、覚えておく設定、OS に頼むこと——だけです。
 //!
 //! `commands` は `tauri` を知りません。`ipc` の `#[tauri::command]` は、その関数を
 //! 呼ぶだけの包みです。`docs/DESIGN.md`「テスト」の開発用ハーネスが同じ関数を HTTP に出すので、
 //! **判断を包みの側に置かないことは設計そのもの**です。
 //!
-//! [ADR 0018]: ../../../docs/adr/0018-rust-owns-the-board-state.md
+//! [ADR 0039]: ../../../docs/adr/0039-the-board-model-moves-to-typescript.md
+//! [ADR 0040]: ../../../docs/adr/0040-the-shape-and-the-store-stay-in-rust.md
 
 pub mod commands;
 pub mod dispatch;
@@ -36,9 +37,7 @@ pub use error::{AppError, ErrorKind, Field};
 pub use menu::{Action, AppAction, WindowAction};
 #[cfg(feature = "shell")]
 pub use run::run;
-pub use snapshot::{
-    CaptureTarget, Platform, QuickCaptureStatus, Snapshot, StartupState, ThemePreference,
-};
+pub use snapshot::{CaptureTarget, Platform, QuickCaptureStatus, StartupState, ThemePreference};
 pub use state::AppState;
 
 #[cfg(test)]
@@ -60,7 +59,10 @@ mod tests {
                 crate::events::CaptureResult::inline(&config),
             ),
             ("CaptureTarget", crate::CaptureTarget::inline(&config)),
-            ("Snapshot", crate::Snapshot::inline(&config)),
+            (
+                "BoardDocument",
+                crate::commands::BoardDocument::inline(&config),
+            ),
             ("StartupState", crate::StartupState::inline(&config)),
         ];
         for (name, declaration) in declarations {

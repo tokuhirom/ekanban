@@ -2,7 +2,6 @@
 import type { CaptureTarget } from "./CaptureTarget";
 import type { FilterState } from "./FilterState";
 import type { Platform } from "./Platform";
-import type { Snapshot } from "./Snapshot";
 import type { ThemePreference } from "./ThemePreference";
 import type { WindowBoundsState } from "./WindowBoundsState";
 
@@ -15,10 +14,12 @@ import type { WindowBoundsState } from "./WindowBoundsState";
  */
 export type StartupState = { 
 /**
- * 盤面そのもの。`board:changed` で届くのと同じ形なので、webview は
- * 起動でもイベントでも同じ 1 本の経路で差し替えられます（`docs/DESIGN.md`「画面の作り」）。
+ * 最初に開くボード。**盤面そのものは渡しません**——webview が
+ * `load_documents` で全部読みます（[ADR 0039]）。
+ *
+ * [ADR 0039]: ../../../docs/adr/0039-the-board-model-moves-to-typescript.md
  */
-snapshot: Snapshot, 
+openBoardId: number, 
 /**
  * 動いている OS。キーの割り当てを決めるのに使います。
  */

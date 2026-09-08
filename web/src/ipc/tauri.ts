@@ -13,61 +13,20 @@ import type { AppAction } from "./types/AppAction";
 import type { CaptureTarget } from "./types/CaptureTarget";
 import type { QuickCaptureStatus } from "./types/QuickCaptureStatus";
 import type { BoardDocument } from "./types/BoardDocument";
-import type { Snapshot } from "./types/Snapshot";
+import type { SavedBoard } from "./types/SavedBoard";
 import type { StartupState } from "./types/StartupState";
 
 export const tauriIpc: Ipc = {
   startupState: () => invoke<StartupState>("startup_state"),
-  snapshot: () => invoke<Snapshot>("snapshot"),
   loadDocuments: () => invoke<BoardDocument[]>("load_documents"),
-  switchBoard: (boardId) => invoke<Snapshot>("switch_board", { boardId }),
-  createBoard: (name) => invoke<Snapshot>("create_board", { name }),
-  renameBoard: (name) => invoke<Snapshot>("rename_board", { name }),
-  deleteBoard: (boardId) => invoke<Snapshot>("delete_board", { boardId }),
-  addCard: (columnId, title, description, dueDate, tagIds, checklist) =>
-    invoke<Snapshot>("add_card", {
-      columnId,
-      title,
-      description,
-      dueDate,
-      tagIds,
-      checklist,
-    }),
-  updateCard: (cardId, title, description, dueDate, tagIds, checklist) =>
-    invoke<Snapshot>("update_card", {
-      cardId,
-      title,
-      description,
-      dueDate,
-      tagIds,
-      checklist,
-    }),
-  copyCard: (cardId) => invoke<Snapshot>("copy_card", { cardId }),
-  deleteCard: (cardId) => invoke<Snapshot>("delete_card", { cardId }),
-  archiveCard: (cardId) => invoke<Snapshot>("archive_card", { cardId }),
-  restoreCard: (cardId) => invoke<Snapshot>("restore_card", { cardId }),
-  setCardTags: (cardId, tagIds) =>
-    invoke<Snapshot>("set_card_tags", { cardId, tagIds }),
-  setCardDueDate: (cardId, dueDate) =>
-    invoke<Snapshot>("set_card_due_date", { cardId, dueDate }),
-  addColumn: (name) => invoke<Snapshot>("add_column", { name }),
-  renameColumn: (columnId, name) =>
-    invoke<Snapshot>("rename_column", { columnId, name }),
-  removeColumn: (columnId) => invoke<Snapshot>("remove_column", { columnId }),
-  setColumnDone: (columnId, done) =>
-    invoke<Snapshot>("set_column_done", { columnId, done }),
-  archiveColumn: (columnId) => invoke<Snapshot>("archive_column", { columnId }),
-  addTag: (name, color) => invoke<Snapshot>("add_tag", { name, color }),
-  renameTag: (tagId, name) => invoke<Snapshot>("rename_tag", { tagId, name }),
-  setTagColor: (tagId, color) =>
-    invoke<Snapshot>("set_tag_color", { tagId, color }),
-  removeTag: (tagId) => invoke<Snapshot>("remove_tag", { tagId }),
-  moveCard: (cardId, toColumnId, toIndex) =>
-    invoke<Snapshot>("move_card", { cardId, toColumnId, toIndex }),
-  moveColumn: (columnId, toIndex) =>
-    invoke<Snapshot>("move_column", { columnId, toIndex }),
-  undo: () => invoke<Snapshot>("undo"),
-  redo: () => invoke<Snapshot>("redo"),
+  saveDocument: (document, events) => invoke<SavedBoard>("save_document", { document, events }),
+  setOpenBoard: async (boardId) => {
+    await invoke("set_open_board", { boardId });
+  },
+  createBoard: (name) => invoke<BoardDocument>("create_board", { name }),
+  deleteBoard: async (boardId) => {
+    await invoke("delete_board", { boardId });
+  },
   setFilterState: async (filter) => {
     await invoke("set_filter_state", { filter });
   },
@@ -100,8 +59,8 @@ export const tauriIpc: Ipc = {
     invoke<string | null>("choose_save_path", { fileName }),
   writeTextFile: (destination, extension, contents) =>
     invoke<string>("write_text_file", { destination, extension, contents }),
-  exportBoardJson: (destination) =>
-    invoke<string>("export_board_json", { destination }),
+  exportBoardJson: (boardId, destination) =>
+    invoke<string>("export_board_json", { boardId, destination }),
   backupDatabase: (destination) =>
     invoke<string>("backup_database", { destination }),
   databaseLocation: () => invoke<string>("database_location"),
@@ -119,9 +78,12 @@ export const tauriIpc: Ipc = {
     await invoke("open_url", { url });
   },
   captureTarget: () => invoke<CaptureTarget | null>("capture_target"),
-  setCaptureColumn: (columnId) =>
-    invoke<Snapshot>("set_capture_column", { columnId }),
-  captureCard: (title) => invoke<Snapshot>("capture_card", { title }),
+  setCaptureTarget: async (target) => {
+    await invoke("set_capture_target", {
+      boardId: target?.boardId ?? null,
+      columnId: target?.columnId ?? null,
+    });
+  },
   quickCaptureStatus: () => invoke<QuickCaptureStatus>("quick_capture_status"),
   setMenuAcceleratorsActive: async (active) => {
     await invoke("set_menu_accelerators_active", { active });
@@ -134,8 +96,8 @@ export const tauriIpc: Ipc = {
   onBoardChanged: (handler) => {
     let stop: (() => void) | null = null;
     let stopped = false;
-    void listen<Snapshot>(BOARD_CHANGED, (event) => {
-      handler(event.payload);
+    void listen(BOARD_CHANGED, () => {
+      handler();
     }).then((unlisten) => {
       if (stopped) unlisten();
       else stop = unlisten;

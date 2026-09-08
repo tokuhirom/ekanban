@@ -7,12 +7,12 @@
 
 import type { AppAction } from "./types/AppAction";
 import type { BoardDocument } from "./types/BoardDocument";
+import type { CardEvent } from "./types/CardEvent";
+import type { SavedBoard } from "./types/SavedBoard";
 import type { CaptureTarget } from "./types/CaptureTarget";
-import type { ChecklistItemDraft } from "./types/ChecklistItemDraft";
 import type { KeyPress } from "./types/KeyPress";
 import type { FilterState } from "./types/FilterState";
 import type { QuickCaptureStatus } from "./types/QuickCaptureStatus";
-import type { Snapshot } from "./types/Snapshot";
 import type { StartupState } from "./types/StartupState";
 import type { ThemePreference } from "./types/ThemePreference";
 
@@ -21,76 +21,26 @@ import type { ThemePreference } from "./types/ThemePreference";
 /// 段階ごとに必要なぶんだけ増やします。使うあてのない口を先に並べても、
 /// 合っているかどうかを確かめる方法がありません。
 export interface Ipc {
-  /** 起動のときに読む、盤面と付随する表示の状態。 */
+  /** 起動のときに読む、最初に開くボードと付随する表示の状態。 */
   startupState(): Promise<StartupState>;
-  /** いまの盤面。イベントで差し替えるときにも使う。 */
-  snapshot(): Promise<Snapshot>;
-  /** 全部のボードを、盤面ごと読む（ADR 0039）。**期限の件数を手元で数える**ため。 */
+  /** 全部のボードを、盤面ごと読む（ADR 0039）。**盤面を持つのは画面**。 */
   loadDocuments(): Promise<BoardDocument[]>;
-  switchBoard(boardId: number): Promise<Snapshot>;
-  createBoard(name: string): Promise<Snapshot>;
-  renameBoard(name: string): Promise<Snapshot>;
-  deleteBoard(boardId: number): Promise<Snapshot>;
+  /** 盤面を書く。版が合わなければ断られる（ADR 0040）。次の版が返る。
+   *
+   * **盤面を変える道はこれ 1 本**です。カードを足すのも動かすのも取り消すのも
+   * `web/src/model/board.ts` で当ててから、ここへ渡します。 */
+  saveDocument(document: BoardDocument, events: CardEvent[]): Promise<SavedBoard>;
+  /** 開いているボードを覚える。次の起動でここから始まる。 */
+  setOpenBoard(boardId: number): Promise<void>;
+  /** ボードを作る。**採番するのは置き場所**なので、ここは頼むだけ（ADR 0039）。 */
+  createBoard(name: string): Promise<BoardDocument>;
+  /** ボードを消す。最後の 1 つは置き場所が断る。次に開くのは呼んだ側が決める。 */
+  deleteBoard(boardId: number): Promise<void>;
 
-  /** タイトルが決まってから 1 回だけ呼ぶ。空白だけのタイトルは Rust が断る（`docs/DESIGN.md`「状態の持ち主」）。
-   * 下書きは `updateCard` と同じ一式を渡す——期限もタグもチェックリストも、
-   * 足すときに付けられる（#127）。 */
-  addCard(
-    columnId: number,
-    title: string,
-    description: string,
-    dueDate: string,
-    tagIds: number[],
-    checklist: ChecklistItemDraft[],
-  ): Promise<Snapshot>;
-  /** カードの中身をまとめて書き換える。チェックリストも項目ごと一括で渡す
-   * （`docs/DESIGN.md`「コマンドとイベント」）。 */
-  updateCard(
-    cardId: number,
-    title: string,
-    description: string,
-    dueDate: string,
-    tagIds: number[],
-    checklist: ChecklistItemDraft[],
-  ): Promise<Snapshot>;
-  copyCard(cardId: number): Promise<Snapshot>;
-  deleteCard(cardId: number): Promise<Snapshot>;
-  archiveCard(cardId: number): Promise<Snapshot>;
-  /** アーカイブから戻す。戻り先は元のカラムの末尾（`Board::restore_card`）。 */
-  restoreCard(cardId: number): Promise<Snapshot>;
-  /** 右クリックメニューからタグだけを付け外しする。パネルを開かずに済ませるため。 */
-  setCardTags(cardId: number, tagIds: number[]): Promise<Snapshot>;
-  /** 右クリックメニューから期限だけを当て外しする（#132）。`""` で期限なし。 */
-  setCardDueDate(cardId: number, dueDate: string): Promise<Snapshot>;
-
-  addColumn(name: string): Promise<Snapshot>;
-  renameColumn(columnId: number, name: string): Promise<Snapshot>;
-  removeColumn(columnId: number): Promise<Snapshot>;
-  /**
-   * 終わったものの置き場かどうかを切り替える（ADR 0038）。何本でも立てられる。
-   */
-  setColumnDone(columnId: number, done: boolean): Promise<Snapshot>;
-  archiveColumn(columnId: number): Promise<Snapshot>;
-
-  addTag(name: string, color: string): Promise<Snapshot>;
-  renameTag(tagId: number, name: string): Promise<Snapshot>;
-  setTagColor(tagId: number, color: string): Promise<Snapshot>;
-  removeTag(tagId: number): Promise<Snapshot>;
-  /** 落とした瞬間に 1 回だけ呼ぶ。ドラッグ中は webview の中で完結させる
-   * （`docs/DESIGN.md`「ドラッグ＆ドロップ」）。 */
-  moveCard(
-    cardId: number,
-    toColumnId: number,
-    toIndex: number,
-  ): Promise<Snapshot>;
-  moveColumn(columnId: number, toIndex: number): Promise<Snapshot>;
-  /** 取り消し・やり直し。**キーは webview が振り分けます**（`shell/keys.ts`）。 */
-  undo(): Promise<Snapshot>;
-  redo(): Promise<Snapshot>;
   setFilterState(filter: FilterState): Promise<void>;
   setSidebarCollapsed(collapsed: boolean): Promise<void>;
   setThemePreference(theme: ThemePreference): Promise<void>;
-  /** 文言は `Snapshot.windowTitle` が組んだものをそのまま渡す。 */
+  /** 文言は画面が組む（`state/board.ts`）。ここは窓に渡すだけ。 */
   setWindowTitle(title: string): Promise<void>;
   /** メニューが押されたことを受ける（`docs/DESIGN.md`「メニューとキー割り当て」）。返るのは購読をやめる関数。 */
   onAppAction(handler: (action: AppAction) => void): () => void;
@@ -104,11 +54,11 @@ export interface Ipc {
    *
    * [ADR 0035]: ../../../docs/adr/0035-a-browser-build-of-the-real-core.md */
   writeTextFile(destination: string, extension: string, contents: string): Promise<string>;
-  /** 盤面を JSON で書き出す。**組み立てるのも置き場所**——採番の続きのように、
-   * 画面が受け取らない値まで入るため（[ADR 0045]）。書けたパスが返る。
+  /** 盤面を JSON で書き出す。**組み立てるのも置き場所**——カードの履歴のように、
+   * 画面が持っていない値まで入るため（[ADR 0045]）。書けたパスが返る。
    *
    * [ADR 0045]: ../../../docs/adr/0045-two-kinds-of-export.md */
-  exportBoardJson(destination: string): Promise<string>;
+  exportBoardJson(boardId: number, destination: string): Promise<string>;
   /** データベースの控えを取る。書けたパスが返る。 */
   backupDatabase(destination: string): Promise<string>;
   databaseLocation(): Promise<string>;
@@ -130,12 +80,13 @@ export interface Ipc {
   revealBackups(): Promise<void>;
   /** 説明の中のリンクをブラウザで開く。 */
   openUrl(url: string): Promise<void>;
-  /** クイックキャプチャの入れ先。設定が無ければ既定（先頭カラム）が返る。 */
+  /** 覚えてあるクイックキャプチャの入れ先。選ばれていなければ `null`。
+   *
+   * **既定に落とすのも名前を引くのも画面**です（ADR 0028、ADR 0039）——盤面は
+   * こちらが持っているので、往復せずに決められます。 */
   captureTarget(): Promise<CaptureTarget | null>;
-  /** 開いているボードのカラムを入れ先にする。`null` で既定に戻す。 */
-  setCaptureColumn(columnId: number | null): Promise<Snapshot>;
-  /** 1 行のキャプチャ。ボードと同じ保存経路に乗る（`docs/DESIGN.md`「クイックキャプチャ」）。 */
-  captureCard(title: string): Promise<Snapshot>;
+  /** 入れ先を覚える。`null` で既定（先頭のボードの先頭カラム）に戻す。 */
+  setCaptureTarget(target: CaptureTarget | null): Promise<void>;
   /** 割り当てのダイアログが開くときに読むもの（`docs/DESIGN.md`「クイックキャプチャ」）。 */
   quickCaptureStatus(): Promise<QuickCaptureStatus>;
   /**
@@ -149,8 +100,10 @@ export interface Ipc {
   setQuickCaptureShortcut(press: KeyPress | null): Promise<string | null>;
   /** キャプチャの窓を閉じる。`focusBoard` でボードを前に出す（ADR 0012）。 */
   closeCaptureWindow(focusBoard: boolean): Promise<void>;
-  /** ほかの窓が盤面を変えたときに届く（`docs/DESIGN.md`「コマンドとイベント」）。返るのは購読をやめる関数。 */
-  onBoardChanged(handler: (snapshot: Snapshot) => void): () => void;
+  /** ほかの窓が盤面を書いたときに届く（`docs/DESIGN.md`「コマンドとイベント」）。
+   *
+   * **積荷はありません**——受け取った側が読み直します。返るのは購読をやめる関数。 */
+  onBoardChanged(handler: () => void): () => void;
   /** webview の未捕捉例外を Rust 側と同じログに落とす（`docs/DESIGN.md`「アプリが伝えること」）。 */
   logFrontendError(message: string): Promise<void>;
 }

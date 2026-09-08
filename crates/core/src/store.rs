@@ -437,6 +437,18 @@ impl Store<'_> {
         )
     }
 
+    /// 1 つのボードの版だけを読む。作ったばかりのボードを返すときに使います。
+    pub fn load_board_rev(&self, id: BoardId) -> Result<i64, StoreError> {
+        either!(
+            self,
+            database => database.load_board_rev(id),
+            json => json
+                .index_of(id)
+                .map(|at| json.boards[at].rev)
+                .ok_or(StoreError::NoBoard),
+        )
+    }
+
     /// 全部のボードを、webview が持つ形で読む（[ADR 0039]）。
     ///
     /// [ADR 0039]: ../../../docs/adr/0039-the-board-model-moves-to-typescript.md

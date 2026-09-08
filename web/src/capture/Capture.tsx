@@ -5,29 +5,44 @@
 //
 // 入れ先は「〇〇ボード / △△カラム」として常に見せます。どこに入るのか分からない
 // まま放り込ませない、というのが元からの決めごとです。
+//
+// **書くのはボードの窓と同じ経路**です（[ADR 0039]）。盤面をここでも読み、
+// モデルで 1 枚足して `save_document` で書きます——Undo に積まれ、`created` が
+// 1 件残るところまで同じです。書いたことはボードの窓に `board:changed` で
+// 届き、そちらが読み直します。
+//
+// [ADR 0039]: ../../../docs/adr/0039-the-board-model-moves-to-typescript.md
 
 import { useEffect, useRef, useState } from "react";
 
 import { useIpc } from "../ipc";
 import { describeFailure } from "../ipc/error";
-import type { CaptureTarget } from "../ipc/types/CaptureTarget";
+import type { BoardDocument } from "../ipc/types/BoardDocument";
+import { addCard, cloneDocument } from "../model/board";
+import type { BoardDocument as ModelDocument } from "../model/board";
+import type { CaptureDestination } from "../model/capture";
+import { resolveCaptureTarget } from "../model/capture";
 import { isComposing } from "../shell/ime";
 
 export function Capture() {
   const ipc = useIpc();
   const [title, setTitle] = useState("");
-  const [target, setTarget] = useState<CaptureTarget | null>(null);
+  const [documents, setDocuments] = useState<readonly BoardDocument[]>([]);
+  const [target, setTarget] = useState<CaptureDestination | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   // 保存を頼んで待っている間は `true`。`Enter` の二重押しを受けない。
   const [saving, setSaving] = useState(false);
   const input = useRef<HTMLInputElement>(null);
 
+  // **窓を開くたびに読み直します。** 閉じている間にボードの窓が書いている
+  // ことがあるので、前に開いたときの写しは使えません（`docs/DESIGN.md`）。
   useEffect(() => {
     let cancelled = false;
-    ipc
-      .captureTarget()
-      .then((found) => {
-        if (!cancelled) setTarget(found);
+    Promise.all([ipc.loadDocuments(), ipc.captureTarget()])
+      .then(([fresh, stored]) => {
+        if (cancelled) return;
+        setDocuments(fresh);
+        setTarget(resolveCaptureTarget(fresh, stored));
       })
       .catch((error: unknown) => {
         if (!cancelled) setFailure(describeFailure(error).detail);
@@ -45,11 +60,28 @@ export function Capture() {
   }, [target]);
 
   async function save() {
-    if (saving || title.trim() === "") return;
+    if (saving || target === null || title.trim() === "") return;
+    const stored = documents.find((document) => document.board.id === target.boardId);
+    if (stored === undefined) return;
     setSaving(true);
+
+    // ボードの窓と同じ経路。モデルに当ててから、`save_document` で書く。
+    const document: ModelDocument = cloneDocument({
+      ...stored,
+      pendingEvents: [],
+      undoStack: [],
+      redoStack: [],
+    });
+    const outcome = addCard(document, target.columnId, title, "");
+    if (!outcome.ok) {
+      setFailure("タイトルを入力してください");
+      setSaving(false);
+      return;
+    }
+
     try {
-      await ipc.captureCard(title);
-      // 書けたら閉じる。ボードは `board:changed` で受け取っている。
+      await ipc.saveDocument(document, document.pendingEvents);
+      // 書けたら閉じる。ボードの窓には `board:changed` が届いている。
       await ipc.closeCaptureWindow(true);
     } catch (error: unknown) {
       // 閉じない。打った 1 行を残したまま理由を出す。

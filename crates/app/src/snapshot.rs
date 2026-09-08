@@ -1,47 +1,15 @@
 //! コマンドが返す形（`docs/DESIGN.md`「コマンドとイベント」）。
 //!
-//! **盤面を変えるコマンドは、変更後のスナップショットを丸ごと返します。** 差分は
-//! 返しません。差分にすると、適用の順序と欠落を webview の側で面倒みることに
-//! なります。大きさが問題になったら、そのときに測ってから、高頻度のものだけ
-//! 差分に落とします。
+//! **盤面はここに出てきません。** 持っているのは webview なので（[ADR 0039]）、
+//! ここに並ぶのは起動のときに一度だけ渡す「どこから始めるか」と、置き場所に
+//! 覚えてある表示の設定です。
+//!
+//! [ADR 0039]: ../../../docs/adr/0039-the-board-model-moves-to-typescript.md
 
-use ekanban_core::model::{Board, BoardId, BoardSummary, ColumnId};
+use ekanban_core::model::{BoardId, ColumnId};
 use ekanban_core::store::WindowBoundsState;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
-
-/// 盤面を変えるコマンドが返すもの。
-#[derive(Debug, Clone, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct Snapshot {
-    pub board: Board,
-    /// 期限の件数つきのボード一覧。サイドバーがこれを描く。
-    pub boards: Vec<BoardSummary>,
-    pub can_undo: bool,
-    pub can_redo: bool,
-    /// クイックキャプチャの入れ先が、このボードのどのカラムか。
-    ///
-    /// 設定が無ければ既定（先頭カラム）、別のボードを指していれば `None` です。
-    /// **印を出すのは画面ですが、どこが入れ先かを決めるのは Rust**——同じ既定を
-    /// TypeScript にもう 1 つ持たせません。
-    pub capture_column: Option<ColumnId>,
-    /// ウィンドウのタイトル。webview がそのまま `set_window_title` に渡します。
-    ///
-    /// 組み立てを TypeScript に持たせません。ボード名の扱い（空白だけの名前は
-    /// アプリ名だけにする）は表示の判断なので、盤面の判断と同じところに置きます。
-    pub window_title: String,
-}
-
-/// ウィンドウのタイトル。
-pub(crate) fn window_title(board_name: &str) -> String {
-    let board_name = board_name.trim();
-    if board_name.is_empty() {
-        ekanban_core::APP_NAME.to_string()
-    } else {
-        format!("{board_name} — {}", ekanban_core::APP_NAME)
-    }
-}
 
 /// テーマの設定。`app_state` に文字列で入っている。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
@@ -127,15 +95,21 @@ pub struct QuickCaptureStatus {
 }
 
 /// クイックキャプチャが書き込む先。アプリ全体で 1 つ（`docs/DESIGN.md`）。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+///
+/// **名前は入っていません。** どのボードのどのカラムかを覚えているのが
+/// 置き場所の仕事で、それを「〇〇ボード / △△カラム」と読ませるのは画面の
+/// 仕事です（[ADR 0039]）。盤面は webview が全部持っているので、引くのに
+/// 往復が要りません。指している先が消えていたときに既定へ落とすのも、
+/// そちらで済みます（[ADR 0028]）。
+///
+/// [ADR 0028]: ../../../docs/adr/0028-a-single-default-quick-capture-target.md
+/// [ADR 0039]: ../../../docs/adr/0039-the-board-model-moves-to-typescript.md
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct CaptureTarget {
     pub board_id: BoardId,
     pub column_id: ColumnId,
-    /// 表示用に覚えておく名前。別のボードのカラムでも「どこに入るか」を出せるように。
-    pub board_name: String,
-    pub column_name: String,
 }
 
 /// 起動のときと、ウィンドウを開き直すときに読むもの。
@@ -147,9 +121,11 @@ pub struct CaptureTarget {
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct StartupState {
-    /// 盤面そのもの。`board:changed` で届くのと同じ形なので、webview は
-    /// 起動でもイベントでも同じ 1 本の経路で差し替えられます（`docs/DESIGN.md`「画面の作り」）。
-    pub snapshot: Snapshot,
+    /// 最初に開くボード。**盤面そのものは渡しません**——webview が
+    /// `load_documents` で全部読みます（[ADR 0039]）。
+    ///
+    /// [ADR 0039]: ../../../docs/adr/0039-the-board-model-moves-to-typescript.md
+    pub open_board_id: BoardId,
     /// 動いている OS。キーの割り当てを決めるのに使います。
     pub platform: Platform,
     pub filter: ekanban_core::store::FilterState,
@@ -169,22 +145,4 @@ pub struct StartupState {
     /// `EKANBAN_DATABASE` で差し替えていればそれが入ります。「場所を開く」で
     /// 開けるだけでは、どのファイルを見ているのかを文字で読めませんでした。
     pub database_path: String,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn window_title_shows_the_board_and_the_app() {
-        let title = window_title("個人 Kanban");
-        assert!(title.contains("個人 Kanban"));
-        assert!(title.contains(ekanban_core::APP_NAME));
-    }
-
-    /// 名前が空白だけのボードでも、タイトルが区切り記号だけにならないこと。
-    #[test]
-    fn window_title_falls_back_to_the_app_name_for_a_blank_board() {
-        assert_eq!(window_title("   "), ekanban_core::APP_NAME);
-    }
 }
