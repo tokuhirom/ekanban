@@ -24,6 +24,7 @@ import type { AppAction } from "./types/AppAction";
 import type { CaptureTarget } from "./types/CaptureTarget";
 import type { Platform } from "./types/Platform";
 import type { QuickCaptureStatus } from "./types/QuickCaptureStatus";
+import type { BoardDocument } from "./types/BoardDocument";
 import type { Snapshot } from "./types/Snapshot";
 import type { StartupState } from "./types/StartupState";
 import type { WebSection } from "./types/WebSection";
@@ -96,6 +97,7 @@ export function fireAppAction(action: AppAction): void {
 export const wasmIpc: Ipc = {
   startupState: () => call<StartupState>("startup_state"),
   snapshot: () => call<Snapshot>("snapshot"),
+  loadDocuments: () => call<BoardDocument[]>("load_documents"),
   switchBoard: (boardId) => call<Snapshot>("switch_board", { boardId }),
   createBoard: (name) => call<Snapshot>("create_board", { name }),
   renameBoard: (name) => call<Snapshot>("rename_board", { name }),

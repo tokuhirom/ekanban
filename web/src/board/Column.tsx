@@ -9,7 +9,7 @@ import { useState } from "react";
 import { useIpc } from "../ipc";
 import type { AppError } from "../ipc/types/AppError";
 import type { Column as ColumnData } from "../ipc/types/Column";
-import type { DueStatus } from "../ipc/types/DueStatus";
+import type { DueStatus } from "../model/due";
 import type { Snapshot } from "../ipc/types/Snapshot";
 import type { Tag } from "../ipc/types/Tag";
 import { isComposing } from "../shell/ime";

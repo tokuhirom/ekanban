@@ -22,7 +22,8 @@
 //
 // [ADR 0031]: ../../../docs/adr/0031-typing-a-due-date.md
 
-import { addDays, formatIsoDate, fromParts, parseIsoDate, weekdayFromMonday } from "./dates";
+import type { Board } from "../ipc/types/Board";
+import { addDays, daysBetween, formatIsoDate, fromParts, parseIsoDate, weekdayFromMonday } from "./dates";
 import { normalizeSearchText } from "./search";
 
 /// 打たれた文字を読んだ結果。
@@ -149,4 +150,69 @@ function readMonthAndDay(text: string, today: Date): Date | null {
   if (thisYear.getTime() >= today.getTime()) return thisYear;
   // 2/29 は来年に無いことがある。無ければ読めなかったことにする。
   return fromParts(today.getUTCFullYear() + 1, Number(month), Number(day));
+}
+
+// ---------------------------------------------------------------- 期限の状態
+
+/** 「もうすぐ」に入る日数。これを超えたら `upcoming`。 */
+const SOON_THRESHOLD_DAYS = 3;
+
+/// カード 1 枚の期限の状態。**日数を添えます**——画面が「N日超過」「あとN日」を
+/// 出すので、判定と一緒に数えます。
+export type DueStatus =
+  | { kind: "overdue"; days: number }
+  | { kind: "today" }
+  | { kind: "soon"; days: number }
+  | { kind: "upcoming"; days: number }
+  | { kind: "none" };
+
+/// 期限切れと本日期限のカードの枚数。
+///
+/// 期限は表示するだけで通知しないので、見に行かなければ気づけません。ボードが
+/// 増えると見に行く先も増えるので、開かなくても分かるようにボード一覧の各行に
+/// 出します（#62、[ADR 0011]）。
+///
+/// [ADR 0011]: ../../../docs/adr/0011-due-counts-in-the-board-list.md
+export interface DueCounts {
+  overdue: number;
+  today: number;
+}
+
+/// 期限が過ぎているか、今日か、近いか。`today` は `"YYYY-MM-DD"` の基準日。
+export function dueStatus(dueDate: string | null, today: string): DueStatus {
+  if (dueDate === null) return { kind: "none" };
+  const due = parseIsoDate(dueDate);
+  const base = parseIsoDate(today);
+  // 読めない日付は「期限なし」と同じ扱い。当てずっぽうで急かさない。
+  if (due === null || base === null) return { kind: "none" };
+
+  const days = daysBetween(base, due);
+  if (days < 0) return { kind: "overdue", days: -days };
+  if (days === 0) return { kind: "today" };
+  if (days <= SOON_THRESHOLD_DAYS) return { kind: "soon", days };
+  return { kind: "upcoming", days };
+}
+
+/// ボード 1 つの、期限切れと本日期限の枚数。
+///
+/// **アーカイブ済みと、終わったものの置き場（`Column.done`）にあるカードは
+/// 数えません**（[ADR 0038]）。終わったものに期限切れも本日期限もありません。
+///
+/// [ADR 0038]: ../../../docs/adr/0038-a-column-that-means-done.md
+export function dueCounts(board: Board, today: string): DueCounts {
+  const counts: DueCounts = { overdue: 0, today: 0 };
+  for (const column of board.columns) {
+    if (column.done) continue;
+    for (const card of column.cards) {
+      const status = dueStatus(card.dueDate, today);
+      if (status.kind === "overdue") counts.overdue += 1;
+      else if (status.kind === "today") counts.today += 1;
+    }
+  }
+  return counts;
+}
+
+/** 件数が 1 件も無いか。無ければ一覧に印を出さない。 */
+export function noDueCounts(counts: DueCounts): boolean {
+  return counts.overdue === 0 && counts.today === 0;
 }

@@ -17,7 +17,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { useIpc } from "../ipc";
 import type { AppError } from "../ipc/types/AppError";
-import type { BoardSummary } from "../ipc/types/BoardSummary";
+import type { BoardRow } from "../state/board";
 import type { Column as ColumnData } from "../ipc/types/Column";
 import type { QuickCaptureStatus } from "../ipc/types/QuickCaptureStatus";
 import type { Snapshot } from "../ipc/types/Snapshot";
@@ -27,6 +27,7 @@ import { TagPanel } from "../panel/TagPanel";
 import { tagChipStyle } from "../panel/tags";
 import { useAppActions, useAppActionSource } from "../shell/actions";
 import { AlertDialog, ConfirmDialog, PromptDialog } from "../shell/Dialog";
+import { dueStatus } from "../model/due";
 import { useFileActions } from "../shell/files";
 import { isComposing } from "../shell/ime";
 import { targetOf, undoIntent } from "../shell/keys";
@@ -145,7 +146,7 @@ export function Board() {
       if (board !== null) askRenameBoard(board);
     },
     deleteBoard: () => {
-      const summary = state.snapshot?.boards.find((each) => each.id === board?.id);
+      const summary = state.boards.find((each) => each.id === board?.id);
       if (summary !== undefined) askDeleteBoard(summary);
     },
     // 開いているパネルは自分で畳みます（`CardPanel` と `TagPanel`）。ここが
@@ -284,7 +285,8 @@ export function Board() {
     );
   }
 
-  const { boards, today } = state.snapshot;
+  const boards = state.boards;
+  const today = state.today;
   // ここから下では盤面がある。巻き上げられる関数宣言の中には絞り込みが
   // 届かないので、絞り込んだあとの束縛を 1 つ置く。
   const openBoard = board;
@@ -339,7 +341,7 @@ export function Board() {
     });
   }
 
-  function askDeleteBoard(summary: BoardSummary) {
+  function askDeleteBoard(summary: BoardRow) {
     setConfirming({
       title: "ボードを削除しますか？",
       description: `「${summary.name}」と、その中のカードを削除します。`,
@@ -360,7 +362,14 @@ export function Board() {
       const found: { id: number | null } = { id: null };
       const failure = await run(async () => {
         const fresh = await ipc.switchBoard(boardId);
-        const statuses = new Map(fresh.dueStatuses.map((entry) => [entry.cardId, entry.status]));
+        // 切り替えた先の期限の状態は、返ってきた盤面から手元で出す
+        // （`model/due.ts`）。基準日は画面が持っているものと同じ。
+        const statuses = new Map(
+          fresh.board.columns
+            .flatMap((column) => column.cards)
+            .filter((card) => card.dueDate !== null)
+            .map((card) => [card.id, dueStatus(card.dueDate, today)] as const),
+        );
         found.id = firstDueCard(fresh.board, statuses, kind);
         return fresh;
       });

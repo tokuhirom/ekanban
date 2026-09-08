@@ -1,7 +1,7 @@
 import { useState } from "react";
 
-import type { BoardSummary } from "../ipc/types/BoardSummary";
-import type { DueCounts } from "../ipc/types/DueCounts";
+import type { BoardRow } from "../state/board";
+import type { DueCounts } from "../model/due";
 import type { DueKind } from "./dueOrder";
 
 /// ボード一覧の 1 行に出す期限の件数。
@@ -57,14 +57,14 @@ function RailMark({ counts }: { counts: DueCounts }) {
 }
 
 interface Props {
-  boards: readonly BoardSummary[];
+  boards: readonly BoardRow[];
   currentBoardId: number;
   collapsed: boolean;
   onToggle: () => void;
   onSwitch: (boardId: number) => void;
   onCreate: () => void;
-  onRename: (board: BoardSummary) => void;
-  onDelete: (board: BoardSummary) => void;
+  onRename: (board: BoardRow) => void;
+  onDelete: (board: BoardRow) => void;
   /** 件数が押された。そのボードの、その状態の先頭カードへ送る（#136）。 */
   onJumpDue: (boardId: number, kind: DueKind) => void;
 }

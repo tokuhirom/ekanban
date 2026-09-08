@@ -13,6 +13,7 @@ import type { Ipc } from "./index";
 import type { AppAction } from "./types/AppAction";
 import type { CaptureTarget } from "./types/CaptureTarget";
 import type { QuickCaptureStatus } from "./types/QuickCaptureStatus";
+import type { BoardDocument } from "./types/BoardDocument";
 import type { Snapshot } from "./types/Snapshot";
 import type { StartupState } from "./types/StartupState";
 
@@ -54,6 +55,7 @@ export function harnessIpc(base: string): Ipc {
   return {
     startupState: () => call<StartupState>(base, "startup_state"),
     snapshot: () => call<Snapshot>(base, "snapshot"),
+    loadDocuments: () => call<BoardDocument[]>(base, "load_documents"),
     switchBoard: (boardId) => call<Snapshot>(base, "switch_board", { boardId }),
     createBoard: (name) => call<Snapshot>(base, "create_board", { name }),
     renameBoard: (name) => call<Snapshot>(base, "rename_board", { name }),

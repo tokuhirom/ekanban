@@ -6,6 +6,7 @@
 // 画面の振る舞いを Playwright から確かめる道が閉じます。
 
 import type { AppAction } from "./types/AppAction";
+import type { BoardDocument } from "./types/BoardDocument";
 import type { CaptureTarget } from "./types/CaptureTarget";
 import type { ChecklistItemDraft } from "./types/ChecklistItemDraft";
 import type { KeyPress } from "./types/KeyPress";
@@ -24,6 +25,8 @@ export interface Ipc {
   startupState(): Promise<StartupState>;
   /** いまの盤面。イベントで差し替えるときにも使う。 */
   snapshot(): Promise<Snapshot>;
+  /** 全部のボードを、盤面ごと読む（ADR 0039）。**期限の件数を手元で数える**ため。 */
+  loadDocuments(): Promise<BoardDocument[]>;
   switchBoard(boardId: number): Promise<Snapshot>;
   createBoard(name: string): Promise<Snapshot>;
   renameBoard(name: string): Promise<Snapshot>;

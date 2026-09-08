@@ -9,8 +9,6 @@ pub type CardId = i64;
 pub type TagId = i64;
 pub type ChecklistItemId = i64;
 
-pub const SOON_THRESHOLD_DAYS: i64 = 3;
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -19,26 +17,6 @@ pub struct BoardSummary {
     pub name: String,
     pub created_at: i64,
     pub updated_at: i64,
-    /// ボードを開かずに読み取れる期限の件数。ボード一覧の各行に出す。
-    pub due: DueCounts,
-}
-
-/// 期限切れと本日期限のカードの枚数。
-///
-/// 期限は表示するだけで通知しないので、見に行かなければ気づけない。ボードが
-/// 増えると見に行く先も増えるので、開かなくても分かるようにこれを一覧に出す（#62）。
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct DueCounts {
-    pub overdue: usize,
-    pub today: usize,
-}
-
-impl DueCounts {
-    pub fn is_empty(&self) -> bool {
-        self.overdue == 0 && self.today == 0
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -390,30 +368,6 @@ pub enum BoardError {
     Inconsistent(String),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
-#[serde(tag = "kind", content = "days", rename_all = "camelCase")]
-#[ts(export)]
-pub enum DueStatus {
-    Overdue(i64),
-    Today,
-    Soon(i64),
-    Upcoming(i64),
-    None,
-}
-
-pub fn due_status(due_date: Option<NaiveDate>, today: NaiveDate) -> DueStatus {
-    let Some(due_date) = due_date else {
-        return DueStatus::None;
-    };
-    let days = due_date.signed_duration_since(today).num_days();
-    match days {
-        ..=-1 => DueStatus::Overdue(-days),
-        0 => DueStatus::Today,
-        1..=SOON_THRESHOLD_DAYS => DueStatus::Soon(days),
-        _ => DueStatus::Upcoming(days),
-    }
-}
-
 /// 保存された形の期限を読む（`"YYYY-MM-DD"` か空文字）。
 ///
 /// **打った文字を読むのは webview です**（`web/src/model/due.ts`、[ADR 0031]、
@@ -463,28 +417,6 @@ impl Board {
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
         }
-    }
-
-    /// 開いているボードの期限の件数。
-    ///
-    /// 一覧に出す件数は SQL 側で数えるが、開いているボードだけは、まだ保存されて
-    /// いない編集も含めて画面と一致していてほしいのでここで数える。アーカイブ済みの
-    /// カードは数えない。終わったものに期限切れも本日期限も無い。
-    pub fn due_counts(&self, today: NaiveDate) -> DueCounts {
-        let mut counts = DueCounts::default();
-        for card in self
-            .columns
-            .iter()
-            .filter(|column| !column.done)
-            .flat_map(|column| column.cards.iter())
-        {
-            match due_status(card.due_date, today) {
-                DueStatus::Overdue(_) => counts.overdue += 1,
-                DueStatus::Today => counts.today += 1,
-                _ => {}
-            }
-        }
-        counts
     }
 
     pub fn rename(&mut self, name: impl Into<String>) -> Result<bool, BoardError> {
@@ -2683,8 +2615,8 @@ mod tests {
     use chrono::NaiveDate;
 
     use super::{
-        due_status, parse_stored_due_date, Board, BoardError, CardEventKind, ChecklistItemDraft,
-        ChecklistItemId, DueStatus,
+        parse_stored_due_date, Board, BoardError, CardEventKind, ChecklistItemDraft,
+        ChecklistItemId,
     };
 
     /// チェックリストの下書きを 1 つ。`id` は保存済みの項目を指すときだけ入る。
@@ -3118,53 +3050,6 @@ mod tests {
     }
 
     #[test]
-    fn classifies_due_date_boundaries() {
-        let today = NaiveDate::from_ymd_opt(2026, 9, 4).unwrap();
-
-        assert_eq!(due_status(None, today), DueStatus::None);
-        assert_eq!(
-            due_status(Some(today.pred_opt().unwrap()), today),
-            DueStatus::Overdue(1)
-        );
-        assert_eq!(due_status(Some(today), today), DueStatus::Today);
-        assert_eq!(
-            due_status(Some(today.succ_opt().unwrap()), today),
-            DueStatus::Soon(1)
-        );
-        assert_eq!(
-            due_status(
-                Some(today.checked_add_days(chrono::Days::new(3)).unwrap()),
-                today
-            ),
-            DueStatus::Soon(3)
-        );
-        assert_eq!(
-            due_status(
-                Some(today.checked_add_days(chrono::Days::new(4)).unwrap()),
-                today
-            ),
-            DueStatus::Upcoming(4)
-        );
-    }
-
-    #[test]
-    fn handles_leap_day_and_year_boundaries() {
-        let new_years_eve = NaiveDate::from_ymd_opt(2026, 12, 31).unwrap();
-        let new_years_day = NaiveDate::from_ymd_opt(2027, 1, 1).unwrap();
-        assert_eq!(
-            due_status(Some(new_years_day), new_years_eve),
-            DueStatus::Soon(1)
-        );
-
-        let leap_day = NaiveDate::from_ymd_opt(2028, 2, 29).unwrap();
-        let march_first = NaiveDate::from_ymd_opt(2028, 3, 1).unwrap();
-        assert_eq!(
-            due_status(Some(leap_day), march_first),
-            DueStatus::Overdue(1)
-        );
-    }
-
-    #[test]
     fn sets_due_date_and_skips_unchanged_values() {
         let mut board = Board::fixture();
         let card_id = board.columns[0].cards[0].id;
@@ -3194,53 +3079,6 @@ mod tests {
                 "{value} は保存された形ではない"
             );
         }
-    }
-
-    #[test]
-    fn counts_only_the_cards_that_are_overdue_or_due_today() {
-        let mut board = Board::fixture();
-        let today = NaiveDate::from_ymd_opt(2026, 9, 5).unwrap();
-        let column_id = board.columns[0].id;
-        let overdue = board.add_card(column_id, "過ぎている", "").unwrap();
-        let due_today = board.add_card(column_id, "今日まで", "").unwrap();
-        let later = board.add_card(column_id, "まだ先", "").unwrap();
-        let archived = board.add_card(column_id, "終わったもの", "").unwrap();
-        board
-            .set_card_due_date(overdue, NaiveDate::from_ymd_opt(2026, 8, 30))
-            .unwrap();
-        board.set_card_due_date(due_today, Some(today)).unwrap();
-        board
-            .set_card_due_date(later, NaiveDate::from_ymd_opt(2026, 9, 30))
-            .unwrap();
-        board
-            .set_card_due_date(archived, NaiveDate::from_ymd_opt(2026, 8, 1))
-            .unwrap();
-        board.archive_card(archived).unwrap();
-
-        let counts = board.due_counts(today);
-        assert_eq!(counts.overdue, 1, "the archived card is not counted");
-        assert_eq!(counts.today, 1);
-        assert!(!counts.is_empty());
-        assert!(Board::fixture().due_counts(today).is_empty());
-    }
-
-    #[test]
-    fn stops_counting_due_dates_once_the_column_means_done() {
-        let mut board = Board::fixture();
-        let today = NaiveDate::from_ymd_opt(2026, 9, 5).unwrap();
-        let column_id = board.columns[0].id;
-        let overdue = board.add_card(column_id, "過ぎている", "").unwrap();
-        let due_today = board.add_card(column_id, "今日まで", "").unwrap();
-        board
-            .set_card_due_date(overdue, NaiveDate::from_ymd_opt(2026, 8, 30))
-            .unwrap();
-        board.set_card_due_date(due_today, Some(today)).unwrap();
-        assert_eq!(board.due_counts(today).overdue, 1);
-
-        board.set_column_done(column_id, true).unwrap();
-
-        // 終わったものに期限切れも本日期限も無い（ADR 0038）。
-        assert!(board.due_counts(today).is_empty());
     }
 
     #[test]

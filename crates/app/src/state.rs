@@ -6,12 +6,11 @@
 use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError, TryLockError};
 
-use chrono::Local;
 use ekanban_core::model::{Board, BoardError, BoardSummary, ColumnId};
 use ekanban_core::store::{JsonStore, Store, StoreError};
 
 use crate::error::{AppError, ErrorKind};
-use crate::snapshot::{due_statuses_of, window_title, Snapshot};
+use crate::snapshot::{window_title, Snapshot};
 
 /// 開いているボードと、その裏のデータベース。
 ///
@@ -224,14 +223,11 @@ fn capture_column_of(
 }
 
 pub(crate) fn snapshot_of(board: &Board, store: &Store<'_>) -> Result<Snapshot, StoreError> {
-    let today = Local::now().date_naive();
-    let boards = store.load_boards_as_of(today)?;
+    let boards = store.load_boards()?;
     Ok(Snapshot {
         board: board.clone(),
         can_undo: board.can_undo(),
         can_redo: board.can_redo(),
-        due_statuses: due_statuses_of(board, today),
-        today,
         capture_column: capture_column_of(board, store, &boards),
         window_title: window_title(&board.name),
         boards,

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { Board } from "../ipc/types/Board";
 import type { Card } from "../ipc/types/Card";
 import type { Column } from "../ipc/types/Column";
-import type { DueStatus } from "../ipc/types/DueStatus";
+import type { DueStatus } from "../model/due";
 import { firstDueCard } from "./dueOrder";
 
 function card(id: number): Card {
