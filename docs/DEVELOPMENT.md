@@ -82,7 +82,7 @@ web(crate)/      ekanban-web: 同じコマンドを wasm で動かす。ブラ�
 
 画面は Tauri の webview で、TypeScript + React + Vite で書きます（[ADR 0019](adr/0019-typescript-react-vite-for-the-webview.md)）。**盤面を持つのは Rust**で、webview が描くのはその投影です（[ADR 0018](adr/0018-rust-owns-the-board-state.md)）。
 
-ドラッグ＆ドロップは `@dnd-kit/core` に載せますが、**どこに落ちるかを決めるのは `web/src/board/dnd.ts`** です（[ADR 0022](adr/0022-dnd-kit-core-for-drag-and-drop.md)）。色は `web/src/styles.css` のカスタムプロパティから引きます（直書きは、ユーザーが指定したタグの色だけに許しています）。
+ドラッグ＆ドロップは `@dnd-kit/core` に載せますが、**どこに落ちるかを決めるのは `web/src/board/dnd.ts`** です（[ADR 0022](adr/0022-dnd-kit-core-for-drag-and-drop.md)）。色は `web/src/styles.css` のカスタムプロパティから引きます（直書きを許しているのはタグの色だけで、ユーザーが指定した色と、`web/src/panel/tags.ts` が自動で振り分ける色みほんがそれに当たります。[ADR 0044](adr/0044-tags-get-their-colour-automatically.md)）。
 
 ## ドラッグ＆ドロップの保存
 

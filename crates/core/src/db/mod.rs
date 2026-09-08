@@ -22,7 +22,7 @@ use crate::store::{
     THEME_PREFERENCE_STATE_KEY, WINDOW_BOUNDS_STATE_KEY,
 };
 
-const CURRENT_SCHEMA_VERSION: i64 = 12;
+const CURRENT_SCHEMA_VERSION: i64 = 13;
 
 pub struct Database {
     connection: Connection,
@@ -1261,6 +1261,28 @@ impl Database {
             }
             transaction.execute(
                 "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, ?2)",
+                params![12, now()],
+            )?;
+            transaction.commit()?;
+        }
+
+        if version < 13 {
+            // タグの色を自動で振り分けるようにしたので（ADR 0044）、**それまでの
+            // 既定色で溜まったタグを「色を決めていない」に戻します**。既定色は
+            // 選んだ色ではなく、色を決める前の姿だったものです。戻さないと、
+            // いままでのタグだけが灰色のまま残り、新しく作ったものとの違いが
+            // 「いつ作ったか」でしか説明できなくなります。
+            //
+            // **当てるのは、当時の既定色そのものと一致する行だけです。** 自分で
+            // この灰色を選んだ人はその指定を失いますが（そのタグは自動の色に
+            // 移ります）、色見本から選び直せます。
+            let transaction = self.connection.transaction()?;
+            transaction.execute(
+                "UPDATE tags SET color = '' WHERE color = ?1",
+                [crate::store::LEGACY_DEFAULT_TAG_COLOR],
+            )?;
+            transaction.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, ?2)",
                 params![CURRENT_SCHEMA_VERSION, now()],
             )?;
             transaction.commit()?;
@@ -1320,7 +1342,7 @@ mod tests {
         board_scoped_id, save_board_snapshot, Database, FilterState, WindowBoundsState,
         CURRENT_SCHEMA_VERSION,
     };
-    use crate::model::{Board, ChecklistItemDraft, DueCounts};
+    use crate::model::{Board, ChecklistItemDraft, DueCounts, TagId};
     use crate::MAX_SAFE_JS_INTEGER;
 
     /// カードの入ったボードを持つデータベースを開く。
@@ -1995,6 +2017,49 @@ mod tests {
             board.columns.iter().all(|column| !column.done),
             "the migration guesses nothing"
         );
+        let version = database
+            .connection
+            .query_row("SELECT MAX(version) FROM schema_migrations", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap();
+        assert_eq!(version, CURRENT_SCHEMA_VERSION);
+    }
+
+    /// 既定色で溜まったタグを、自動の色に戻す（ADR 0044）。**自分で選んだ色は
+    /// そのまま**で、当てるのは当時の既定色と一致する行だけ。
+    #[test]
+    fn clears_the_old_default_tag_color_when_migrating_a_version_twelve_database() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("board.sqlite3");
+        let (defaulted, chosen) = {
+            // v12 まで進んだ DB に、当時の既定色のタグと、選んだ色のタグを置く。
+            let mut database = open_with_cards(&path);
+            let mut board = database.load_board().unwrap();
+            let defaulted = board.add_tag("既定色のまま", "#94a3b8").unwrap();
+            let chosen = board.add_tag("自分で選んだ", "#ef4444").unwrap();
+            database.save_board(&mut board).unwrap();
+            database
+                .connection
+                .execute("DELETE FROM schema_migrations WHERE version >= ?1", [13])
+                .unwrap();
+            (defaulted, chosen)
+        };
+
+        let database = open_with_cards(&path);
+        let board = database.load_board().unwrap();
+
+        let color = |tag_id: TagId| {
+            board
+                .tags
+                .iter()
+                .find(|tag| tag.id == tag_id)
+                .expect("the tag survives the migration")
+                .color
+                .clone()
+        };
+        assert_eq!(color(defaulted), "", "the old default becomes automatic");
+        assert_eq!(color(chosen), "#ef4444", "a chosen color is left alone");
         let version = database
             .connection
             .query_row("SELECT MAX(version) FROM schema_migrations", [], |row| {

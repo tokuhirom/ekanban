@@ -24,6 +24,7 @@ import type { Snapshot } from "../ipc/types/Snapshot";
 import { Archive } from "../panel/Archive";
 import { CardPanel } from "../panel/CardPanel";
 import { TagPanel } from "../panel/TagPanel";
+import { tagChipStyle } from "../panel/tags";
 import { useAppActions, useAppActionSource } from "../shell/actions";
 import { AlertDialog, ConfirmDialog, PromptDialog } from "../shell/Dialog";
 import { useFileActions } from "../shell/files";
@@ -462,7 +463,7 @@ export function Board() {
               「絞り込みと検索」）。何も絞り込んでいなければ何も出さない。 */}
           {state.activeTag !== null && (
             <span className="filter-chip">
-              <span className="tag-chip" style={{ background: state.activeTag.color }}>
+              <span className="tag-chip" style={tagChipStyle(state.activeTag)}>
                 {state.activeTag.name}
               </span>
               で絞り込み中

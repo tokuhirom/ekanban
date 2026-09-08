@@ -9,6 +9,9 @@
 //
 // 追加はここと、カード編集パネルのタグ欄の 2 か所です（ADR 0027）。あちらは
 // 「いま打っているカードに付ける」ためのもので、名前と色を整えるのはここです。
+//
+// **どちらで作っても、色は自動で付きます**（ADR 0044）。作るときに色を選ばせず、
+// 気に入らなければこの一覧の色見本から変える、という順にしてあります。
 
 import { useState } from "react";
 
@@ -18,7 +21,7 @@ import type { Snapshot } from "../ipc/types/Snapshot";
 import type { Tag } from "../ipc/types/Tag";
 import { useAppActions } from "../shell/actions";
 import { isComposing } from "../shell/ime";
-import { DEFAULT_TAG_COLOR } from "./tags";
+import { AUTO_TAG_COLOR, tagColor } from "./tags";
 
 interface Props {
   tags: readonly Tag[];
@@ -29,19 +32,16 @@ interface Props {
 export function TagPanel({ tags, run, onClose }: Props) {
   const ipc = useIpc();
   const [name, setName] = useState("");
-  const [color, setColor] = useState(DEFAULT_TAG_COLOR);
   const [failed, setFailed] = useState<AppError | null>(null);
 
   useAppActions({ cancelEdit: onClose });
 
   async function add() {
     if (name.trim() === "") return;
-    const failure = await run(() => ipc.addTag(name, color));
+    // 色は渡しません。決めていないタグは自動で色が付きます（ADR 0044）。
+    const failure = await run(() => ipc.addTag(name, AUTO_TAG_COLOR));
     setFailed(failure);
-    if (failure === null) {
-      setName("");
-      setColor(DEFAULT_TAG_COLOR);
-    }
+    if (failure === null) setName("");
   }
 
   return (
@@ -91,15 +91,6 @@ export function TagPanel({ tags, run, onClose }: Props) {
             }}
             onChange={(event) => {
               setName(event.target.value);
-            }}
-          />
-          <input
-            type="color"
-            className="tag-color-input"
-            value={color}
-            aria-label="新しいタグの色"
-            onChange={(event) => {
-              setColor(event.target.value);
             }}
           />
           <button
@@ -156,10 +147,12 @@ function TagRow({
         // 打たなかったことにしない。
         onBlur={() => void rename()}
       />
+      {/* 色を決めていないタグには、自動の色がそのまま見本として出ます
+          （ADR 0044）。ここで動かした瞬間に、その色が「決めた色」になります。 */}
       <input
         type="color"
         className="tag-color-input"
-        value={tag.color}
+        value={tagColor(tag)}
         aria-label={`${tag.name} の色`}
         onChange={(event) => {
           void run(() => ipc.setTagColor(tag.id, event.target.value));

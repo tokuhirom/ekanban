@@ -93,7 +93,7 @@ README が使う人向けの入口、[マニュアル](MANUAL.md) が使い方�
 
 TypeScript + React + Vite（[ADR 0019](adr/0019-typescript-react-vite-for-the-webview.md)）。分解は `web/src/` の `ipc` / `state` / `shell` / `board` / `panel` / `capture` に沿う。状態管理ライブラリは、持つ状態が少ないので入れない（同 ADR）。
 
-- **色は 1 か所（`web/src/styles.css` のカスタムプロパティ）で決める。** `#rrggbb` の直書きはタグの色（ユーザーの指定と、`web/src/panel/tags.ts` の既定色）だけに許す
+- **色は 1 か所（`web/src/styles.css` のカスタムプロパティ）で決める。** `#rrggbb` の直書きはタグの色だけに許す——ユーザーの指定と、`web/src/panel/tags.ts` の自動の色みほんとチップの文字色、そして置き場所の移行が読む「かつての既定色」（`crates/core/src/store.rs`）
 - **色だけに意味を持たせない。** アイコンか文言で必ず区別できるようにする
 - **`--color-*-foreground` は、対応する背景の上に載せるための文字色。** `danger-foreground` を素の面の文字色に使うと背景と同化して読めない。カードやフォームの上に文字を置くときは `danger` `info` のような背景用の色のほうを文字色に使う。`accent` は淡いホバー背景なので、文字色には使わない
 - **テーマの判定を JavaScript に持たせない。** 「ライト」「ダーク」は `<html>` の `data-theme` で決まり、「システムに合わせる」はその属性が無い状態にして `prefers-color-scheme` にそのまま任せる。OS の設定が変わったときアプリ側は何もしない
@@ -105,7 +105,8 @@ TypeScript + React + Vite（[ADR 0019](adr/0019-typescript-react-vite-for-the-we
 - **1 行の入力欄では `Enter` で確定する。** カードのタイトル、期限、カラム名、タグ名、検索のように改行の要らない欄は `Enter` で保存し、`Escape` で取り消す。複数行の欄（カードの説明）では取らない。改行のほうが要るため、カードの編集パネルで `Enter` を拾うのは 1 行の欄の中だけにする
 - **IME の変換中かは `web/src/shell/ime.ts` の `isComposing()` で判定する。** `KeyboardEvent.isComposing` を直に読まない。WebKit は変換を確定する `Enter` の `keydown` より先に `compositionend` を出すので、その `keydown` は `isComposing === false` で届く。変換に伴う `keydown` はどのエンジンでも `keyCode` が 229 になるので、そちらも見る（#124、[ADR 0029](adr/0029-detecting-ime-composition.md)）
 - **常用しない操作を画面に常時出さない。** カードの操作は右クリックメニュー、カラムの操作は `…` メニュー、タグの編集・削除はメニューから開くタグ整理パネルに集約する。`danger`（赤）はダイアログの確定ボタンとメニュー内の削除項目だけに使う
-- **タグを作れるのは、タグ整理パネルと、カード編集パネルのタグ欄の 2 か所。** 後者は「いま書いているカードに付ける」ためのもので、打った名前のタグが無ければその場で作る（前後の空白と大文字小文字を無視して突き合わせるので、同じ名前が 2 つできることはない）。色は既定色で、名前の変更・色・削除はタグ整理パネルにしか置かない（[ADR 0027](adr/0027-creating-tags-while-editing-a-card.md)）
+- **タグを作れるのは、タグ整理パネルと、カード編集パネルのタグ欄の 2 か所。** 後者は「いま書いているカードに付ける」ためのもので、打った名前のタグが無ければその場で作る（前後の空白と大文字小文字を無視して突き合わせるので、同じ名前が 2 つできることはない）。**どちらの道でも、作るときに色は選ばせない**。名前の変更・色・削除はタグ整理パネルにしか置かない（[ADR 0027](adr/0027-creating-tags-while-editing-a-card.md)、[ADR 0044](adr/0044-tags-get-their-colour-automatically.md)）
+- **タグの色は自動で付ける。** 色を決めていないタグ（`color` が空）は、その ID から `web/src/panel/tags.ts` の並びを引いて描く。ID から引くので、ほかのタグを消しても色は動かない。チップの文字色は**そのチップの背景から**決める（濃いほうと淡いほうのうち、コントラスト比の大きいほう）——テーマの文字色をそのまま載せると、濃い色に沈むか淡い色に溶ける。ユーザーが色を決めたタグは、その色をそのまま使う（[ADR 0044](adr/0044-tags-get-their-colour-automatically.md)）
 - **`done` のカラムのカードはトーンダウンして描き、`opacity` は使わない。** 期限は日付だけを `muted` で出し（`⚠` `◷` と「N日超過」「あとN日」は落とす）、タイトル・説明・チェックリストは `--color-muted-foreground`、タグのチップは彩度を落とす。カード全体の `opacity` は**絞り込みの減光が使っている**ので、終わったものは**色**、絞り込みは**濃さ**で分ける。暗いカードの理由が 2 つあると、どちらなのか読めなくなる。カラムのヘッダには `✓` を出す（[ADR 0038](adr/0038-a-column-that-means-done.md)）
 - **カード表面の高さは、チェックリストの項目数のような可変の要素で変えない。** ドラッグゴーストの大きさと挿入位置の判定が安定しなくなるため
 - **説明は Markdown のエディタ（Lexical）で書き、保存するのは Markdown の文字列。** `Card.description` の型もデータベースも変わらない。打ちながら整うのは `**太字**` `*斜体*` `` `コード` `` `# 見出し` `- 箇条書き` `- [ ] チェック項目` `> 引用` と、打った URL のリンク化まで（[ADR 0033](adr/0033-a-markdown-editor-for-the-description.md)、[ADR 0037](adr/0037-a-list-that-ends-where-you-stop-typing.md)）

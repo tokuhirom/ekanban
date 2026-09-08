@@ -984,6 +984,56 @@ test("タグを作り、カードに付け、名前を変えて消せる", async
   await expect.poll(storedTitles).not.toHaveLength(0);
 });
 
+/// タグの色は自動で付く（ADR 0044）。**保存に入るのは「色を決めていない」まま**で、
+/// 見分けの付く色を当てるのは画面の側。作るときに色を選ばせる欄はもう無い。
+test("作ったタグには、それぞれ違う色が自動で付く", async ({ page }) => {
+  await openBoard(page);
+  await page.locator(".open-tag-panel").click();
+  await expect(page.locator(".tag-panel")).toBeVisible();
+  await expect(page.getByLabel("新しいタグの色")).toHaveCount(0);
+
+  for (const name of ["いろの試し 1", "いろの試し 2"]) {
+    await page.getByLabel("新しいタグの名前").fill(name);
+    await page.locator(".add-tag").click();
+    // 追加が通ってはじめて欄が空に戻る。戻りきる前に次の名前を打つと、
+    // そのあとの空への差し替えに巻き込まれる。
+    await expect(page.getByLabel("新しいタグの名前")).toHaveValue("");
+    await expect
+      .poll(async () => (await storedBoard()).tags.map((tag) => tag.name))
+      .toContain(name);
+  }
+
+  // 置き場所に入るのは空の色。色を決めた覚えが無いことが、そのまま残る。
+  const stored = (await storedBoard()).tags.filter((tag) =>
+    tag.name.startsWith("いろの試し"),
+  );
+  expect(stored.map((tag) => tag.color)).toEqual(["", ""]);
+
+  // カードに付けて、チップの色が実際に違うことを見る。
+  await page.locator(".open-tag-panel").click();
+  await openFirstCard(page);
+  for (const name of ["いろの試し 1", "いろの試し 2"]) {
+    await page.locator(".tags-input-field").fill(name);
+    await page.locator(".tag-suggestions").getByRole("button", { name }).click();
+  }
+  const painted = [];
+  for (const name of ["いろの試し 1", "いろの試し 2"]) {
+    const chip = page.locator(".tags-input-chip").filter({ hasText: name });
+    await expect(chip).toHaveCount(1);
+    painted.push(
+      await chip.evaluate((node) => {
+        const style = getComputedStyle(node);
+        return { background: style.backgroundColor, text: style.color };
+      }),
+    );
+  }
+  expect(new Set(painted.map((chip) => chip.background)).size).toBe(2);
+  // 文字色は背景から決まるので、どのチップでも背景と同じ色にはならない。
+  for (const chip of painted) {
+    expect(chip.text).not.toBe(chip.background);
+  }
+});
+
 /// 打った名前のタグが無ければ、その場で作って付ける（#115、ADR 0027）。
 ///
 /// 撮影用のシードは 1 枚目のカードに「設計」を付けているので、チップは

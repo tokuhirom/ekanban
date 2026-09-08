@@ -4,6 +4,7 @@ import { CSS } from "@dnd-kit/utilities";
 import type { Card as CardData } from "../ipc/types/Card";
 import type { DueStatus } from "../ipc/types/DueStatus";
 import type { Tag } from "../ipc/types/Tag";
+import { tagChipStyle } from "../panel/tags";
 import { handleId } from "./dnd";
 import { dueChoices } from "./due";
 
@@ -165,7 +166,7 @@ export function CardFace({
                 <span
                   key={tag.id}
                   className="tag-chip"
-                  style={{ background: tag.color }}
+                  style={tagChipStyle(tag)}
                 >
                   {chip}
                 </span>
@@ -176,7 +177,7 @@ export function CardFace({
                 key={tag.id}
                 type="button"
                 className="tag-chip"
-                style={{ background: tag.color }}
+                style={tagChipStyle(tag)}
                 aria-pressed={active}
                 title={
                   active
