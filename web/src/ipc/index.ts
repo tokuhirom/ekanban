@@ -8,7 +8,6 @@
 import type { AppAction } from "./types/AppAction";
 import type { CaptureTarget } from "./types/CaptureTarget";
 import type { ChecklistItemDraft } from "./types/ChecklistItemDraft";
-import type { ExportFormat } from "./types/ExportFormat";
 import type { KeyPress } from "./types/KeyPress";
 import type { FilterState } from "./types/FilterState";
 import type { QuickCaptureStatus } from "./types/QuickCaptureStatus";
@@ -92,13 +91,21 @@ export interface Ipc {
   setWindowTitle(title: string): Promise<void>;
   /** メニューが押されたことを受ける（`docs/DESIGN.md`「メニューとキー割り当て」）。返るのは購読をやめる関数。 */
   onAppAction(handler: (action: AppAction) => void): () => void;
-  /** 保存ダイアログに出す既定のファイル名。 */
-  suggestedExportName(format: ExportFormat): Promise<string>;
   /** OS の保存ダイアログ。閉じられたら `null`——**そのときは何も言わない**
    * （`docs/DESIGN.md`「アプリが伝えること」）。 */
   chooseSavePath(fileName: string): Promise<string | null>;
-  /** 書き出す。書けたパスが返る。 */
-  exportBoard(format: ExportFormat, destination: string): Promise<string>;
+  /** 組み立てた中身をファイルに書く。拡張子が無ければ補う。書けたパスが返る。
+   *
+   * ブラウザには書き込める場所が無いので、そちらではダウンロードになる
+   * （[ADR 0035]）。
+   *
+   * [ADR 0035]: ../../../docs/adr/0035-a-browser-build-of-the-real-core.md */
+  writeTextFile(destination: string, extension: string, contents: string): Promise<string>;
+  /** 盤面を JSON で書き出す。**組み立てるのも置き場所**——採番の続きのように、
+   * 画面が受け取らない値まで入るため（[ADR 0045]）。書けたパスが返る。
+   *
+   * [ADR 0045]: ../../../docs/adr/0045-two-kinds-of-export.md */
+  exportBoardJson(destination: string): Promise<string>;
   /** データベースの控えを取る。書けたパスが返る。 */
   backupDatabase(destination: string): Promise<string>;
   databaseLocation(): Promise<string>;

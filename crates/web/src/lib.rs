@@ -30,7 +30,7 @@
 use std::cell::RefCell;
 use std::sync::{Arc, Mutex};
 
-use ekanban_app::commands::{self, ExportFormat};
+use ekanban_app::commands;
 use ekanban_app::error::{AppError, ErrorKind};
 use ekanban_app::state::Source;
 use ekanban_app::{dispatch, menu, AppState, Platform, QuickCaptureStatus};
@@ -138,11 +138,10 @@ pub fn invoke(command: &str, args: JsValue) -> Result<JsValue, JsValue> {
 /// 既定に戻すことがあり、それは書き込みです。
 const READ_ONLY: &[&str] = &[
     "snapshot",
-    "suggested_export_name",
     "database_location",
     "capture_target",
     "quick_capture_status",
-    "export_board_contents",
+    "export_board_json_contents",
     "stored_board",
     "menu_sections",
     "open_url",
@@ -159,13 +158,13 @@ fn host(command: &str, args: Value, state: &AppState) -> Result<Value, AppError>
         // 既定の名前をそのまま返し、書き出しの経路はそのまま通します。実際に
         // 受け取るのはページの「ダウンロード」です。
         "choose_save_path" => ok(read::<FileName>(args)?.file_name),
-        // 書き出す中身。**ファイルに書きません**——ブラウザにファイルシステムが
-        // 無いので、中身を返してページに渡します。組み立てるのは
-        // `commands`／`export` のままです。
-        "export_board_contents" => ok(commands::export_board_contents(
-            state,
-            read::<Format>(args)?.format,
-        )?),
+        // 書き出す JSON。**ファイルに書きません**——ブラウザにファイルシステムが
+        // 無いので、中身を返してページに渡します。組み立てるのが置き場所の側なの
+        // は、置いてある形の写しだからです（[ADR 0045]）。Markdown はページが
+        // 自分で組み立てるので、ここには来ません。
+        //
+        // [ADR 0045]: ../../../docs/adr/0045-two-kinds-of-export.md
+        "export_board_json_contents" => ok(commands::export_board_json_contents(state)?),
         // 盤面まるごとの控え。**SQLite のファイルではありません**（[ADR 0036]）
         // ——置いてあるのが JSON なので、そのままページに渡します。
         "stored_board" => ok(encoded_store()?),
@@ -331,11 +330,6 @@ fn parse_platform(platform: &str) -> Platform {
 #[serde(rename_all = "camelCase")]
 struct FileName {
     file_name: String,
-}
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Format {
-    format: ExportFormat,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]

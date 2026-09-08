@@ -129,15 +129,15 @@ export function harnessIpc(base: string): Ipc {
         delete window.ekanbanMenu;
       };
     },
-    suggestedExportName: (format) =>
-      call<string>(base, "suggested_export_name", { format }),
     // ブラウザに OS の保存ダイアログはありません。ハーネスがデータベースの隣の
     // パスを返すので、書き出しの経路はそのまま通ります（選ぶところだけが
     // 本物ではない、と分かる形にしてあります）。
     chooseSavePath: (fileName) =>
       call<string | null>(base, "choose_save_path", { fileName }),
-    exportBoard: (format, destination) =>
-      call<string>(base, "export_board", { format, destination }),
+    writeTextFile: (destination, extension, contents) =>
+      call<string>(base, "write_text_file", { destination, extension, contents }),
+    exportBoardJson: (destination) =>
+      call<string>(base, "export_board_json", { destination }),
     backupDatabase: (destination) =>
       call<string>(base, "backup_database", { destination }),
     databaseLocation: () => call<string>(base, "database_location"),

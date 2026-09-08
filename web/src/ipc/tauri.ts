@@ -94,12 +94,12 @@ export const tauriIpc: Ipc = {
       stop?.();
     };
   },
-  suggestedExportName: (format) =>
-    invoke<string>("suggested_export_name", { format }),
   chooseSavePath: (fileName) =>
     invoke<string | null>("choose_save_path", { fileName }),
-  exportBoard: (format, destination) =>
-    invoke<string>("export_board", { format, destination }),
+  writeTextFile: (destination, extension, contents) =>
+    invoke<string>("write_text_file", { destination, extension, contents }),
+  exportBoardJson: (destination) =>
+    invoke<string>("export_board_json", { destination }),
   backupDatabase: (destination) =>
     invoke<string>("backup_database", { destination }),
   databaseLocation: () => invoke<string>("database_location"),

@@ -22,7 +22,6 @@
 import type { Ipc } from "./index";
 import type { AppAction } from "./types/AppAction";
 import type { CaptureTarget } from "./types/CaptureTarget";
-import type { ExportFormat } from "./types/ExportFormat";
 import type { Platform } from "./types/Platform";
 import type { QuickCaptureStatus } from "./types/QuickCaptureStatus";
 import type { Snapshot } from "./types/Snapshot";
@@ -76,10 +75,15 @@ function download(fileName: string, contents: BlobPart, type: string): void {
   }, 0);
 }
 
-const CONTENT_TYPE: Record<ExportFormat, string> = {
-  json: "application/json",
-  markdown: "text/markdown",
-};
+/// 拡張子から、ダウンロードに付ける種類を決める。
+///
+/// 知らない拡張子はただの文字列として渡します。中身が読めないより、種類が
+/// 素っ気ないほうが困りません。
+function contentType(extension: string): string {
+  if (extension === "json") return "application/json";
+  if (extension === "md") return "text/markdown";
+  return "text/plain";
+}
 
 /// メニューを押したことを配る先。ページが `fireAppAction` で呼びます。
 let menuHandler: ((action: AppAction) => void) | null = null;
@@ -157,12 +161,16 @@ export const wasmIpc: Ipc = {
       menuHandler = null;
     };
   },
-  suggestedExportName: (format) => call<string>("suggested_export_name", { format }),
   // 選ぶところがありません。既定の名前をそのまま「行き先」にします。
   chooseSavePath: (fileName) => Promise.resolve(fileName),
-  exportBoard: async (format, destination) => {
-    const contents = await call<string>("export_board_contents", { format });
-    download(destination, contents, CONTENT_TYPE[format]);
+  // 書く先がありません。組み立てられた中身を、そのままダウンロードにします。
+  writeTextFile: (destination, extension, contents) => {
+    download(destination, contents, contentType(extension));
+    return Promise.resolve(destination);
+  },
+  exportBoardJson: async (destination) => {
+    const contents = await call<string>("export_board_json_contents");
+    download(destination, contents, "application/json");
     return destination;
   },
   backupDatabase: async (destination) => {

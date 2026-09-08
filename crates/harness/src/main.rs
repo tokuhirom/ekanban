@@ -18,7 +18,7 @@
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::path::PathBuf;
 
-use ekanban_app::commands::{self, ExportFormat};
+use ekanban_app::commands;
 use ekanban_app::dispatch;
 use ekanban_app::error::{AppError, ErrorKind};
 use ekanban_app::shortcut::{KeyPress, Shortcut};
@@ -146,9 +146,10 @@ fn invoke(command: &str, args: Value, state: &AppState) -> Result<Value, AppErro
     }
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
-    struct Export {
-        format: ExportFormat,
+    struct TextFile {
         destination: PathBuf,
+        extension: String,
+        contents: String,
     }
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
@@ -178,9 +179,17 @@ fn invoke(command: &str, args: Value, state: &AppState) -> Result<Value, AppErro
                 .unwrap_or_else(|| PathBuf::from("."));
             ok(directory.join(file_name))
         }
-        "export_board" => {
-            let a: Export = read(args)?;
-            ok(commands::export_board(state, a.format, &a.destination)?)
+        "export_board_json" => ok(commands::export_board_json(
+            state,
+            &read::<Destination>(args)?.destination,
+        )?),
+        "write_text_file" => {
+            let a: TextFile = read(args)?;
+            ok(commands::write_text_file(
+                &a.destination,
+                &a.extension,
+                &a.contents,
+            )?)
         }
         "backup_database" => ok(commands::backup_database(
             state,

@@ -1,7 +1,9 @@
 // 書き出し・控えの保存・場所を開く（`docs/DESIGN.md`「アプリが伝えること」）。
 //
-// **選ぶのは OS のネイティブな保存ダイアログ、中身を作るのは Rust、報せるのは
-// アプリの中のダイアログ**、と分けてあります（[ADR 0016]）。最後のところで OS の
+// **選ぶのは OS のネイティブな保存ダイアログ、書くのは Rust、報せるのは
+// アプリの中のダイアログ**、と分けてあります（[ADR 0016]）。中身を作るのは
+// 形によって別です——Markdown はここ（`model/export.ts`）、JSON は置き場所
+// （[ADR 0045]）。最後のところで OS の
 // メッセージダイアログを使わないのは、文言と「場所を開く」の導線を自分で決め
 // られること、Playwright から見えること（`docs/DESIGN.md`「テスト」）の 2 つが理由です。
 //
@@ -14,7 +16,9 @@ import { useCallback, useMemo } from "react";
 
 import { useIpc } from "../ipc";
 import { describeFailure } from "../ipc/error";
-import type { ExportFormat } from "../ipc/types/ExportFormat";
+import type { Board } from "../ipc/types/Board";
+import type { ExportFormat } from "../model/export";
+import { EXTENSION, renderBoardMarkdown, suggestedExportName } from "../model/export";
 import type { Alert } from "../state/board";
 
 export interface FileActions {
@@ -24,7 +28,7 @@ export interface FileActions {
   revealBackups: () => void;
 }
 
-export function useFileActions(notify: (alert: Alert) => void): FileActions {
+export function useFileActions(notify: (alert: Alert) => void, board: Board | null): FileActions {
   const ipc = useIpc();
 
   /// 保存先を選ばせ、書き、書けた場所を報せる。
@@ -61,12 +65,18 @@ export function useFileActions(notify: (alert: Alert) => void): FileActions {
   return useMemo(
     () => ({
       exportBoard: (format) => {
-        void (async () => {
-          const suggested = await ipc.suggestedExportName(format).catch(() => "board");
-          await write(suggested, "書き出しました", (destination) =>
-            ipc.exportBoard(format, destination),
-          );
-        })();
+        // 盤面が来る前にメニューから押された。何も言わずに何もしない
+        // （`docs/DESIGN.md`「アプリが伝えること」）。
+        if (board === null) return;
+        const extension = EXTENSION[format];
+        void write(
+          suggestedExportName(board.name, extension),
+          "書き出しました",
+          (destination) =>
+            format === "markdown"
+              ? ipc.writeTextFile(destination, extension, renderBoardMarkdown(board))
+              : ipc.exportBoardJson(destination),
+        );
       },
       backupDatabase: () => {
         void write("ekanban-backup.sqlite3", "データベースをコピーしました", (destination) =>
@@ -84,6 +94,6 @@ export function useFileActions(notify: (alert: Alert) => void): FileActions {
         });
       },
     }),
-    [ipc, notify, write],
+    [board, ipc, notify, write],
   );
 }

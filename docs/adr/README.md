@@ -124,3 +124,4 @@
 | [0042](0042-the-browser-build-is-the-same-typescript.md) | ブラウザ版を、アプリと同じ TypeScript で作る | 2026-09-08 | 草案（未確定。通れば 0035 と 0036 を置き換える） |
 | [0043](0043-the-menu-is-described-by-the-webview.md) | メニューの構成を webview が持ち、Rust は組み立てだけを引き受ける | 2026-09-08 | 草案（未確定） |
 | [0044](0044-tags-get-their-colour-automatically.md) | タグの色を自動で割り振り、既定色をやめる | 2026-09-08 | 有効 |
+| [0045](0045-two-kinds-of-export.md) | 書き出しは 2 つに分ける——Markdown は画面、JSON は置き場所 | 2026-09-08 | 有効 |

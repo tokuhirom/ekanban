@@ -15,7 +15,7 @@ use tauri_plugin_dialog::DialogExt as _;
 use tauri_plugin_opener::OpenerExt as _;
 
 use crate::capture::Registration;
-use crate::commands::{self, ExportFormat};
+use crate::commands;
 use crate::error::AppError;
 use crate::events;
 use crate::shortcut::KeyPress;
@@ -268,17 +268,17 @@ pub fn set_window_bounds(state: State<'_, AppState>, bounds: WindowBoundsState) 
 // ---------------------------------------------------------------- ファイル
 
 #[tauri::command]
-pub fn suggested_export_name(state: State<'_, AppState>, format: ExportFormat) -> String {
-    commands::suggested_export_name(&state, format)
+pub fn export_board_json(state: State<'_, AppState>, destination: PathBuf) -> Reply<PathBuf> {
+    commands::export_board_json(&state, &destination)
 }
 
 #[tauri::command]
-pub fn export_board(
-    state: State<'_, AppState>,
-    format: ExportFormat,
+pub fn write_text_file(
     destination: PathBuf,
+    extension: String,
+    contents: String,
 ) -> Reply<PathBuf> {
-    commands::export_board(&state, format, &destination)
+    commands::write_text_file(&destination, &extension, &contents)
 }
 
 #[tauri::command]
