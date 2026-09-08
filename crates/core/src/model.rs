@@ -1,4 +1,4 @@
-use chrono::{Datelike, NaiveDate, TimeDelta};
+use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use ts_rs::TS;
@@ -396,160 +396,24 @@ pub fn due_status(due_date: Option<NaiveDate>, today: NaiveDate) -> DueStatus {
     }
 }
 
-/// 期限として打たれた文字を読む（#134、[ADR 0031]）。
+/// 保存された形の期限を読む（`"YYYY-MM-DD"` か空文字）。
 ///
-/// **基準日は引数で受けます。** ここで時計を読むと、`due_status` を出した日と
-/// 「明日」が数えた日が食い違います（`docs/DESIGN.md`「絞り込みと検索」）。
-///
-/// 受ける形は次のとおりです。全角で打たれたものは、検索と同じ
-/// `normalize_search_text` で半角・小文字に均してから読みます。
-///
-/// | 打つもの | 読み |
-/// | --- | --- |
-/// | `2026-09-12` | そのまま |
-/// | `9/12`、`9-12` | 今年。過ぎていれば来年 |
-/// | `今日` `明日` `明後日` / `today` `tomorrow` | そのまま |
-/// | `月`（`月曜`・`月曜日`）/ `mon` `monday` … | 次に来るその曜日。今日が同じ曜日なら 7 日後 |
-/// | `+3` | 3 日後 |
-/// | `来週` | 次の月曜 |
-/// | `今週末` | 今日を含めて次に来る土曜 |
-///
-/// **`今週末` だけ今日を含めます。** 今日が土曜なら今日が「今週末」です。曜日
-/// そのものを打ったときは今日を含めません——`土` と打つ人は今日のことを
-/// 言っていないためです。
-///
-/// 読めなかった文字列は `InvalidDueDate` で返し、入力欄の脇に理由を出します
-/// （`docs/DESIGN.md`「アプリが伝えること」）。
+/// **打った文字を読むのは webview です**（`web/src/model/due.ts`、[ADR 0031]、
+/// [ADR 0039]）。`9/12` や `明日` をここで受けません。ここが見るのは、渡された
+/// ものが日付として成り立っているかだけです——置き場所は受け取ったものを
+/// 信じない、という線の内側にあります（[ADR 0040]）。
 ///
 /// [ADR 0031]: ../../../docs/adr/0031-typing-a-due-date.md
-pub fn parse_due_date(value: &str, today: NaiveDate) -> Result<Option<NaiveDate>, BoardError> {
+/// [ADR 0039]: ../../../docs/adr/0039-the-board-model-moves-to-typescript.md
+/// [ADR 0040]: ../../../docs/adr/0040-the-shape-and-the-store-stay-in-rust.md
+pub fn parse_stored_due_date(value: &str) -> Result<Option<NaiveDate>, BoardError> {
     let raw = value.trim();
     if raw.is_empty() {
         return Ok(None);
     }
-    let text = normalize_search_text(raw);
-    let text = text.trim();
-    read_due_date(text, today)
+    NaiveDate::parse_from_str(raw, "%Y-%m-%d")
         .map(Some)
-        .ok_or_else(|| BoardError::InvalidDueDate(raw.to_string()))
-}
-
-/// 曜日を表す語を、月曜を 0 とした番号にする。
-fn weekday_index(text: &str) -> Option<i64> {
-    // 「月曜日」「月曜」「月」のどれでも同じ。英語は 3 文字と綴り全体を受ける。
-    let trimmed = text
-        .strip_suffix("曜日")
-        .or_else(|| text.strip_suffix("曜"))
-        .unwrap_or(text);
-    let names: [(&str, &str, &str); 7] = [
-        ("月", "mon", "monday"),
-        ("火", "tue", "tuesday"),
-        ("水", "wed", "wednesday"),
-        ("木", "thu", "thursday"),
-        ("金", "fri", "friday"),
-        ("土", "sat", "saturday"),
-        ("日", "sun", "sunday"),
-    ];
-    names
-        .iter()
-        .position(|(japanese, short, long)| {
-            trimmed == *japanese || trimmed == *short || trimmed == *long
-        })
-        .map(|index| index as i64)
-}
-
-/// 均したあとの文字を日付にする。読めなければ `None`。
-fn read_due_date(text: &str, today: NaiveDate) -> Option<NaiveDate> {
-    // 月曜を 0 とした今日の曜日。`num_days_from_monday()` がそのまま返す。
-    let from_monday = i64::from(today.weekday().num_days_from_monday());
-
-    match text {
-        "今日" | "きょう" | "today" => return Some(today),
-        "明日" | "あした" | "tomorrow" => return today.checked_add_signed(TimeDelta::days(1)),
-        "明後日" | "あさって" => return today.checked_add_signed(TimeDelta::days(2)),
-        // 次の月曜。今日が月曜なら 7 日後で、「来週」が今日にならない。
-        "来週" => return today.checked_add_signed(TimeDelta::days(7 - from_monday)),
-        // 今日を含めて次に来る土曜。
-        "今週末" => {
-            return today.checked_add_signed(TimeDelta::days((5 - from_monday).rem_euclid(7)))
-        }
-        _ => {}
-    }
-
-    if let Some(days) = text.strip_prefix('+') {
-        let days: i64 = days.parse().ok()?;
-        return today.checked_add_signed(TimeDelta::days(days));
-    }
-
-    if let Some(index) = weekday_index(text) {
-        // 「次に来る」ほうを採る。今日が同じ曜日なら 7 日後。
-        let ahead = (index - from_monday).rem_euclid(7);
-        let ahead = if ahead == 0 { 7 } else { ahead };
-        return today.checked_add_signed(TimeDelta::days(ahead));
-    }
-
-    if let Ok(date) = NaiveDate::parse_from_str(text, "%Y-%m-%d") {
-        return Some(date);
-    }
-
-    read_month_and_day(text, today)
-}
-
-/// `9/12` と `9-12`。年は今年で、今日より前になるなら来年。
-fn read_month_and_day(text: &str, today: NaiveDate) -> Option<NaiveDate> {
-    let (month, day) = text
-        .split_once('/')
-        .or_else(|| text.split_once('-'))
-        .filter(|(month, day)| !month.is_empty() && !day.is_empty())?;
-    let month: u32 = month.parse().ok()?;
-    let day: u32 = day.parse().ok()?;
-    let this_year = NaiveDate::from_ymd_opt(today.year(), month, day)?;
-    if this_year >= today {
-        return Some(this_year);
-    }
-    // 2/29 は来年に無いことがある。無ければ読めなかったことにする。
-    NaiveDate::from_ymd_opt(today.year() + 1, month, day)
-}
-
-pub fn normalize_search_text(value: &str) -> String {
-    value
-        .chars()
-        .map(|character| match character {
-            '\u{3000}' => ' ',
-            '\u{ff01}'..='\u{ff5e}' => {
-                char::from_u32(character as u32 - 0xfee0).unwrap_or(character)
-            }
-            character => character,
-        })
-        .flat_map(char::to_lowercase)
-        .collect()
-}
-
-/// 検索欄に打たれた `#12` を、カード番号として読む。
-///
-/// 編集パネルはカード番号を出しているのに、その番号から目的のカードへ辿り着く
-/// 手段が無かった（#60）。URL スキームは単一インスタンス制御が前提で保留に
-/// してあるが、アプリの中で番号から辿るだけならその前提は要らない。
-///
-/// `#` のうしろが数字だけのときにしか効かない。`#イベント` のような、`#` で
-/// 始まるだけの普通の検索語はここでは拾わず、これまでどおりの文字列検索に落ちる。
-pub fn parse_card_number_query(query: &str) -> Option<CardId> {
-    let query = normalize_search_text(query);
-    let digits = query.trim().strip_prefix('#')?;
-    if digits.is_empty() || !digits.chars().all(|character| character.is_ascii_digit()) {
-        return None;
-    }
-    digits.parse::<CardId>().ok()
-}
-
-pub fn card_matches_search(card: &Card, query: &str) -> bool {
-    if let Some(card_id) = parse_card_number_query(query) {
-        return card.id == card_id;
-    }
-    let query = normalize_search_text(query);
-    query.is_empty()
-        || normalize_search_text(&card.title).contains(&query)
-        || normalize_search_text(&card.description).contains(&query)
+        .map_err(|_| BoardError::InvalidDueDate(raw.to_string()))
 }
 
 impl Board {
@@ -2676,9 +2540,8 @@ mod tests {
     use chrono::NaiveDate;
 
     use super::{
-        card_matches_search, due_status, normalize_search_text, parse_card_number_query,
-        parse_due_date, Board, BoardError, CardEventKind, ChecklistItemDraft, ChecklistItemId,
-        DueStatus,
+        due_status, parse_stored_due_date, Board, BoardError, CardEventKind, ChecklistItemDraft,
+        ChecklistItemId, DueStatus,
     };
 
     /// チェックリストの下書きを 1 つ。`id` は保存済みの項目を指すときだけ入る。
@@ -3170,145 +3033,24 @@ mod tests {
         assert!(board.set_card_due_date(card_id, None).unwrap());
     }
 
-    /// 2026-09-09 は水曜。曜日をまたぐ数え方はここを基準に読む。
-    fn base_day() -> NaiveDate {
-        NaiveDate::from_ymd_opt(2026, 9, 9).unwrap()
-    }
-
-    fn parsed(value: &str) -> Option<NaiveDate> {
-        parse_due_date(value, base_day()).unwrap()
-    }
-
-    fn day(year: i32, month: u32, day: u32) -> Option<NaiveDate> {
-        NaiveDate::from_ymd_opt(year, month, day)
-    }
-
+    /// 受けるのは保存された形だけ。打った文字を読むのは webview（ADR 0039）。
     #[test]
-    fn parses_and_rejects_due_date_strings() {
-        assert_eq!(parsed("2028-02-29"), day(2028, 2, 29));
-        assert_eq!(parse_due_date(" ", base_day()).unwrap(), None);
+    fn reads_only_the_stored_form_of_a_due_date() {
+        assert_eq!(parse_stored_due_date(""), Ok(None));
+        assert_eq!(parse_stored_due_date("  "), Ok(None));
         assert_eq!(
-            parse_due_date("2028-02-30", base_day()),
-            Err(BoardError::InvalidDueDate("2028-02-30".to_string()))
+            parse_stored_due_date("2026-09-12"),
+            Ok(NaiveDate::from_ymd_opt(2026, 9, 12))
         );
-    }
-
-    #[test]
-    fn reads_a_month_and_day_as_this_year_until_it_has_passed() {
-        assert_eq!(parsed("9/12"), day(2026, 9, 12));
-        assert_eq!(parsed("9-12"), day(2026, 9, 12));
-        // 今日そのものは過ぎていない。
-        assert_eq!(parsed("9/9"), day(2026, 9, 9));
-        // 過ぎているものは来年として読む。
-        assert_eq!(parsed("9/8"), day(2027, 9, 8));
-        assert_eq!(parsed("1/5"), day(2027, 1, 5));
-    }
-
-    #[test]
-    fn reads_the_words_for_nearby_days() {
-        assert_eq!(parsed("今日"), day(2026, 9, 9));
-        assert_eq!(parsed("today"), day(2026, 9, 9));
-        assert_eq!(parsed("明日"), day(2026, 9, 10));
-        assert_eq!(parsed("tomorrow"), day(2026, 9, 10));
-        assert_eq!(parsed("明後日"), day(2026, 9, 11));
-        assert_eq!(parsed("+3"), day(2026, 9, 12));
-        assert_eq!(parsed("+0"), day(2026, 9, 9));
-    }
-
-    /// 2026-09-09 は水曜。「来週」は次の月曜、「今週末」は今週の土曜。
-    #[test]
-    fn reads_next_week_and_the_weekend_from_monday_and_saturday() {
-        assert_eq!(parsed("来週"), day(2026, 9, 14));
-        assert_eq!(parsed("今週末"), day(2026, 9, 12));
-        // 月曜に打った「来週」は今日ではなく次の月曜。
-        let monday = NaiveDate::from_ymd_opt(2026, 9, 14).unwrap();
-        assert_eq!(
-            parse_due_date("来週", monday).unwrap(),
-            day(2026, 9, 21),
-            "「来週」は今日にならない"
-        );
-        // 土曜に打った「今週末」は今日。
-        let saturday = NaiveDate::from_ymd_opt(2026, 9, 12).unwrap();
-        assert_eq!(
-            parse_due_date("今週末", saturday).unwrap(),
-            day(2026, 9, 12)
-        );
-    }
-
-    #[test]
-    fn reads_a_weekday_as_the_next_one_to_come() {
-        assert_eq!(parsed("金"), day(2026, 9, 11));
-        assert_eq!(parsed("金曜"), day(2026, 9, 11));
-        assert_eq!(parsed("金曜日"), day(2026, 9, 11));
-        assert_eq!(parsed("fri"), day(2026, 9, 11));
-        assert_eq!(parsed("friday"), day(2026, 9, 11));
-        assert_eq!(parsed("月"), day(2026, 9, 14));
-        // 今日と同じ曜日は 7 日後。今日のことを言っていないため。
-        assert_eq!(parsed("水"), day(2026, 9, 16));
-    }
-
-    /// 全角で打たれたものも、検索と同じ均し方で読む。
-    #[test]
-    fn reads_full_width_digits_and_upper_case() {
-        assert_eq!(parsed("９/１２"), day(2026, 9, 12));
-        assert_eq!(parsed("＋３"), day(2026, 9, 12));
-        assert_eq!(parsed("Tomorrow"), day(2026, 9, 10));
-        assert_eq!(parsed("　明日　"), day(2026, 9, 10));
-    }
-
-    #[test]
-    fn rejects_what_it_cannot_read() {
-        for value in ["きのう", "9/", "/12", "+", "+ 3", "13/40", "来年"] {
+        // 「明日」も「9/12」も、ここへ届く前に webview が日付にしている。
+        // 無い日付は、形が合っていても受け取らない。
+        for value in ["明日", "9/12", "2028-02-30"] {
             assert_eq!(
-                parse_due_date(value, base_day()),
+                parse_stored_due_date(value),
                 Err(BoardError::InvalidDueDate(value.to_string())),
-                "{value} は読めない"
+                "{value} は保存された形ではない"
             );
         }
-    }
-
-    #[test]
-    fn searches_case_insensitively_and_normalizes_full_width_ascii() {
-        let mut board = Board::fixture();
-        board
-            .update_card(1, "Rust Ｋａｎｂａｎ", "ローカル DB")
-            .unwrap();
-        let card = &board.columns[0].cards[0];
-
-        assert_eq!(normalize_search_text(" ＫＡＮＢＡＮ　"), " kanban ");
-        assert!(card_matches_search(card, "kanban"));
-        assert!(card_matches_search(card, "ローカル"));
-        assert!(!card_matches_search(card, "存在しない"));
-    }
-
-    #[test]
-    fn finds_a_card_by_its_number() {
-        let board = Board::fixture();
-        let first = &board.columns[0].cards[0];
-        let second = &board.columns[0].cards[1];
-        assert_ne!(first.id, second.id, "the fixture has two distinct cards");
-
-        let query = format!("#{}", first.id);
-        assert!(card_matches_search(first, &query));
-        assert!(!card_matches_search(second, &query));
-
-        // 全角で打っても同じ。検索欄の正規化を通してから番号として読む。
-        assert_eq!(parse_card_number_query("＃１"), Some(1));
-        assert_eq!(parse_card_number_query("  #12  "), Some(12));
-    }
-
-    #[test]
-    fn keeps_searching_for_text_that_merely_starts_with_a_hash() {
-        let mut board = Board::fixture();
-        board.update_card(1, "#イベント の準備", "").unwrap();
-        let card = &board.columns[0].cards[0];
-
-        // 番号でない `#` 付きの語は、これまでどおりの文字列検索に落ちる。
-        assert_eq!(parse_card_number_query("#イベント"), None);
-        assert_eq!(parse_card_number_query("#"), None);
-        assert_eq!(parse_card_number_query("#12a"), None);
-        assert_eq!(parse_card_number_query("イベント"), None);
-        assert!(card_matches_search(card, "#イベント"));
     }
 
     #[test]

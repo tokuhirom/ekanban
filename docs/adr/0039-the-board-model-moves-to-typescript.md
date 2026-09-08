@@ -1,7 +1,7 @@
 # 0039. 盤面のモデルを TypeScript に移し、Rust は殻と置き場所に絞る
 
 - 日付: 2026-09-08
-- 状態: 草案（未確定）
+- 状態: 有効
 - 関連: [0017](0017-moving-the-ui-to-tauri.md)、[0018](0018-rust-owns-the-board-state.md)（これを置き換える）、[0040](0040-the-shape-and-the-store-stay-in-rust.md)、[0041](0041-one-layer-of-screen-tests.md)、[0042](0042-the-browser-build-is-the-same-typescript.md)
 
 ## 状況

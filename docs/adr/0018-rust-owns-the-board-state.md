@@ -1,7 +1,7 @@
 # 0018. 盤面の状態は Rust が持ち、webview は投影にする
 
 - 日付: 2026-09-06
-- 状態: 有効
+- 状態: 置き換えられた（→ [0039](0039-the-board-model-moves-to-typescript.md)）
 - 関連: #97、[0017](0017-moving-the-ui-to-tauri.md)
 
 ## 状況

@@ -1,8 +1,10 @@
 // カードの右クリックメニューから当てる期限の候補（#132）。
 //
-// **今日が何日かは Rust から来ます**（`Snapshot.today`）。ブラウザの時計から
-// 決めると、`due_statuses` を出した日とここが数える日が食い違います
-// （`docs/DESIGN.md`「絞り込みと検索」）。
+// **今日が何日かは呼ぶ側から来ます**（`Snapshot.today`）。ここで時計を読むと、
+// 期限の状態を出した日とここが数える日が食い違います（`docs/DESIGN.md`
+// 「絞り込みと検索」）。日付の足し算は `model/dates.ts` の 1 か所に置きます。
+
+import { addDays, formatIsoDate, parseIsoDate, weekdayFromMonday } from "../model/dates";
 
 export interface DueChoice {
   label: string;
@@ -17,31 +19,12 @@ export interface DueChoice {
 export function dueChoices(today: string): DueChoice[] {
   const base = parseIsoDate(today);
   if (base === null) return [];
-  // 月曜を 0 とした曜日。`getUTCDay()` は日曜が 0 なので 1 つずらす。
-  const fromMonday = (base.getUTCDay() + 6) % 7;
+  const fromMonday = weekdayFromMonday(base);
   return [
-    { label: "今日", date: formatIsoDate(base) },
-    { label: "明日", date: formatIsoDate(addDays(base, 1)) },
-    { label: "来週", date: formatIsoDate(addDays(base, 7 - fromMonday)) },
-  ];
-}
-
-/// `"YYYY-MM-DD"` を UTC の 0 時として読む。
-///
-/// **UTC で持ちます。** 地方時で作ると、`Date` の日付が動かしている機械の
-/// タイムゾーンで 1 日ずれます。
-function parseIsoDate(value: string): Date | null {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
-  if (match === null) return null;
-  const [, year = "", month = "", day = ""] = match;
-  const date = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
-  return Number.isNaN(date.getTime()) ? null : date;
-}
-
-function addDays(date: Date, days: number): Date {
-  return new Date(date.getTime() + days * 86_400_000);
-}
-
-function formatIsoDate(date: Date): string {
-  return date.toISOString().slice(0, 10);
+    { label: "今日", date: base },
+    { label: "明日", date: addDays(base, 1) },
+    { label: "来週", date: addDays(base, 7 - fromMonday) },
+  ]
+    .map((choice) => ({ label: choice.label, date: formatIsoDate(choice.date) }))
+    .filter((choice): choice is DueChoice => choice.date !== null);
 }

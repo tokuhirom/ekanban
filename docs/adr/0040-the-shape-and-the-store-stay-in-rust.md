@@ -1,7 +1,7 @@
 # 0040. 盤面の形と置き場所は Rust に残す
 
 - 日付: 2026-09-08
-- 状態: 草案（未確定）
+- 状態: 有効
 - 関連: [0039](0039-the-board-model-moves-to-typescript.md)、[0011](0011-due-counts-in-the-board-list.md)、[0018](0018-rust-owns-the-board-state.md)
 
 ## 状況

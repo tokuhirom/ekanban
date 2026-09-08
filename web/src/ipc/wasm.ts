@@ -28,7 +28,6 @@ import type { QuickCaptureStatus } from "./types/QuickCaptureStatus";
 import type { Snapshot } from "./types/Snapshot";
 import type { StartupState } from "./types/StartupState";
 import type { WebSection } from "./types/WebSection";
-import type { DueDatePreview } from "./types/DueDatePreview";
 import { invoke as callWasm, startWasm } from "./wasmModule";
 
 /// wasm を読み込み、`localStorage` にある盤面で起動する。
@@ -136,7 +135,6 @@ export const wasmIpc: Ipc = {
   moveColumn: (columnId, toIndex) => call<Snapshot>("move_column", { columnId, toIndex }),
   undo: () => call<Snapshot>("undo"),
   redo: () => call<Snapshot>("redo"),
-  filterCards: (query, tagId) => call<number[]>("filter_cards", { query, tagId }),
   setFilterState: async (filter) => {
     await call("set_filter_state", { filter });
   },
@@ -182,7 +180,6 @@ export const wasmIpc: Ipc = {
   revealPath: () => Promise.resolve(),
   revealDatabase: () => Promise.resolve(),
   revealBackups: () => Promise.resolve(),
-  dueDatePreview: (value) => call<DueDatePreview | null>("due_date_preview", { value }),
   openUrl: async (url) => {
     // **開いてよい URL かどうかは Rust が決めます**（`commands::openable_url`）。
     // 断られたら `null` が返り、何も言わずに終わります。
