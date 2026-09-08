@@ -138,6 +138,7 @@ pub fn invoke(command: &str, args: JsValue) -> Result<JsValue, JsValue> {
 /// 既定に戻すことがあり、それは書き込みです。
 const READ_ONLY: &[&str] = &[
     "snapshot",
+    "load_documents",
     "database_location",
     "capture_target",
     "quick_capture_status",

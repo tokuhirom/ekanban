@@ -27,6 +27,7 @@ export function emptyDocument(): BoardDocument {
     nextColumnId: 1,
     nextTagId: 1,
     nextChecklistItemId: 1,
+    rev: 0,
     pendingEvents: [],
     undoStack: [],
     redoStack: [],

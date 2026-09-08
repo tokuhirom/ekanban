@@ -36,6 +36,14 @@ use crate::model::{
 /// 1 つの文字列に丸めるとそれが全部消えます。
 #[derive(Debug, Error)]
 pub enum StoreError {
+    /// 手元の版が古い。**書かずに断ります**（[ADR 0040]）。
+    ///
+    /// ボードの窓とキャプチャの窓が、それぞれ手元に盤面の写しを持つので、
+    /// 古いほうをそのまま書くと相手の変更が黙って消えます。呼んだ側が読み直します。
+    ///
+    /// [ADR 0040]: ../../../docs/adr/0040-the-shape-and-the-store-stay-in-rust.md
+    #[error("the board changed elsewhere: expected rev {expected}, found {current}")]
+    Conflict { expected: i64, current: i64 },
     #[cfg(feature = "sqlite")]
     #[error("SQLite error: {0}")]
     Sqlite(#[from] rusqlite::Error),
@@ -106,6 +114,18 @@ pub(crate) fn board_scoped_id(board_id: BoardId) -> i64 {
         .expect("board ID namespace overflowed")
 }
 
+/// 置き場所から読んだ盤面 1 つぶん（[ADR 0039]）。
+///
+/// `Board` に**版**を添えたものです。版は保存の競合を見るためのもので、盤面の
+/// 中身ではないので、`Board` の中には入れません。
+///
+/// [ADR 0039]: ../../../docs/adr/0039-the-board-model-moves-to-typescript.md
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredDocument {
+    pub board: Board,
+    pub rev: i64,
+}
+
 /// 保存されたカードの履歴の 1 件。
 ///
 /// `model::CardEvent` と違って `id` を持ちます。**並び順が書き出しに出る**ので、
@@ -147,11 +167,18 @@ struct StoredBoard {
     columns: Vec<Column>,
     #[serde(default)]
     events: Vec<StoredCardEvent>,
+    /// 保存の競合を見るための版（[ADR 0040]）。**古い置き場所には無い**ので、
+    /// 読めなければ 0 から始めます。SQLite 側の移行 14 と同じ扱いです。
+    ///
+    /// [ADR 0040]: ../../../docs/adr/0040-the-shape-and-the-store-stay-in-rust.md
+    #[serde(default)]
+    rev: i64,
 }
 
 impl StoredBoard {
-    fn of(board: &Board, events: Vec<StoredCardEvent>) -> Self {
+    fn of(board: &Board, events: Vec<StoredCardEvent>, rev: i64) -> Self {
         Self {
+            rev,
             id: board.id,
             name: board.name.clone(),
             created_at: board.created_at,
@@ -387,24 +414,68 @@ impl Store<'_> {
     }
 
     /// 盤面を書き込む。`pending_events` は取り込まれて空になる。
+    /// 盤面を書く。**版は確かめません**（`db::Database::save_board` と同じ）。
     pub fn save_board(&mut self, board: &mut Board) -> Result<(), StoreError> {
+        self.save_board_with_rev(board, None).map(|_| ())
+    }
+
+    /// 版を確かめてから書く（[ADR 0040]）。書けたら次の版を返す。
+    ///
+    /// [ADR 0040]: ../../../docs/adr/0040-the-shape-and-the-store-stay-in-rust.md
+    pub fn save_board_at(&mut self, board: &mut Board, expected: i64) -> Result<i64, StoreError> {
+        self.save_board_with_rev(board, Some(expected))
+    }
+
+    fn save_board_with_rev(
+        &mut self,
+        board: &mut Board,
+        expected: Option<i64>,
+    ) -> Result<i64, StoreError> {
         either!(
             self,
-            database => database.save_board(board),
+            database => match expected {
+                Some(expected) => database.save_board_at(board, expected),
+                None => database.save_board(board).map(|()| 0),
+            },
             json => {
                 let pending = std::mem::take(&mut board.pending_events);
                 let Some(at) = json.index_of(board.id) else {
                     return Err(StoreError::NoBoard);
                 };
+                let current = json.boards[at].rev;
+                if let Some(expected) = expected {
+                    if expected != current {
+                        return Err(StoreError::Conflict { expected, current });
+                    }
+                }
+                let rev = current + 1;
                 let mut events = std::mem::take(&mut json.boards[at].events);
                 for event in pending {
                     let id = json.next_event_id;
                     json.next_event_id += 1;
                     events.push(stored_event(id, &event));
                 }
-                json.boards[at] = StoredBoard::of(board, events);
-                Ok(())
+                json.boards[at] = StoredBoard::of(board, events, rev);
+                Ok(rev)
             },
+        )
+    }
+
+    /// 全部のボードを、webview が持つ形で読む（[ADR 0039]）。
+    ///
+    /// [ADR 0039]: ../../../docs/adr/0039-the-board-model-moves-to-typescript.md
+    pub fn load_documents(&self) -> Result<Vec<StoredDocument>, StoreError> {
+        either!(
+            self,
+            database => database.load_documents(),
+            json => Ok(json
+                .boards
+                .iter()
+                .map(|board| StoredDocument {
+                    board: board.to_board(),
+                    rev: board.rev,
+                })
+                .collect()),
         )
     }
 
@@ -431,7 +502,7 @@ impl Store<'_> {
                     board_scoped_id(board_id),
                     chrono::Utc::now().timestamp_millis(),
                 );
-                json.boards.push(StoredBoard::of(&board, Vec::new()));
+                json.boards.push(StoredBoard::of(&board, Vec::new(), 0));
                 json.boards.sort_by_key(|board| board.id);
                 Ok(board)
             },
@@ -486,7 +557,7 @@ impl Store<'_> {
                     return Ok(());
                 }
                 let mut board = Board::first_run();
-                json.boards.push(StoredBoard::of(&board, Vec::new()));
+                json.boards.push(StoredBoard::of(&board, Vec::new(), 0));
                 let pending = std::mem::take(&mut board.pending_events);
                 let events = pending
                     .iter()

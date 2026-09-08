@@ -161,6 +161,8 @@ pub fn run() {
             ipc::rename_tag,
             ipc::set_tag_color,
             ipc::remove_tag,
+            ipc::load_documents,
+            ipc::save_document,
             ipc::undo,
             ipc::redo,
             ipc::set_filter_state,

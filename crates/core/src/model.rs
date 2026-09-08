@@ -41,7 +41,9 @@ impl DueCounts {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "lowercase")]
+#[ts(export)]
 pub enum CardEventKind {
     Created,
     Moved,
@@ -62,7 +64,15 @@ impl CardEventKind {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// 積まれたカードの履歴 1 件。**次の保存で書き、書けたら捨てます。**
+///
+/// 盤面を持つのは webview なので、履歴を積むのもそちら側です（[ADR 0039]）。
+/// 置き場所は受け取ったものを追記するだけで、何が起きたかを見直しません。
+///
+/// [ADR 0039]: ../../../docs/adr/0039-the-board-model-moves-to-typescript.md
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub struct CardEvent {
     pub card_id: CardId,
     pub kind: CardEventKind,
@@ -290,7 +300,7 @@ pub struct ArchivedCardOperation {
     pub index: usize,
 }
 
-#[derive(Debug, Clone, Serialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct Board {
@@ -370,6 +380,14 @@ pub enum BoardError {
     ChecklistItemNotFound(ChecklistItemId, CardId),
     #[error("a board must have at least one column")]
     LastColumn,
+    /// 保存を頼まれた盤面が、行として成り立っていない（[ADR 0040]）。
+    ///
+    /// 使う人の入力の間違いではなく、**画面の側の食い違い**です。入力欄の脇に
+    /// 返すものが無いので、ダイアログに出します。
+    ///
+    /// [ADR 0040]: ../../../docs/adr/0040-the-shape-and-the-store-stay-in-rust.md
+    #[error("the board does not hold together: {0}")]
+    Inconsistent(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
@@ -2481,6 +2499,131 @@ impl Board {
     /// 積んである `card_events` を捨てる。
     ///
     /// 保存し終えたぶんと、巻き戻して無かったことにするぶんの両方が通る。
+    /// 受け取った履歴を、次の保存で書くものとして抱える。
+    ///
+    /// **盤面を持つのは webview** なので、履歴を積むのもそちら側です
+    /// （[ADR 0039]）。置き場所は追記するだけで、何が起きたかを見直しません。
+    ///
+    /// [ADR 0039]: ../../../docs/adr/0039-the-board-model-moves-to-typescript.md
+    pub fn adopt_pending_events(&mut self, events: Vec<CardEvent>) {
+        self.pending_events = events;
+    }
+
+    /// 保存を頼まれた盤面が、行として成り立っているかを見る（[ADR 0040]）。
+    ///
+    /// **盤面の判断をやり直しません。** カードをどのカラムの何枚目に置くかは
+    /// webview が決めたことで、ここが見るのは「そのまま書けるか」だけです。
+    /// スキーマ（`NOT NULL`・外部キー・`UNIQUE`）が見ているものは重ねて見ません。
+    ///
+    /// 見るのは 4 つ。
+    ///
+    /// - 空のタイトル・カラム名・タグ名（画面が断っているはずのもの）
+    /// - 知らないタグを指すカード
+    /// - 並びと `position` の食い違い（見た目と保存が別のことを言う）
+    /// - 採番の続きが、使っている ID を追い越していない状態（次に採ると衝突する）
+    ///
+    /// [ADR 0040]: ../../../docs/adr/0040-the-shape-and-the-store-stay-in-rust.md
+    pub fn validate(&self) -> Result<(), BoardError> {
+        if self.name.trim().is_empty() {
+            return Err(BoardError::EmptyBoardName);
+        }
+        let tag_ids: Vec<TagId> = self.tags.iter().map(|tag| tag.id).collect();
+        for tag in &self.tags {
+            if tag.name.trim().is_empty() {
+                return Err(BoardError::EmptyTagName);
+            }
+            if tag.id >= self.next_tag_id {
+                return Err(BoardError::Inconsistent(format!(
+                    "tag {} is at or past the next tag id {}",
+                    tag.id, self.next_tag_id
+                )));
+            }
+        }
+        for (index, column) in self.columns.iter().enumerate() {
+            if column.name.trim().is_empty() {
+                return Err(BoardError::EmptyColumnName);
+            }
+            if column.position != index as i64 {
+                return Err(BoardError::Inconsistent(format!(
+                    "column {} sits at {index} but says position {}",
+                    column.id, column.position
+                )));
+            }
+            if column.id >= self.next_column_id {
+                return Err(BoardError::Inconsistent(format!(
+                    "column {} is at or past the next column id {}",
+                    column.id, self.next_column_id
+                )));
+            }
+            for (card_index, card) in column.cards.iter().enumerate() {
+                self.validate_card(card, &tag_ids)?;
+                if card.position != card_index as i64 {
+                    return Err(BoardError::Inconsistent(format!(
+                        "card {} sits at {card_index} but says position {}",
+                        card.id, card.position
+                    )));
+                }
+                if card.column_id != column.id {
+                    return Err(BoardError::Inconsistent(format!(
+                        "card {} sits in column {} but says column {}",
+                        card.id, column.id, card.column_id
+                    )));
+                }
+                if card.archived_at.is_some() {
+                    return Err(BoardError::Inconsistent(format!(
+                        "card {} is on the board but says it is archived",
+                        card.id
+                    )));
+                }
+            }
+        }
+        for card in &self.archived_cards {
+            self.validate_card(card, &tag_ids)?;
+            if card.archived_at.is_none() {
+                return Err(BoardError::Inconsistent(format!(
+                    "card {} is in the archive but says it is not archived",
+                    card.id
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_card(&self, card: &Card, tag_ids: &[TagId]) -> Result<(), BoardError> {
+        if card.title.trim().is_empty() {
+            return Err(BoardError::EmptyCardTitle);
+        }
+        if card.id >= self.next_card_id {
+            return Err(BoardError::Inconsistent(format!(
+                "card {} is at or past the next card id {}",
+                card.id, self.next_card_id
+            )));
+        }
+        for tag_id in &card.tag_ids {
+            if !tag_ids.contains(tag_id) {
+                return Err(BoardError::TagNotFound(*tag_id));
+            }
+        }
+        for (index, item) in card.checklist_items.iter().enumerate() {
+            if item.text.trim().is_empty() {
+                return Err(BoardError::EmptyChecklistItemText);
+            }
+            if item.position != index as i64 || item.card_id != card.id {
+                return Err(BoardError::Inconsistent(format!(
+                    "checklist item {} on card {} sits at {index} but says position {} on card {}",
+                    item.id, card.id, item.position, item.card_id
+                )));
+            }
+            if item.id >= self.next_checklist_item_id {
+                return Err(BoardError::Inconsistent(format!(
+                    "checklist item {} is at or past the next item id {}",
+                    item.id, self.next_checklist_item_id
+                )));
+            }
+        }
+        Ok(())
+    }
+
     pub fn discard_pending_events(&mut self) {
         self.pending_events.clear();
     }

@@ -220,6 +220,20 @@ pub fn remove_tag(state: State<'_, AppState>, tag_id: TagId) -> Reply<Snapshot> 
 // ---------------------------------------------------------------- 取り消し
 
 #[tauri::command]
+pub fn load_documents(state: State<'_, AppState>) -> Reply<Vec<commands::BoardDocument>> {
+    commands::load_documents(&state)
+}
+
+#[tauri::command]
+pub fn save_document(
+    state: State<'_, AppState>,
+    document: commands::BoardDocument,
+    events: Vec<ekanban_core::model::CardEvent>,
+) -> Reply<commands::SavedBoard> {
+    commands::save_document(&state, document, events)
+}
+
+#[tauri::command]
 pub fn undo(state: State<'_, AppState>) -> Reply<Snapshot> {
     commands::undo(&state)
 }

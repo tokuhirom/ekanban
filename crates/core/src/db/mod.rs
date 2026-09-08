@@ -13,7 +13,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use crate::model::{
     Board, BoardId, BoardSummary, Card, ChecklistItem, Column, ColumnId, DueCounts, Tag,
 };
-pub use crate::store::{FilterState, WindowBoundsState};
+pub use crate::store::{FilterState, StoredDocument, WindowBoundsState};
 
 use crate::store::{
     board_scoped_id, StoreError, StoredCardEvent, CAPTURE_BOARD_STATE_KEY,
@@ -22,7 +22,7 @@ use crate::store::{
     THEME_PREFERENCE_STATE_KEY, WINDOW_BOUNDS_STATE_KEY,
 };
 
-const CURRENT_SCHEMA_VERSION: i64 = 13;
+const CURRENT_SCHEMA_VERSION: i64 = 14;
 
 pub struct Database {
     connection: Connection,
@@ -664,14 +664,50 @@ impl Database {
         Ok(())
     }
 
+    /// 盤面を書く。**版は確かめません。**
+    ///
+    /// 盤面を Rust が持っている経路（クイックキャプチャ）はこちらを通ります。
+    /// 手元の写しがそのまま最新なので、確かめる相手がいません。
     pub fn save_board(&mut self, board: &mut Board) -> Result<(), StoreError> {
+        self.save_board_with_rev(board, None).map(|_| ())
+    }
+
+    /// 版を確かめてから書く（[ADR 0040]）。書けたら次の版を返す。
+    ///
+    /// **合わなければ書きません。** 盤面を持つのが webview になると、ボードの窓と
+    /// キャプチャの窓がそれぞれ手元に写しを持ちます。古い写しをそのまま書くと、
+    /// もう片方が足したカードが黙って消えます。
+    ///
+    /// [ADR 0040]: ../../../../docs/adr/0040-the-shape-and-the-store-stay-in-rust.md
+    pub fn save_board_at(&mut self, board: &mut Board, expected: i64) -> Result<i64, StoreError> {
+        self.save_board_with_rev(board, Some(expected))
+    }
+
+    fn save_board_with_rev(
+        &mut self,
+        board: &mut Board,
+        expected: Option<i64>,
+    ) -> Result<i64, StoreError> {
         let pending_events = std::mem::take(&mut board.pending_events);
         let transaction = self.connection.transaction()?;
+        let current: Option<i64> = transaction
+            .query_row(
+                "SELECT rev FROM boards WHERE id = ?1",
+                params![board.id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if let (Some(expected), Some(current)) = (expected, current) {
+            if expected != current {
+                return Err(StoreError::Conflict { expected, current });
+            }
+        }
+        let rev = current.map_or(0, |rev| rev + 1);
         transaction.execute(
             "INSERT INTO boards
              (id, name, created_at, updated_at, next_card_id, next_column_id, next_tag_id,
-              next_checklist_item_id)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+              next_checklist_item_id, rev)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
              ON CONFLICT(id) DO UPDATE SET
                name = excluded.name,
                created_at = excluded.created_at,
@@ -679,7 +715,8 @@ impl Database {
                next_card_id = excluded.next_card_id,
                next_column_id = excluded.next_column_id,
                next_tag_id = excluded.next_tag_id,
-               next_checklist_item_id = excluded.next_checklist_item_id",
+               next_checklist_item_id = excluded.next_checklist_item_id,
+               rev = excluded.rev",
             params![
                 board.id,
                 board.name,
@@ -688,7 +725,8 @@ impl Database {
                 board.next_card_id,
                 board.next_column_id,
                 board.next_tag_id,
-                board.next_checklist_item_id
+                board.next_checklist_item_id,
+                rev
             ],
         )?;
 
@@ -978,7 +1016,31 @@ impl Database {
         }
 
         transaction.commit()?;
-        Ok(())
+        Ok(rev)
+    }
+
+    /// 全部のボードを、webview が持つ形で読む（[ADR 0039]）。
+    ///
+    /// **一覧のためだけに開くのではありません。** 盤面を持つのが webview に
+    /// なると、ボードの切り替えも期限の件数も手元で済みます。読むのは起動の
+    /// 1 回と、ほかの窓が書いたときだけです。
+    ///
+    /// [ADR 0039]: ../../../../docs/adr/0039-the-board-model-moves-to-typescript.md
+    pub fn load_documents(&self) -> Result<Vec<StoredDocument>, StoreError> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT id, rev FROM boards ORDER BY id")?;
+        let rows = statement
+            .query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)))?
+            .collect::<Result<Vec<_>, _>>()?;
+        rows.into_iter()
+            .map(|(id, rev)| {
+                Ok(StoredDocument {
+                    board: self.load_board_by_id(id)?,
+                    rev,
+                })
+            })
+            .collect()
     }
 
     fn migrate(&mut self) -> Result<(), StoreError> {
@@ -1281,6 +1343,34 @@ impl Database {
                 "UPDATE tags SET color = '' WHERE color = ?1",
                 [crate::store::LEGACY_DEFAULT_TAG_COLOR],
             )?;
+            transaction.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, ?2)",
+                params![13, now()],
+            )?;
+            transaction.commit()?;
+        }
+
+        if version < 14 {
+            // 保存の競合を見るための版（[ADR 0040]）。盤面を持つのが webview に
+            // なると、ボードの窓とキャプチャの窓がそれぞれ手元に写しを持ちます。
+            // **書き負けが黙って消えるのではなく、`Conflict` として見える**ように
+            // するための 1 列です。
+            //
+            // 既存の行は 0 から始めます。移行のあとで開いた画面が読む版と、
+            // 次に書く版が食い違わなければよく、どこから数え始めるかは問いません。
+            //
+            // [ADR 0040]: ../../../../docs/adr/0040-the-shape-and-the-store-stay-in-rust.md
+            let transaction = self.connection.transaction()?;
+            let has_rev = transaction.query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('boards') WHERE name = 'rev'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )? > 0;
+            if !has_rev {
+                transaction.execute_batch(
+                    "ALTER TABLE boards ADD COLUMN rev INTEGER NOT NULL DEFAULT 0;",
+                )?;
+            }
             transaction.execute(
                 "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, ?2)",
                 params![CURRENT_SCHEMA_VERSION, now()],
@@ -2027,6 +2117,57 @@ mod tests {
     }
 
     /// 既定色で溜まったタグを、自動の色に戻す（ADR 0044）。**自分で選んだ色は
+    /// 版の列を足すだけの移行。**盤面には触らない**（[ADR 0040]）。
+    ///
+    /// 既存のボードは 0 から数え始める。どこから数え始めるかは問わない——
+    /// 読んだ版と次に書く版が食い違わなければよい。
+    ///
+    /// [ADR 0040]: ../../../../docs/adr/0040-the-shape-and-the-store-stay-in-rust.md
+    #[test]
+    fn adds_the_revision_column_when_migrating_a_version_thirteen_database() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("board.sqlite3");
+        let before = {
+            let database = open_with_cards(&path);
+            let board = database.load_board().unwrap();
+            database
+                .connection
+                .execute("DELETE FROM schema_migrations WHERE version >= ?1", [14])
+                .unwrap();
+            database
+                .connection
+                .execute_batch("ALTER TABLE boards DROP COLUMN rev;")
+                .unwrap();
+            board
+        };
+
+        let mut database = open_with_cards(&path);
+
+        assert_eq!(database.load_board().unwrap(), before, "盤面は変わらない");
+        let documents = database.load_documents().unwrap();
+        assert_eq!(documents.len(), 1);
+        assert_eq!(documents[0].rev, 0, "移行したボードは 0 から数え始める");
+
+        // 数え始めたあとは、書くたびに 1 つ進み、古い版は断られる。
+        let mut board = database.load_board().unwrap();
+        assert_eq!(database.save_board_at(&mut board, 0).unwrap(), 1);
+        assert!(matches!(
+            database.save_board_at(&mut board, 0),
+            Err(crate::store::StoreError::Conflict {
+                expected: 0,
+                current: 1
+            })
+        ));
+
+        let version = database
+            .connection
+            .query_row("SELECT MAX(version) FROM schema_migrations", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap();
+        assert_eq!(version, CURRENT_SCHEMA_VERSION);
+    }
+
     /// そのまま**で、当てるのは当時の既定色と一致する行だけ。
     #[test]
     fn clears_the_old_default_tag_color_when_migrating_a_version_twelve_database() {
