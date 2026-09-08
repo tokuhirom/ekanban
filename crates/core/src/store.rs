@@ -226,6 +226,17 @@ impl StoredBoard {
 /// （`docs/DESIGN.md`「層の分け方」）はここにも掛かります。
 ///
 /// [ADR 0036]: ../../../docs/adr/0036-one-model-two-places-to-put-it.md
+/// タグの色を自分で決める前の、かつての既定色（ADR 0044）。
+///
+/// **いまはどこも書き込みません。** 置いてあるものを「色を決めていない」に
+/// 戻す移行だけが読みます——SQLite 側は `db/mod.rs` の移行 13、こちらは
+/// [`JsonStore::migrate`]。過去の値なので、色を選ぶ側（`web/src/panel/tags.ts`）
+/// とは別に、置き場所の側に置いてあります。
+pub(crate) const LEGACY_DEFAULT_TAG_COLOR: &str = "#94a3b8";
+
+/// 置いてある形の版。SQLite の `schema_migrations` に当たるものです。
+const JSON_STORE_VERSION: i64 = 1;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JsonStore {
@@ -236,6 +247,10 @@ pub struct JsonStore {
     state: BTreeMap<String, String>,
     /// 次に振るカードの履歴の番号。
     next_event_id: i64,
+    /// 置いてある形の版（[`JSON_STORE_VERSION`]）。**この欄が無いころに置かれた
+    /// 文字列では 0 になり**、[`JsonStore::decode`] がそこから進めます。
+    #[serde(default)]
+    version: i64,
 }
 
 /// **`derive` にしません。** 導かれる既定は `next_event_id` が 0 になり、
@@ -254,6 +269,7 @@ impl JsonStore {
             boards: Vec::new(),
             state: BTreeMap::new(),
             next_event_id: 1,
+            version: JSON_STORE_VERSION,
         }
     }
 
@@ -267,7 +283,32 @@ impl JsonStore {
     /// **読めなければ `None` を返します。** 呼ぶ側は新しい置き場所から始めます
     /// ——読めない文字列を抱えて起動を断ると、ページを開くことすらできません。
     pub fn decode(stored: &str) -> Option<Self> {
-        serde_json::from_str(stored).ok()
+        let mut store: Self = serde_json::from_str(stored).ok()?;
+        store.migrate();
+        Some(store)
+    }
+
+    /// 置いてあった形を、いまの版まで進める。
+    ///
+    /// SQLite 側の `migrate` と同じ仕事です（`db/mod.rs`）。**移行が 2 か所に
+    /// あるのは、置き方が 2 つあるからです**——盤面の判断ではないので、
+    /// `model.rs` には入りません（[ADR 0036]）。
+    ///
+    /// [ADR 0036]: ../../../docs/adr/0036-one-model-two-places-to-put-it.md
+    fn migrate(&mut self) {
+        if self.version < 1 {
+            // タグの色を自動で振り分けるようにしたので（ADR 0044）、かつての
+            // 既定色で溜まったタグを「色を決めていない」に戻す。SQLite 側の
+            // 移行 13 と同じで、当てるのは既定色と一致する行だけ。
+            for board in &mut self.boards {
+                for tag in &mut board.tags {
+                    if tag.color == LEGACY_DEFAULT_TAG_COLOR {
+                        tag.color.clear();
+                    }
+                }
+            }
+        }
+        self.version = JSON_STORE_VERSION;
     }
 
     fn index_of(&self, board_id: BoardId) -> Option<usize> {

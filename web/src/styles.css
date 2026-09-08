@@ -392,8 +392,8 @@ textarea {
   color: var(--color-muted-foreground);
 }
 
-/* タグの色はユーザーが決めたもので、こちらでは置き換えられない
- * （`docs/DESIGN.md`「画面の作り」）。チップだけ彩度を落とす。 */
+/* タグの色は、ユーザーが決めたか自動で付いたそのタグの色で、こちらでは
+ * 置き換えられない（`docs/DESIGN.md`「画面の作り」）。チップだけ彩度を落とす。 */
 .card[data-done] .card-tags {
   opacity: 0.65;
 }
@@ -515,8 +515,11 @@ textarea {
   margin-top: 4px;
 }
 
-/* タグのチップだけは、背景がユーザーの指定した色になる（直書きの色が許される
- * 唯一の場所、`docs/DESIGN.md`）。文字色は素の `foreground`。 */
+/* タグのチップだけは、背景がタグの色になる（直書きの色が許される唯一の場所、
+ * `docs/DESIGN.md`）。**背景も文字色も、当てるのは `panel/tags.ts` の
+ * `tagChipStyle` である**——文字色はタグの色の明るさから決まるので、テーマの
+ * カスタムプロパティでは決められない（ADR 0044）。ここに書いてあるのは、
+ * 色が届く前に一瞬だけ使われる下地。 */
 .tag-chip {
   padding: 0 4px;
   border-radius: 4px;

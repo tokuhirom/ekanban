@@ -58,7 +58,7 @@ import {
   type CardDraft,
   type DraftChecklistItem,
 } from "./draft";
-import { DEFAULT_TAG_COLOR, findTagByName, suggestTags } from "./tags";
+import { AUTO_TAG_COLOR, findTagByName, suggestTags, tagChipStyle } from "./tags";
 
 /// 断りの見出し。**カードのコマンドが返すものと同じ文言**にします——送る前に
 /// 断ったか、送って断られたかで、出る言葉が変わらないように。
@@ -274,11 +274,12 @@ export function CardPanel({
   ///
   /// 作った ID は `add_tag` が返すスナップショットから引きます。`run()` が返すのは
   /// `Validation` の失敗だけなので、盤面そのものはクロージャの中で受け取ります。
-  /// 色は既定色で、整えるのはタグ整理パネルの仕事です。
+  /// 色は渡しません——決めていないタグには自動で色が付き（ADR 0044）、それを
+  /// 塗り替えるのはタグ整理パネルの仕事です。
   async function createTag(name: string): Promise<void> {
     const created: { id: number | null } = { id: null };
     const failure = await run(async () => {
-      const snapshot = await ipc.addTag(name, DEFAULT_TAG_COLOR);
+      const snapshot = await ipc.addTag(name, AUTO_TAG_COLOR);
       created.id = findTagByName(snapshot.board.tags, name)?.id ?? null;
       return snapshot;
     });
@@ -703,7 +704,7 @@ function TagsInput({
           <span
             key={tag.id}
             className="tag-chip tags-input-chip"
-            style={{ background: tag.color }}
+            style={tagChipStyle(tag)}
           >
             {tag.name}
             <button

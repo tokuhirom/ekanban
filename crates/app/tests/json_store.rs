@@ -179,3 +179,51 @@ fn an_unreadable_stored_string_is_dropped() {
     // 前の版が置いた SQLite の base64 も、ここで捨てられます。
     assert!(JsonStore::decode("これは JSON ではない").is_none());
 }
+
+/// 前の版が置いた文字列でも、かつての既定色のタグが自動の色に戻ること
+/// （ADR 0044）。SQLite 側の移行 13 と同じことを、ブラウザの置き場所でも行う。
+///
+/// **`version` の無い文字列を読ませます。** ブラウザに置いてあるのは、まさに
+/// その形のままだからです。
+#[test]
+fn the_old_default_tag_color_becomes_automatic_when_reading_an_older_string() {
+    let (state, source) = open();
+    let defaulted = commands::add_tag(&state, "既定色のまま", "#94a3b8")
+        .expect("the tag is added")
+        .board
+        .tags[0]
+        .id;
+    commands::add_tag(&state, "自分で選んだ", "#ef4444").expect("the tag is added");
+
+    // 版の欄を落として、この移行より前に置かれた文字列にする。
+    let stored = encoded(&source);
+    let mut value: serde_json::Value = serde_json::from_str(&stored).expect("the string is JSON");
+    assert!(
+        value
+            .as_object_mut()
+            .expect("the store is an object")
+            .remove("version")
+            .is_some(),
+        "いまの置き場所には版が入っている"
+    );
+    let older = serde_json::to_string(&value).expect("the older string is written");
+
+    let restored = JsonStore::decode(&older).expect("the older string reads back");
+    let (_, startup) =
+        commands::load_startup_state(json_source(restored)).expect("the startup state is read");
+
+    let color = |name: &str| {
+        startup
+            .snapshot
+            .board
+            .tags
+            .iter()
+            .find(|tag| tag.name == name)
+            .expect("the tag survives")
+            .color
+            .clone()
+    };
+    assert_eq!(color("既定色のまま"), "", "既定色は自動の色に戻る");
+    assert_eq!(color("自分で選んだ"), "#ef4444", "選んだ色はそのまま");
+    assert!(defaulted > 0, "タグの ID は振られている");
+}
