@@ -17,10 +17,6 @@ license.workspace = true
 [[bin]]
 name = "ekanban"
 path = "src/main.rs"
-# 殻を外した組み立て（`crates/web`、[ADR 0035]）には実行ファイルがありません。
-# これが無いと `cargo build -p ekanban-app --no-default-features` が `run` の
-# 無いライブラリに対して `main.rs` を組もうとして落ちます。
-required-features = ["shell"]
 
 [features]
 default = ["shell"]
