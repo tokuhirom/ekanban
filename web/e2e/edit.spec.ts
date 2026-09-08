@@ -984,6 +984,78 @@ test("タグを作り、カードに付け、名前を変えて消せる", async
   await expect.poll(storedTitles).not.toHaveLength(0);
 });
 
+/// 「追加」を押したあと、保存の往復の最中に打った名前が消えないこと（#185）。
+///
+/// **欄を空にするのは押した時点**で、返事が返ってきたときではありません。返事を
+/// 待ってから空にしていたころは、待っているあいだに打った文字がその差し替えに
+/// 巻き込まれて消えていました。
+test("保存の往復の最中に打った名前が、返事で消えない", async ({ page }) => {
+  await openBoard(page);
+  await page.locator(".open-tag-panel").click();
+  await expect(page.locator(".tag-panel")).toBeVisible();
+
+  // **往復をわざと遅くします。** 「返事が返る前に打つ」を待ち時間の運任せに
+  // しないため。遅らせるだけで、答えているのは本物のハーネスのままです。
+  await page.route("**/invoke/add_tag", async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    await route.continue();
+  });
+
+  const field = page.getByLabel("新しいタグの名前");
+  await field.fill("続けて 1");
+  await field.press("Enter");
+  // 返事を待たずに次を打つ。ここが、いままで消えていた文字。
+  await field.fill("続けて 2");
+
+  // **1 つめの返事が画面に届くのを待ちます。** 一覧に行が増えたことが、盤面の
+  // 差し替えが済んだ印です（保存された盤面を読むだけでは、返事が画面に届く前を
+  // すり抜けます）。返事を受け取っても、打った文字はそのまま残っている。
+  await expect(page.getByLabel("続けて 1 の名前")).toBeVisible();
+  await expect(field).toHaveValue("続けて 2");
+
+  // 返事のあとに押しても、2 つめは打ったとおりに足せる。**欄を空にするのが
+  // 返事のあとだったころは、ここで欄が空になっていて何も起きませんでした。**
+  await field.press("Enter");
+  await expect
+    .poll(async () =>
+      (await storedBoard()).tags
+        .map((tag) => tag.name)
+        .filter((name) => name.startsWith("続けて")),
+    )
+    .toEqual(["続けて 1", "続けて 2"]);
+  await expect(field).toHaveValue("");
+});
+
+/// 断られた名前は、打ち直せるように欄へ戻る（`docs/DESIGN.md`）。
+///
+/// 欄は押した時点で空になるので、**戻すのは断られたときの仕事**になった。
+test("同じ名前で断られたタグは、名前が欄に戻る", async ({ page }) => {
+  await openBoard(page);
+  await page.locator(".open-tag-panel").click();
+  const field = page.getByLabel("新しいタグの名前");
+  const add = page.locator(".add-tag");
+
+  await field.fill("重複するタグ");
+  // 押せるようになったことで、打った名前が React 側に渡ったと分かる。
+  await expect(add).toBeEnabled();
+  await field.press("Enter");
+  // **1 つめの返事が画面に届くまで待ちます。** 保存された盤面を読むだけだと、
+  // 返事が画面に届く前に 2 つめを送れてしまい、遅れて届いた 1 つめの成功が
+  // 2 つめの失敗の表示（`setFailed`）を消してしまうことがあります。
+  await expect(page.getByLabel("重複するタグ の名前")).toBeVisible();
+
+  // 同じ名前をもう一度。同じ名前のタグは 2 つ作らない（ADR 0027）。
+  await field.fill("重複するタグ");
+  await expect(add).toBeEnabled();
+  await field.press("Enter");
+
+  await expect(page.locator(".tag-panel").getByRole("alert")).toBeVisible();
+  await expect(field).toHaveValue("重複するタグ");
+  expect(
+    (await storedBoard()).tags.filter((tag) => tag.name === "重複するタグ"),
+  ).toHaveLength(1);
+});
+
 /// タグの色は自動で付く（ADR 0044）。**保存に入るのは「色を決めていない」まま**で、
 /// 見分けの付く色を当てるのは画面の側。作るときに色を選ばせる欄はもう無い。
 test("作ったタグには、それぞれ違う色が自動で付く", async ({ page }) => {
@@ -995,8 +1067,8 @@ test("作ったタグには、それぞれ違う色が自動で付く", async ({
   for (const name of ["いろの試し 1", "いろの試し 2"]) {
     await page.getByLabel("新しいタグの名前").fill(name);
     await page.locator(".add-tag").click();
-    // 追加が通ってはじめて欄が空に戻る。戻りきる前に次の名前を打つと、
-    // そのあとの空への差し替えに巻き込まれる。
+    // 欄は押した時点で空になる（#185）。次の名前を打てる状態に戻ったことを
+    // 見てから進む。
     await expect(page.getByLabel("新しいタグの名前")).toHaveValue("");
     await expect
       .poll(async () => (await storedBoard()).tags.map((tag) => tag.name))
