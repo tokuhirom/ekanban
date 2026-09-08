@@ -604,8 +604,8 @@ fn the_display_state_survives_a_restart() {
 
 // ---------------------------------------------------------------- ファイル
 
-/// JSON の書き出しは、**置いてある形の写し**（ADR 0045）。画面が受け取らない
-/// 採番の続きまで入るので、組み立てるのも書くのもこちら側。
+/// JSON の書き出しは、**置いてある形の写し**（ADR 0045）。カードの履歴まで
+/// 入り、それは置き場所にしか無いので、組み立てるのも書くのもこちら側。
 #[test]
 fn exporting_json_writes_a_file_that_can_be_read_back() {
     let harness = Harness::open();
@@ -619,11 +619,8 @@ fn exporting_json_writes_a_file_that_can_be_read_back() {
     let parsed: serde_json::Value = serde_json::from_str(&contents).expect("valid JSON");
     assert!(parsed.get("columns").is_some());
     assert!(
-        parsed
-            .get("board")
-            .and_then(|board| board.get("next_card_id"))
-            .is_some(),
-        "採番の続きが入る。webview はこの値を受け取らない"
+        parsed.get("card_events").is_some(),
+        "カードの履歴が入る。画面が持っているのはいまの盤面だけ"
     );
 }
 

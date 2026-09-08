@@ -1,9 +1,9 @@
 //! ボードを JSON に書き出す形。
 //!
 //! **ここにあるのは JSON だけです**（[ADR 0045]）。JSON は**置いてある形の
-//! 写し**で、採番の続き（`next_card_id` ほか）のように、境界を越えて画面へ
-//! 出さない値まで入ります。だから組み立てられるのは置き場所の側だけです。
-//! 人が読む Markdown のほうは webview にあります（`web/src/model/export.ts`）。
+//! 写し**で、カードの履歴（`card_events`）まで入ります。履歴は置き場所にしか
+//! 無いので、組み立てられるのはこちら側だけです。人が読む Markdown のほうは
+//! webview にあります（`web/src/model/export.ts`）。
 //!
 //! [ADR 0045]: ../../../docs/adr/0045-two-kinds-of-export.md
 //!

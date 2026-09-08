@@ -160,7 +160,7 @@ fn host(command: &str, args: Value, state: &AppState) -> Result<Value, AppError>
         "choose_save_path" => ok(read::<FileName>(args)?.file_name),
         // 書き出す JSON。**ファイルに書きません**——ブラウザにファイルシステムが
         // 無いので、中身を返してページに渡します。組み立てるのが置き場所の側なの
-        // は、置いてある形の写しだからです（[ADR 0045]）。Markdown はページが
+        // は、カードの履歴まで入るからです（[ADR 0045]）。Markdown はページが
         // 自分で組み立てるので、ここには来ません。
         //
         // [ADR 0045]: ../../../docs/adr/0045-two-kinds-of-export.md

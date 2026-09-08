@@ -457,8 +457,8 @@ fn with_extension(destination: &Path, extension: &str) -> PathBuf {
 /// この文字列がそのままページへ渡り、ダウンロードになります。
 ///
 /// **組み立てるのがここなのは、置いてある形の写しだから**です（[ADR 0045]）。
-/// 採番の続きのように、境界を越えて画面へ出さない値まで入ります。人が読む
-/// Markdown のほうは webview が組み立てます。
+/// カードの履歴（`card_events`）まで入り、それは置き場所にしかありません。
+/// 人が読む Markdown のほうは webview が組み立てます。
 ///
 /// [ADR 0035]: ../../../docs/adr/0035-a-browser-build-of-the-real-core.md
 /// [ADR 0045]: ../../../docs/adr/0045-two-kinds-of-export.md
