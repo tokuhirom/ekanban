@@ -18,9 +18,10 @@ use std::path::{Path, PathBuf};
 use chrono::Local;
 use ekanban_core::diagnostics;
 use ekanban_core::model::{
-    parse_stored_due_date, Board, BoardError, BoardId, CardId, ChecklistItemDraft, ColumnId, TagId,
+    parse_stored_due_date, Board, BoardError, BoardId, CardEvent, CardId, ChecklistItemDraft,
+    ColumnId, TagId,
 };
-use ekanban_core::store::{FilterState, Store, StoreError, WindowBoundsState};
+use ekanban_core::store::{FilterState, Store, StoreError, StoredDocument, WindowBoundsState};
 
 #[cfg(feature = "shell")]
 use ekanban_core::backup;
@@ -385,6 +386,103 @@ pub fn redo(state: &AppState) -> Result<Snapshot, AppError> {
     state
         .mutate("操作をやり直せませんでした", Board::redo)
         .map(|(_, snapshot)| snapshot)
+}
+
+// ---------------------------------------------------------------- 盤面の読み書き
+
+/// 置き場所から読んだ盤面 1 つぶん。**webview が持つ形**（[ADR 0039]）。
+///
+/// `Board` に、境界を越えない値（採番の続き）と版を添えたものです。採番の
+/// 続きは画面が手元で番号を採るのに要り、版は保存の競合を見るのに要ります
+/// （[ADR 0040]）。どちらも盤面の中身ではないので、`Board` の中には入れません。
+///
+/// [ADR 0039]: ../../../docs/adr/0039-the-board-model-moves-to-typescript.md
+/// [ADR 0040]: ../../../docs/adr/0040-the-shape-and-the-store-stay-in-rust.md
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct BoardDocument {
+    pub board: Board,
+    pub next_card_id: i64,
+    pub next_column_id: ColumnId,
+    pub next_tag_id: TagId,
+    pub next_checklist_item_id: i64,
+    /// 保存のたびに 1 つ進む。手元のものと合わなければ、置き場所が断ります。
+    pub rev: i64,
+}
+
+impl BoardDocument {
+    fn of(stored: StoredDocument) -> Self {
+        Self {
+            next_card_id: stored.board.next_card_id,
+            next_column_id: stored.board.next_column_id,
+            next_tag_id: stored.board.next_tag_id,
+            next_checklist_item_id: stored.board.next_checklist_item_id,
+            rev: stored.rev,
+            board: stored.board,
+        }
+    }
+
+    /// 置き場所へ渡す形に戻す。**採番の続きを盤面へ書き戻します**——`Board` の
+    /// 側では `#[serde(skip)]` なので、受け取った JSON には入っていません。
+    fn into_board(self, events: Vec<CardEvent>) -> Board {
+        let mut board = self.board;
+        board.next_card_id = self.next_card_id;
+        board.next_column_id = self.next_column_id;
+        board.next_tag_id = self.next_tag_id;
+        board.next_checklist_item_id = self.next_checklist_item_id;
+        board.adopt_pending_events(events);
+        board
+    }
+}
+
+/// 保存できたときに返すもの。**次に書くときの版**です。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SavedBoard {
+    pub rev: i64,
+}
+
+/// 全部のボードを、webview が持つ形で読む（[ADR 0039]）。
+///
+/// **一覧のためだけに開くのではありません。** 盤面を持つのが webview になると、
+/// ボードの切り替えも期限の件数も手元で済みます。
+///
+/// [ADR 0039]: ../../../docs/adr/0039-the-board-model-moves-to-typescript.md
+pub fn load_documents(state: &AppState) -> Result<Vec<BoardDocument>, AppError> {
+    let store = state.store().map_err(|error| {
+        AppError::from_db(ErrorKind::BoardIo, "ボードを読めませんでした", &error)
+    })?;
+    let documents = store.load_documents().map_err(|error| {
+        AppError::from_db(ErrorKind::BoardIo, "ボードを読めませんでした", &error)
+    })?;
+    Ok(documents.into_iter().map(BoardDocument::of).collect())
+}
+
+/// 盤面を書く。**検めてから書きます**（[ADR 0040]）。
+///
+/// 見るのは 2 つ。**版**が手元のものと合っているか（合わなければ、ほかの窓が
+/// 書いたということなので断ります）と、渡された盤面が**行として成り立って
+/// いるか**（`Board::validate`）です。盤面の判断はやり直しません。
+///
+/// [ADR 0040]: ../../../docs/adr/0040-the-shape-and-the-store-stay-in-rust.md
+pub fn save_document(
+    state: &AppState,
+    document: BoardDocument,
+    events: Vec<CardEvent>,
+) -> Result<SavedBoard, AppError> {
+    let expected = document.rev;
+    let mut board = document.into_board(events);
+    board
+        .validate()
+        .map_err(|error| AppError::from_board("保存できませんでした", &error))?;
+
+    let mut store = state.store().map_err(|error| AppError::from_save(&error))?;
+    let rev = store
+        .save_board_at(&mut board, expected)
+        .map_err(|error| AppError::from_save(&error))?;
+    Ok(SavedBoard { rev })
 }
 
 // ---------------------------------------------------------------- 表示の状態

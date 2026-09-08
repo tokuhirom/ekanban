@@ -13,7 +13,7 @@ use ekanban_app::snapshot::ThemePreference;
 use ekanban_app::state::Source;
 use ekanban_app::AppState;
 use ekanban_core::db::{Database, FilterState, WindowBoundsState};
-use ekanban_core::model::{Board, CardId, ChecklistItemDraft, ColumnId};
+use ekanban_core::model::{Board, CardEvent, CardEventKind, CardId, ChecklistItemDraft, ColumnId};
 use tempfile::TempDir;
 
 struct Harness {
@@ -600,6 +600,132 @@ fn the_display_state_survives_a_restart() {
     assert_eq!(startup.theme, ThemePreference::Dark);
     assert!(startup.sidebar_collapsed);
     assert_eq!(startup.window_bounds.map(|b| b.height), Some(500.));
+}
+
+// ---------------------------------------------------------------- 盤面の読み書き
+
+/// 読んで、書いて、読み直すと同じもの（[ADR 0039]）。**採番の続きも運びます**
+/// ——webview が手元で番号を採るのに要るので、`Board` の `#[serde(skip)]` の
+/// 外側に出してあります。
+///
+/// [ADR 0039]: ../../../docs/adr/0039-the-board-model-moves-to-typescript.md
+#[test]
+fn a_document_round_trips_through_the_store() {
+    let harness = Harness::open();
+
+    let documents = commands::load_documents(&harness.state).expect("the documents load");
+    let document = documents.first().expect("there is a board").clone();
+    assert_eq!(document.board.id, harness.stored().id);
+    assert_eq!(document.next_card_id, harness.stored().next_card_id);
+
+    let saved = commands::save_document(&harness.state, document.clone(), Vec::new())
+        .expect("the document is saved");
+    assert_eq!(saved.rev, document.rev + 1, "書くたびに版が 1 つ進む");
+
+    let reread = commands::load_documents(&harness.state).expect("the documents load again");
+    let after = reread.first().expect("there is a board");
+    assert_eq!(after.board, document.board);
+    assert_eq!(after.next_card_id, document.next_card_id);
+    assert_eq!(after.rev, saved.rev);
+}
+
+/// 積まれた履歴は、そのまま追記される。**中身は見直しません**（ADR 0039）。
+#[test]
+fn the_events_the_webview_stacked_are_appended_as_they_are() {
+    let harness = Harness::open();
+    let document = commands::load_documents(&harness.state)
+        .expect("the documents load")
+        .remove(0);
+    let card_id = harness.first_card();
+
+    commands::save_document(
+        &harness.state,
+        document,
+        vec![CardEvent {
+            card_id,
+            kind: CardEventKind::Moved,
+            from_column_id: Some(1),
+            to_column_id: Some(2),
+            at: 1_700_000_000_000,
+        }],
+    )
+    .expect("the document is saved");
+
+    let contents = commands::export_board_json_contents(&harness.state).expect("the JSON is built");
+    let parsed: serde_json::Value = serde_json::from_str(&contents).expect("valid JSON");
+    // 土台のボードを作ったときの `created` が既に並んでいる。足したものは最後。
+    let events = parsed["card_events"]
+        .as_array()
+        .expect("the events are there");
+    let last = events.last().expect("the event that was just saved");
+    assert_eq!(last["kind"], "moved");
+    assert_eq!(last["card_id"], card_id);
+    assert_eq!(last["from_column_id"], 1);
+    assert_eq!(last["to_column_id"], 2);
+}
+
+/// ほかの窓が先に書いていたら、**書かずに断る**（[ADR 0040]）。
+///
+/// 断ったあとの置き場所には、先に書いたほうの内容が残っている。
+///
+/// [ADR 0040]: ../../../docs/adr/0040-the-shape-and-the-store-stay-in-rust.md
+#[test]
+fn saving_an_old_copy_is_refused_and_changes_nothing() {
+    let harness = Harness::open();
+    let document = commands::load_documents(&harness.state)
+        .expect("the documents load")
+        .remove(0);
+
+    // 1 つ目の窓が書く。
+    let mut first = document.clone();
+    first.board.name = "先に書いたほう".to_string();
+    commands::save_document(&harness.state, first, Vec::new()).expect("the first save goes in");
+
+    // 2 つ目の窓は、読んだときの版のまま書こうとする。
+    let mut second = document.clone();
+    second.board.name = "あとから書いたほう".to_string();
+    let failure = commands::save_document(&harness.state, second, Vec::new())
+        .expect_err("the stale copy is refused");
+
+    assert_eq!(failure.kind, ErrorKind::Save);
+    assert_eq!(harness.stored().name, "先に書いたほう");
+}
+
+/// 受け取った盤面が行として成り立っていなければ、書かずに断る（ADR 0040）。
+///
+/// **盤面の判断はやり直しません。** 見るのは「そのまま書けるか」だけ。
+#[test]
+fn a_board_that_does_not_hold_together_is_refused() {
+    let harness = Harness::open();
+    let before = harness.stored();
+    let document = commands::load_documents(&harness.state)
+        .expect("the documents load")
+        .remove(0);
+
+    let mut empty_title = document.clone();
+    empty_title.board.columns[0].cards[0].title = "  ".to_string();
+    let failure = commands::save_document(&harness.state, empty_title, Vec::new())
+        .expect_err("an empty title is refused");
+    assert_eq!(failure.field, Some(Field::CardTitle));
+
+    let mut wrong_position = document.clone();
+    wrong_position.board.columns[0].cards[0].position = 7;
+    let failure = commands::save_document(&harness.state, wrong_position, Vec::new())
+        .expect_err("a position that disagrees with the order is refused");
+    assert_eq!(failure.kind, ErrorKind::BoardIo);
+
+    let mut unknown_tag = document.clone();
+    unknown_tag.board.columns[0].cards[0].tag_ids = vec![999];
+    commands::save_document(&harness.state, unknown_tag, Vec::new())
+        .expect_err("a card pointing at a tag that is not there is refused");
+
+    let mut behind_counter = document.clone();
+    behind_counter.next_card_id = 1;
+    commands::save_document(&harness.state, behind_counter, Vec::new())
+        .expect_err("a counter that would hand out an id already in use is refused");
+
+    // どれも書かれていない。
+    assert_eq!(harness.stored(), before);
 }
 
 // ---------------------------------------------------------------- ファイル

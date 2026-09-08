@@ -155,6 +155,11 @@ fn dispatch(command: &str, args: Value, state: &AppState) -> Result<Option<Value
             state,
             read::<Theme>(args)?.preference,
         )?)?,
+        "load_documents" => json(commands::load_documents(state)?)?,
+        "save_document" => {
+            let a: SaveDocument = read(args)?;
+            json(commands::save_document(state, a.document, a.events)?)?
+        }
         "undo" => json(commands::undo(state)?)?,
         "redo" => json(commands::redo(state)?)?,
         "capture_target" => json(commands::capture_target(state)?)?,
@@ -319,6 +324,12 @@ struct Collapsed {
 #[serde(rename_all = "camelCase")]
 struct Message {
     message: String,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SaveDocument {
+    document: commands::BoardDocument,
+    events: Vec<ekanban_core::model::CardEvent>,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]

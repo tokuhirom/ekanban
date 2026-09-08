@@ -150,6 +150,12 @@ fn board_detail(error: &BoardError) -> String {
             format!("カード #{card_id} のチェック項目 #{item_id} が見つかりません")
         }
         BoardError::LastColumn => "最後のカラムは削除できません".to_string(),
+        // 使う人の入力の間違いではなく、画面の側の食い違い（ADR 0040）。
+        // **理由をそのまま出します**——打ち直して直るものではないので、
+        // 言い換えても手の打ちようが増えません。追う手がかりのほうが要ります。
+        BoardError::Inconsistent(reason) => {
+            format!("盤面を保存できる形になっていません（{reason}）。画面を更新してください")
+        }
     }
 }
 
@@ -192,6 +198,11 @@ fn db_detail(error: &StoreError) -> String {
             _ => format!("SQLite の処理に失敗しました（{error}）"),
         },
         StoreError::NoBoard => "ボードが見つかりません。画面を更新してください".to_string(),
+        // ほかの窓が先に書いた（ADR 0040）。**打ち直す必要はありません**——
+        // 読み直せば、そちらの変更が入った盤面が出ます。
+        StoreError::Conflict { .. } => {
+            "このボードはほかのウィンドウで変更されました。画面を更新してください".to_string()
+        }
         StoreError::LastBoard => "最後のボードは削除できません".to_string(),
         StoreError::EmptyBoardName => "ボード名を入力してください".to_string(),
         StoreError::AlreadyOpen => {
