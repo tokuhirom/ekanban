@@ -604,28 +604,39 @@ fn the_display_state_survives_a_restart() {
 
 // ---------------------------------------------------------------- ファイル
 
+/// JSON の書き出しは、**置いてある形の写し**（ADR 0045）。カードの履歴まで
+/// 入り、それは置き場所にしか無いので、組み立てるのも書くのもこちら側。
 #[test]
-fn exporting_writes_a_file_that_can_be_read_back() {
+fn exporting_json_writes_a_file_that_can_be_read_back() {
     let harness = Harness::open();
     let directory = tempfile::tempdir().expect("a temporary directory");
 
     let json = directory.path().join("board.json");
-    let written = commands::export_board(&harness.state, commands::ExportFormat::Json, &json)
-        .expect("the JSON is written");
+    let written = commands::export_board_json(&harness.state, &json).expect("the JSON is written");
     assert_eq!(written, json);
+
     let contents = std::fs::read_to_string(&json).expect("the file is readable");
     let parsed: serde_json::Value = serde_json::from_str(&contents).expect("valid JSON");
     assert!(parsed.get("columns").is_some());
+    assert!(
+        parsed.get("card_events").is_some(),
+        "カードの履歴が入る。画面が持っているのはいまの盤面だけ"
+    );
+}
 
-    let markdown = directory.path().join("board.md");
-    commands::export_board(&harness.state, commands::ExportFormat::Markdown, &markdown)
-        .expect("the Markdown is written");
-    let contents = std::fs::read_to_string(&markdown).expect("the file is readable");
-    assert!(contents.starts_with("# "));
+/// 組み立てた中身は、そのまま受け取って書く（ADR 0045）。読み方も形も見ない。
+#[test]
+fn writing_a_text_file_puts_back_exactly_what_it_was_given() {
+    let directory = tempfile::tempdir().expect("a temporary directory");
+    let destination = directory.path().join("board.md");
 
+    let written = commands::write_text_file(&destination, "md", "# 個人 Kanban\n")
+        .expect("the file is written");
+
+    assert_eq!(written, destination);
     assert_eq!(
-        commands::suggested_export_name(&harness.state, commands::ExportFormat::Markdown),
-        "個人 Kanban.md"
+        std::fs::read_to_string(&destination).expect("the file is readable"),
+        "# 個人 Kanban\n"
     );
 }
 
@@ -675,16 +686,11 @@ fn a_backup_refuses_to_overwrite_the_database_it_copies() {
 
 /// 拡張子を落として保存されたファイルは、次に開くときに何か分からない。
 #[test]
-fn an_export_gets_the_extension_of_its_format() {
-    let harness = Harness::open();
+fn an_export_gets_the_extension_it_was_told() {
     let directory = tempfile::tempdir().expect("a temporary directory");
 
-    let written = commands::export_board(
-        &harness.state,
-        commands::ExportFormat::Markdown,
-        &directory.path().join("board"),
-    )
-    .expect("the board is written");
+    let written = commands::write_text_file(&directory.path().join("board"), "md", "# 盤面\n")
+        .expect("the board is written");
 
     assert_eq!(written.extension().and_then(|it| it.to_str()), Some("md"));
     assert!(written.is_file(), "the file is written where it says");

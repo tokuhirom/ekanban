@@ -16,11 +16,11 @@ use std::path::{Path, PathBuf};
 // `use` にすると、ブラウザ向けの組み立てで未使用の警告が出ます。
 #[cfg(feature = "shell")]
 use chrono::Local;
+use ekanban_core::diagnostics;
 use ekanban_core::model::{
     parse_stored_due_date, Board, BoardError, BoardId, CardId, ChecklistItemDraft, ColumnId, TagId,
 };
 use ekanban_core::store::{FilterState, Store, StoreError, WindowBoundsState};
-use ekanban_core::{diagnostics, export};
 
 #[cfg(feature = "shell")]
 use ekanban_core::backup;
@@ -434,29 +434,6 @@ pub fn set_window_bounds(state: &AppState, bounds: WindowBoundsState) -> Result<
 
 // ---------------------------------------------------------------- ファイル
 
-/// 書き出す形。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, ts_rs::TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub enum ExportFormat {
-    Json,
-    Markdown,
-}
-
-impl ExportFormat {
-    pub fn extension(self) -> &'static str {
-        match self {
-            Self::Json => "json",
-            Self::Markdown => "md",
-        }
-    }
-}
-
-/// 保存ダイアログに出す既定のファイル名。
-pub fn suggested_export_name(state: &AppState, format: ExportFormat) -> String {
-    export::suggested_export_name(&state.lock().name, format.extension())
-}
-
 /// 選ばれたパスに拡張子を補う。**書き出す先があるのは殻の側だけ**（[ADR 0036]）。
 ///
 /// [ADR 0036]: ../../../docs/adr/0036-one-model-two-places-to-put-it.md
@@ -474,46 +451,53 @@ fn with_extension(destination: &Path, extension: &str) -> PathBuf {
     }
 }
 
-/// 開いているボードを、書き出す形の文字列にする。**まだ書きません。**
+/// 開いているボードを JSON にする。**まだ書きません。**
 ///
 /// 書く先が無い環境があるので分けてあります（ブラウザ、[ADR 0035]）。そこでは
-/// この文字列がそのままページへ渡り、ダウンロードになります。**組み立てが
-/// 1 か所なのは、どちらの経路でも同じものが出るための条件**です。
+/// この文字列がそのままページへ渡り、ダウンロードになります。
+///
+/// **組み立てるのがここなのは、置いてある形の写しだから**です（[ADR 0045]）。
+/// カードの履歴（`card_events`）まで入り、それは置き場所にしかありません。
+/// 人が読む Markdown のほうは webview が組み立てます。
 ///
 /// [ADR 0035]: ../../../docs/adr/0035-a-browser-build-of-the-real-core.md
-pub fn export_board_contents(state: &AppState, format: ExportFormat) -> Result<String, AppError> {
-    match format {
-        ExportFormat::Json => {
-            let store = state.store().map_err(|error| {
-                AppError::from_db(ErrorKind::Export, "書き出せませんでした", &error)
-            })?;
-            let board = state.lock();
-            store.export_board_json(&board).map_err(|error| {
-                AppError::from_db(ErrorKind::Export, "書き出せませんでした", &error)
-            })
-        }
-        ExportFormat::Markdown => Ok(export::render_board_markdown(&state.lock())),
-    }
+/// [ADR 0045]: ../../../docs/adr/0045-two-kinds-of-export.md
+pub fn export_board_json_contents(state: &AppState) -> Result<String, AppError> {
+    let store = state
+        .store()
+        .map_err(|error| AppError::from_db(ErrorKind::Export, "書き出せませんでした", &error))?;
+    let board = state.lock();
+    store
+        .export_board_json(&board)
+        .map_err(|error| AppError::from_db(ErrorKind::Export, "書き出せませんでした", &error))
 }
 
-/// 開いているボードをファイルに書き出す。書けたパスを返す。
+/// 開いているボードを JSON のファイルに書き出す。書けたパスを返す。
 ///
 /// **書く先があるのは殻の側だけ**です。ブラウザには書き込めるファイルシステム
-/// が無いので、そちらは `export_board_contents` の文字列をダウンロードにします
-/// （[ADR 0035]）。
+/// が無いので、そちらは `export_board_json_contents` の文字列をダウンロードに
+/// します（[ADR 0035]）。
 ///
 /// [ADR 0035]: ../../../docs/adr/0035-a-browser-build-of-the-real-core.md
 #[cfg(feature = "shell")]
+pub fn export_board_json(state: &AppState, destination: &Path) -> Result<PathBuf, AppError> {
+    write_text_file(destination, "json", &export_board_json_contents(state)?)
+}
+
+/// 組み立てられた中身を、選ばれた場所に書く。書けたパスを返す。
 ///
-/// 行き先を選ぶのは呼ぶ側（OS のネイティブな保存ダイアログ、`docs/DESIGN.md`「アプリが伝えること」）です。ここは
-/// 中身を作って書くだけにして、ダイアログの都合をコマンドの層に持ち込みません。
-pub fn export_board(
-    state: &AppState,
-    format: ExportFormat,
+/// **中身は受け取るだけ**です（[ADR 0045]）。行き先を選ぶのは OS の保存
+/// ダイアログ、報せるのはアプリの中のダイアログで（`docs/DESIGN.md`「アプリが
+/// 伝えること」）、ここはその間の「書く」だけを引き受けます。
+///
+/// [ADR 0045]: ../../../docs/adr/0045-two-kinds-of-export.md
+#[cfg(feature = "shell")]
+pub fn write_text_file(
     destination: &Path,
+    extension: &str,
+    contents: &str,
 ) -> Result<PathBuf, AppError> {
-    let destination = &with_extension(destination, format.extension());
-    let contents = export_board_contents(state, format)?;
+    let destination = &with_extension(destination, extension);
     std::fs::write(destination, contents).map_err(|error| {
         AppError::new(
             ErrorKind::Export,

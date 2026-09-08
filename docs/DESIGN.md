@@ -15,6 +15,7 @@ README が使う人向けの入口、[マニュアル](MANUAL.md) が使い方�
 ### 層の分け方
 
 - **どちらに書くかは、ウェブアプリとして作ったときにサーバ側へ書くだろうものかで決める。** そうでないものは webview に置く。Tauri の殻はこの見立てでは「ブラウザそのもの」で、ウェブアプリなら書かずに済んだはずのもの（窓、ネイティブのメニュー、OS のダイアログ、グローバルホットキー）だけが Rust に残る。打った文字の読み方も、一致の判定も、書き出す文字列の組み立ても、サーバには置かない（[ADR 0039](adr/0039-the-board-model-moves-to-typescript.md)）
+- **書き出しは 2 つに分ける。** 人が読む Markdown は webview（`web/src/model/export.ts`）、置いてある形の写しである JSON は置き場所（`crates/core/src/export.rs`）。分かれ目は形式ではなく、**材料が置き場所にしか無いかどうか**——JSON にはカードの履歴（`card_events`）まで入り、履歴は置き場所にしか無い。ファイルに書くコマンド（`write_text_file`）は中身を見ない（[ADR 0045](adr/0045-two-kinds-of-export.md)）
 - **置き場所は、受け取ったものを検めてから書く。** 盤面の判断をやり直すのではなく、整合だけを見る——空のタイトル、知らないカラムを指すカード、日付として成り立たない期限。どこに落とすかを決めるのは webview で、それが行として成り立つかを見るのが置き場所（[ADR 0040](adr/0040-the-shape-and-the-store-stay-in-rust.md)）
 - **`crates/core`（`ekanban-core`）に UI ツールキットを依存させない。** `model.rs` / `db/mod.rs` / `backup.rs` / `paths.rs` / `instance.rs` / `diagnostics.rs` は画面の作りを知らない。これが、テストを GUI のランタイム無しで走らせ続ける条件であり、アプリと開発用のハーネスが同じコードを使える条件でもある。依存の依存から入り込むほうがありがちなので、解決した依存グラフを `script/check-core-independence` が CI で見る
 - **`crates/app/src/commands.rs` に `tauri` を出さない。** `ipc.rs` の `#[tauri::command]` は、その関数を呼ぶだけの包み。判断を包みの側に置かないことは設計そのもので、開発用のハーネス（`crates/harness`）が同じ関数を HTTP に出せるのはこれによる

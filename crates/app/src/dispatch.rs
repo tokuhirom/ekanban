@@ -22,7 +22,7 @@
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::commands::{self, ExportFormat};
+use crate::commands;
 use crate::error::{AppError, ErrorKind};
 use crate::snapshot::ThemePreference;
 use crate::state::AppState;
@@ -157,10 +157,6 @@ fn dispatch(command: &str, args: Value, state: &AppState) -> Result<Option<Value
         )?)?,
         "undo" => json(commands::undo(state)?)?,
         "redo" => json(commands::redo(state)?)?,
-        "suggested_export_name" => json(commands::suggested_export_name(
-            state,
-            read::<Format>(args)?.format,
-        ))?,
         "capture_target" => json(commands::capture_target(state)?)?,
         "set_capture_column" => json(commands::set_capture_column(
             state,
@@ -328,11 +324,6 @@ struct Message {
 #[serde(rename_all = "camelCase")]
 struct Theme {
     preference: ThemePreference,
-}
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Format {
-    format: ExportFormat,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]

@@ -61,10 +61,6 @@ mod tests {
                 crate::events::CaptureResult::inline(&config),
             ),
             ("CaptureTarget", crate::CaptureTarget::inline(&config)),
-            (
-                "ExportFormat",
-                crate::commands::ExportFormat::inline(&config),
-            ),
             ("Snapshot", crate::Snapshot::inline(&config)),
             ("StartupState", crate::StartupState::inline(&config)),
         ];

@@ -115,7 +115,9 @@ export function Board() {
   // メニュー側で灰色になっているが、そこを通らない道もある）。
   const [shortcutDialog, setShortcutDialog] = useState<QuickCaptureStatus | null>(null);
   const searchInput = useRef<HTMLInputElement>(null);
-  const files = useFileActions(state.notify);
+  // 書き出す中身はここで組み立てます（Markdown だけ、ADR 0045）。ドラッグ中の
+  // 見た目ではなく、保存されている盤面を渡します。
+  const files = useFileActions(state.notify, state.snapshot?.board ?? null);
 
   // メニューが押されたことを受けはじめる。配る先はこの下と、開いている
   // パネルの中（`shell/actions.ts`）。
