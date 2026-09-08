@@ -1,5 +1,15 @@
 # Changelog
 
+## [v0.3.0](https://github.com/tokuhirom/ekanban/compare/v0.2.4...v0.3.0) - 2026-09-08
+
+### 変更
+- タグの色を自動で割り振り、既定色をやめる by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/184
+- Empty the new tag field when the name is sent, not when it returns by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/187
+- Markdown の書き出しを webview へ、盤面のモデルを移植する by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/188
+- 盤面を丸ごと保存する口を、置き場所に開ける by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/189
+- 期限の判定と件数を webview で 1 つにする by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/190
+- 盤面の持ち主を webview に移し、Rust からモデルを消す by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/191
+
 ## [v0.2.4](https://github.com/tokuhirom/ekanban/compare/v0.2.3...v0.2.4) - 2026-09-08
 
 ### 変更
