@@ -450,6 +450,62 @@ fn adding_renaming_moving_sorting_and_removing_columns() {
 }
 
 #[test]
+fn marking_columns_as_finished_work_and_dropping_them_from_the_due_counts() {
+    let harness = Harness::open();
+    let column_id = harness.first_column();
+    let card_id = harness.first_card();
+    commands::set_card_due_date(&harness.state, card_id, "2000-01-01").expect("a due date is set");
+    let before = harness.state.snapshot().expect("a snapshot is read");
+    assert_eq!(before.boards[0].due.overdue, 1);
+
+    let marked =
+        commands::set_column_done(&harness.state, column_id, true).expect("the column is marked");
+
+    assert!(marked.board.columns[0].done);
+    assert!(harness.stored().columns[0].done, "it reached SQLite");
+    // 終わったものに期限切れも本日期限も無い（ADR 0038）。数えているのは SQL
+    // なので、保存されたものを読み直した一覧で見る。
+    assert_eq!(marked.boards[0].due.overdue, 0);
+
+    // **何本でも立てられる。**
+    let added = commands::add_column(&harness.state, "キャンセル済み").expect("a column is added");
+    let cancelled = added.board.columns.last().expect("the new column").id;
+    let both = commands::set_column_done(&harness.state, cancelled, true).expect("marked");
+    assert!(both.board.columns.iter().filter(|c| c.done).count() == 2);
+
+    let cleared =
+        commands::set_column_done(&harness.state, column_id, false).expect("the mark is removed");
+    assert!(!cleared.board.columns[0].done);
+    assert!(!harness.stored().columns[0].done);
+    assert_eq!(cleared.boards[0].due.overdue, 1);
+}
+
+#[test]
+fn a_new_board_comes_with_a_place_for_finished_work() {
+    let harness = Harness::open();
+
+    let created = commands::create_board(&harness.state, "2 つ目").expect("a board is created");
+
+    let names = created
+        .board
+        .columns
+        .iter()
+        .map(|column| (column.name.as_str(), column.done))
+        .collect::<Vec<_>>();
+    assert_eq!(names, vec![("やること", false), ("完了", true)]);
+    assert_eq!(
+        harness
+            .stored()
+            .columns
+            .iter()
+            .map(|column| (column.name.clone(), column.done))
+            .collect::<Vec<_>>(),
+        vec![("やること".to_string(), false), ("完了".to_string(), true)],
+        "it reached SQLite"
+    );
+}
+
+#[test]
 fn archiving_a_column_moves_its_cards_to_the_archive() {
     let harness = Harness::open();
     let column_id = harness.first_column();

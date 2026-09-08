@@ -22,7 +22,7 @@ use crate::store::{
     THEME_PREFERENCE_STATE_KEY, WINDOW_BOUNDS_STATE_KEY,
 };
 
-const CURRENT_SCHEMA_VERSION: i64 = 11;
+const CURRENT_SCHEMA_VERSION: i64 = 12;
 
 pub struct Database {
     connection: Connection,
@@ -80,7 +80,10 @@ impl Database {
     /// 増えても一覧が重くならない」#62）。
     ///
     /// 期限は `'YYYY-MM-DD'` の `TEXT` なので、文字列の大小がそのまま日付の前後に
-    /// なる。アーカイブ済みのカードは数えない。
+    /// なる。アーカイブ済みのカードと、終わったものの置き場（`columns.done`、
+    /// [ADR 0038]）にあるカードは数えない。
+    ///
+    /// [ADR 0038]: ../../../../docs/adr/0038-a-column-that-means-done.md
     pub fn load_boards_as_of(&self, today: NaiveDate) -> Result<Vec<BoardSummary>, StoreError> {
         let today = today.format("%Y-%m-%d").to_string();
         let mut statement = self.connection.prepare(
@@ -89,6 +92,7 @@ impl Database {
                     COALESCE(SUM(CASE WHEN cards.due_date = ?1 THEN 1 ELSE 0 END), 0)
              FROM boards
              LEFT JOIN columns ON columns.board_id = boards.id
+                              AND columns.done = 0
              LEFT JOIN cards ON cards.column_id = columns.id
                             AND cards.archived_at IS NULL
                             AND cards.due_date IS NOT NULL
@@ -391,7 +395,7 @@ impl Database {
             .collect::<Result<Vec<_>, _>>()?;
 
         let mut column_statement = self.connection.prepare(
-            "SELECT id, board_id, name, position, created_at, updated_at
+            "SELECT id, board_id, name, position, created_at, updated_at, done
                  FROM columns WHERE board_id = ?1 ORDER BY position, id",
         )?;
         let column_rows = column_statement.query_map(params![id], |row| {
@@ -402,6 +406,7 @@ impl Database {
                 position: row.get(3)?,
                 created_at: row.get(4)?,
                 updated_at: row.get(5)?,
+                done: row.get(6)?,
                 cards: Vec::new(),
             })
         })?;
@@ -579,6 +584,19 @@ impl Database {
         let next_tag_id = board_scoped_id(board_id);
         let next_checklist_item_id = board_scoped_id(board_id);
 
+        // **最初のカラムをここで決めません**（ADR 0038）。名前も、どれを
+        // 終わったものの置き場にするかも `Board::new_empty` が持っていて、
+        // ここはそれを書き写すだけです。2 か所で決めると片方だけ変わります。
+        let board = Board::new_empty(
+            board_id,
+            name,
+            next_card_id,
+            first_column_id,
+            next_tag_id,
+            next_checklist_item_id,
+            now,
+        );
+
         transaction.execute(
             "INSERT INTO boards
              (id, name, created_at, updated_at, next_card_id, next_column_id, next_tag_id,
@@ -586,11 +604,11 @@ impl Database {
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 board_id,
-                name,
+                board.name,
                 now,
                 now,
                 next_card_id,
-                first_column_id + 1,
+                board.next_column_id,
                 next_tag_id,
                 next_checklist_item_id
             ],
@@ -600,23 +618,25 @@ impl Database {
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             params![NEXT_BOARD_STATE_KEY, (board_id + 1).to_string()],
         )?;
-        transaction.execute(
-            "INSERT INTO columns
-             (id, board_id, name, position, created_at, updated_at)
-             VALUES (?1, ?2, ?3, 0, ?4, ?5)",
-            params![first_column_id, board_id, "やること", now, now],
-        )?;
+        for column in &board.columns {
+            transaction.execute(
+                "INSERT INTO columns
+                 (id, board_id, name, position, created_at, updated_at, done)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    column.id,
+                    board_id,
+                    column.name,
+                    column.position,
+                    column.created_at,
+                    column.updated_at,
+                    column.done
+                ],
+            )?;
+        }
         transaction.commit()?;
 
-        Ok(Board::new_empty(
-            board_id,
-            name,
-            next_card_id,
-            first_column_id,
-            next_tag_id,
-            next_checklist_item_id,
-            now,
-        ))
+        Ok(board)
     }
 
     pub fn delete_board(&mut self, board_id: BoardId) -> Result<(), StoreError> {
@@ -745,21 +765,23 @@ impl Database {
         for column in &board.columns {
             transaction.execute(
                 "INSERT INTO columns
-                 (id, board_id, name, position, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 (id, board_id, name, position, created_at, updated_at, done)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
                  ON CONFLICT(id) DO UPDATE SET
                    board_id = excluded.board_id,
                    name = excluded.name,
                    position = excluded.position,
                    created_at = excluded.created_at,
-                   updated_at = excluded.updated_at",
+                   updated_at = excluded.updated_at,
+                   done = excluded.done",
                 params![
                     column.id,
                     board.id,
                     column.name,
                     column.position,
                     column.created_at,
-                    column.updated_at
+                    column.updated_at,
+                    column.done
                 ],
             )?;
             for card in &column.cards {
@@ -1210,6 +1232,32 @@ impl Database {
             )? > 0;
             if has_wip_limit {
                 transaction.execute_batch("ALTER TABLE columns DROP COLUMN wip_limit;")?;
+            }
+            transaction.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, ?2)",
+                params![11, now()],
+            )?;
+            transaction.commit()?;
+        }
+
+        if version < 12 {
+            // 終わったものの置き場かどうか（ADR 0038）。**既存のボードでは 1 本も
+            // 立てません。** カラム名（「完了」「Done」「済」）から当てると、外した
+            // ボードでは何も起きず、当たったボードでは黙って期限の件数が変わります。
+            let transaction = self.connection.transaction()?;
+            // SQLite に `ADD COLUMN IF NOT EXISTS` は無いので、移行 11 が
+            // `DROP COLUMN` の前に有無を見ているのと同じ形で先に見る。移行の
+            // テストは、進んだ DB の `schema_migrations` を巻き戻して古い DB を
+            // 装うので、列がすでにある状態でここへ来ることがある。
+            let has_done = transaction.query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('columns') WHERE name = 'done'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )? > 0;
+            if !has_done {
+                transaction.execute_batch(
+                    "ALTER TABLE columns ADD COLUMN done INTEGER NOT NULL DEFAULT 0;",
+                )?;
             }
             transaction.execute(
                 "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, ?2)",
@@ -1922,6 +1970,104 @@ mod tests {
     }
 
     #[test]
+    fn adds_the_done_column_when_migrating_a_version_eleven_database() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("board.sqlite3");
+        {
+            // v11 まで進んだ DB を作り、当時の形（`done` の無い `columns`）に戻す。
+            let database = open_with_cards(&path);
+            database
+                .connection
+                .execute("DELETE FROM schema_migrations WHERE version >= ?1", [12])
+                .unwrap();
+            database
+                .connection
+                .execute_batch("ALTER TABLE columns DROP COLUMN done;")
+                .unwrap();
+        }
+
+        let database = open_with_cards(&path);
+        let board = database.load_board().unwrap();
+
+        // **移行では 1 本も立てません**（ADR 0038）。「完了」という名前から
+        // 当てると、当たったボードでは黙って期限の件数が変わります。
+        assert!(
+            board.columns.iter().all(|column| !column.done),
+            "the migration guesses nothing"
+        );
+        let version = database
+            .connection
+            .query_row("SELECT MAX(version) FROM schema_migrations", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap();
+        assert_eq!(version, CURRENT_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn round_trips_the_done_flag_on_a_column() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("board.sqlite3");
+        let mut database = open_with_cards(&path);
+        let mut board = database.load_board().unwrap();
+        let column_id = board.columns[2].id;
+
+        board.set_column_done(column_id, true).unwrap();
+        database.save_board(&mut board).unwrap();
+        let reloaded = database.load_board().unwrap();
+        assert!(reloaded.columns[2].done);
+        assert!(!reloaded.columns[0].done);
+
+        let mut reloaded = reloaded;
+        reloaded.set_column_done(column_id, false).unwrap();
+        database.save_board(&mut reloaded).unwrap();
+        assert!(!database.load_board().unwrap().columns[2].done);
+    }
+
+    #[test]
+    fn leaves_finished_cards_out_of_the_board_list_due_counts() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("board.sqlite3");
+        let mut database = open_with_cards(&path);
+        let today = NaiveDate::from_ymd_opt(2026, 9, 5).unwrap();
+        let mut board = database.load_board().unwrap();
+        let column_id = board.columns[0].id;
+        let overdue = board.add_card(column_id, "過ぎている", "").unwrap();
+        board
+            .set_card_due_date(overdue, NaiveDate::from_ymd_opt(2026, 9, 4))
+            .unwrap();
+        database.save_board(&mut board).unwrap();
+        assert_eq!(database.load_boards_as_of(today).unwrap()[0].due.overdue, 1);
+
+        board.set_column_done(column_id, true).unwrap();
+        database.save_board(&mut board).unwrap();
+
+        // SQL の数え方と `Board::due_counts` を同じ条件に保つ（ADR 0038）。
+        assert_eq!(database.load_boards_as_of(today).unwrap()[0].due.overdue, 0);
+        assert!(board.due_counts(today).is_empty());
+    }
+
+    #[test]
+    fn creates_a_board_with_a_place_for_finished_work() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("board.sqlite3");
+        let mut database = open_with_cards(&path);
+
+        let created = database.create_board("2 つ目").unwrap();
+        let loaded = database.load_board_by_id(created.id).unwrap();
+
+        // 書いた形と読み直した形が同じであること。カラムの名前と `done` を
+        // 決めているのは `Board::new_empty` の 1 か所（ADR 0038）。
+        assert_eq!(created.columns.len(), 2);
+        assert_eq!(loaded.columns.len(), 2);
+        assert_eq!(loaded.columns[0].name, "やること");
+        assert!(!loaded.columns[0].done);
+        assert_eq!(loaded.columns[1].name, "完了");
+        assert!(loaded.columns[1].done);
+        assert_eq!(loaded.next_column_id, created.next_column_id);
+    }
+
+    #[test]
     fn migrates_a_version_one_database_and_initializes_id_counters() {
         let directory = tempdir().unwrap();
         let path = directory.path().join("board.sqlite3");
@@ -2050,7 +2196,7 @@ mod tests {
             let database = open_with_cards(&path);
             database
                 .connection
-                .execute("DELETE FROM schema_migrations WHERE version = ?1", [11])
+                .execute("DELETE FROM schema_migrations WHERE version >= ?1", [11])
                 .unwrap();
             database
                 .connection

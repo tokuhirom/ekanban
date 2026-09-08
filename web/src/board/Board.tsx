@@ -293,6 +293,9 @@ export function Board() {
     draggingAt === null
       ? null
       : (board.columns[draggingAt.columnIndex]?.cards[draggingAt.cardIndex] ?? null);
+  const draggingCardDone =
+    draggingAt !== null &&
+    (board.columns[draggingAt.columnIndex]?.done ?? false);
   const draggingColumn =
     draggingHandle?.kind === "column"
       ? (board.columns.find((column) => column.id === draggingHandle.id) ?? null)
@@ -570,11 +573,16 @@ export function Board() {
           {/* ゴーストは自分の要素。見た目も追従も OS に取られない（ADR 0020）。 */}
           <DragOverlay dropAnimation={null}>
             {draggingCard !== null && (
-              <article className="card card-ghost">
+              <article
+                className="card card-ghost"
+                // 掴んだ瞬間に見た目が変わらないよう、ゴーストも同じ面を描く。
+                data-done={draggingCardDone || undefined}
+              >
                 <CardFace
                   card={draggingCard}
                   tags={board.tags}
                   due={state.dueStatuses.get(draggingCard.id)}
+                  done={draggingCardDone}
                   today={today}
                 />
               </article>

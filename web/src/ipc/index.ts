@@ -65,7 +65,10 @@ export interface Ipc {
   addColumn(name: string): Promise<Snapshot>;
   renameColumn(columnId: number, name: string): Promise<Snapshot>;
   removeColumn(columnId: number): Promise<Snapshot>;
-  /** 空文字で「上限なし」。読めない値は `Validation` で入力欄に返る。 */
+  /**
+   * 終わったものの置き場かどうかを切り替える（ADR 0038）。何本でも立てられる。
+   */
+  setColumnDone(columnId: number, done: boolean): Promise<Snapshot>;
   archiveColumn(columnId: number): Promise<Snapshot>;
 
   addTag(name: string, color: string): Promise<Snapshot>;

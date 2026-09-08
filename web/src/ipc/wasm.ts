@@ -124,6 +124,8 @@ export const wasmIpc: Ipc = {
   addColumn: (name) => call<Snapshot>("add_column", { name }),
   renameColumn: (columnId, name) => call<Snapshot>("rename_column", { columnId, name }),
   removeColumn: (columnId) => call<Snapshot>("remove_column", { columnId }),
+  setColumnDone: (columnId, done) =>
+    call<Snapshot>("set_column_done", { columnId, done }),
   archiveColumn: (columnId) => call<Snapshot>("archive_column", { columnId }),
   addTag: (name, color) => call<Snapshot>("add_tag", { name, color }),
   renameTag: (tagId, name) => call<Snapshot>("rename_tag", { tagId, name }),

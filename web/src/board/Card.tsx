@@ -32,7 +32,16 @@ export function dueBadge(
   status: DueStatus,
   due: string,
   today: string,
+  done = false,
 ): { tone: string; text: string } | null {
+  // 終わったものの置き場では日付だけにします（ADR 0038）。急かす印（`⚠` `◷`）と
+  // 「N日超過」は、もう手を動かさないカードでは意味を失い、他の赤の重さまで
+  // 下げます。日付を消さないのは、いつまでのものだったかが記録として要るから。
+  if (done) {
+    return status.kind === "none"
+      ? null
+      : { tone: "muted", text: shortDate(due, today) };
+  }
   switch (status.kind) {
     case "overdue":
       return {
@@ -75,6 +84,8 @@ interface FaceProps {
   card: CardData;
   tags: readonly Tag[];
   due: DueStatus | undefined;
+  /** 終わったものの置き場にあるか（ADR 0038）。トーンダウンして描く。 */
+  done?: boolean;
   /** `due_statuses` を出した日。年を出すかどうかをここから決める（時計ではなく）。 */
   today: string;
   /** 絞り込んでいるタグ。押されているチップに印を付けるのに使う。 */
@@ -92,6 +103,7 @@ export function CardFace({
   card,
   tags,
   due,
+  done = false,
   today,
   activeTag,
   onToggleTagFilter,
@@ -101,7 +113,7 @@ export function CardFace({
     .filter((tag): tag is Tag => tag !== undefined);
   const badge =
     due !== undefined && card.dueDate !== null
-      ? dueBadge(due, card.dueDate, today)
+      ? dueBadge(due, card.dueDate, today, done)
       : null;
   const progress = checklistProgress(card.checklistItems);
 
@@ -212,6 +224,7 @@ export function Card({
   card,
   tags,
   due,
+  done = false,
   today,
   activeTag,
   onToggleTagFilter,
@@ -237,6 +250,9 @@ export function Card({
       ref={setNodeRef}
       className="card"
       data-card={card.id}
+      // 終わったものは**色**で、絞り込みは**濃さ**で沈めます（ADR 0038）。
+      // 同じ表現手段を 2 つの意味に使うと、暗い理由が読めなくなります。
+      data-done={done || undefined}
       data-dimmed={dimmed || undefined}
       data-selected={selected || undefined}
       // 掴んでいる間、元の場所は空きとして残す。周りが詰まってしまうと、
@@ -272,6 +288,7 @@ export function Card({
         card={card}
         tags={tags}
         due={due}
+        done={done}
         today={today}
         activeTag={activeTag}
         onToggleTagFilter={onToggleTagFilter}

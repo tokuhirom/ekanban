@@ -53,6 +53,8 @@ export const tauriIpc: Ipc = {
   renameColumn: (columnId, name) =>
     invoke<Snapshot>("rename_column", { columnId, name }),
   removeColumn: (columnId) => invoke<Snapshot>("remove_column", { columnId }),
+  setColumnDone: (columnId, done) =>
+    invoke<Snapshot>("set_column_done", { columnId, done }),
   archiveColumn: (columnId) => invoke<Snapshot>("archive_column", { columnId }),
   addTag: (name, color) => invoke<Snapshot>("add_tag", { name, color }),
   renameTag: (tagId, name) => invoke<Snapshot>("rename_tag", { tagId, name }),

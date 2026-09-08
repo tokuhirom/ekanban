@@ -132,6 +132,14 @@ pub struct Column {
     pub position: i64,
     pub created_at: i64,
     pub updated_at: i64,
+    /// 終わったものの置き場か（[ADR 0038]）。
+    ///
+    /// **何本でも立てられます。** 「完了」と「キャンセル済み」は別の終わり方ですが、
+    /// もう手を動かさない点では同じなので、区別せず同じ扱いにします。ここに入って
+    /// いるカードは期限の件数に数えず、画面ではトーンダウンして描きます。
+    ///
+    /// [ADR 0038]: ../../../docs/adr/0038-a-column-that-means-done.md
+    pub done: bool,
     pub cards: Vec<Card>,
 }
 
@@ -261,6 +269,11 @@ pub enum BoardOperation {
         column_id: ColumnId,
         before: String,
         after: String,
+    },
+    SetColumnDone {
+        column_id: ColumnId,
+        before: bool,
+        after: bool,
     },
     RemoveColumn {
         column: Column,
@@ -555,12 +568,15 @@ impl Board {
             created_at: now,
             updated_at: now,
             next_card_id,
-            next_column_id: first_column_id + 1,
+            next_column_id: first_column_id + 2,
             next_tag_id,
             next_checklist_item_id,
             tags: Vec::new(),
             archived_cards: Vec::new(),
-            columns: vec![Column::new(first_column_id, id, "やること", 0, now)],
+            columns: vec![
+                Column::new(first_column_id, id, "やること", 0, now),
+                Column::new_done(first_column_id + 1, id, "完了", 1, now),
+            ],
             pending_events: Vec::new(),
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
@@ -574,7 +590,12 @@ impl Board {
     /// カードは数えない。終わったものに期限切れも本日期限も無い。
     pub fn due_counts(&self, today: NaiveDate) -> DueCounts {
         let mut counts = DueCounts::default();
-        for card in self.columns.iter().flat_map(|column| column.cards.iter()) {
+        for card in self
+            .columns
+            .iter()
+            .filter(|column| !column.done)
+            .flat_map(|column| column.cards.iter())
+        {
             match due_status(card.due_date, today) {
                 DueStatus::Overdue(_) => counts.overdue += 1,
                 DueStatus::Today => counts.today += 1,
@@ -619,7 +640,7 @@ impl Board {
             columns: vec![
                 Column::new(1, 1, "やること", 0, now),
                 Column::new(2, 1, "進行中", 1, now),
-                Column::new(3, 1, "完了", 2, now),
+                Column::new_done(3, 1, "完了", 2, now),
             ],
             pending_events: Vec::new(),
             undo_stack: Vec::new(),
@@ -1767,6 +1788,37 @@ impl Board {
         Ok(true)
     }
 
+    /// 終わったものの置き場かどうかを切り替える（[ADR 0038]）。
+    ///
+    /// **何本立てても構いません。** 「完了」と「キャンセル済み」を並べて両方立てる
+    /// のが、ボードの属性ではなくカラムの属性にした理由です。変化が無ければ
+    /// `false` を返し、Undo のスタックにも積みません。
+    ///
+    /// [ADR 0038]: ../../../docs/adr/0038-a-column-that-means-done.md
+    pub fn set_column_done(&mut self, column_id: ColumnId, done: bool) -> Result<bool, BoardError> {
+        let before = {
+            let column = self
+                .columns
+                .iter_mut()
+                .find(|column| column.id == column_id)
+                .ok_or(BoardError::ColumnNotFound(column_id))?;
+            if column.done == done {
+                return Ok(false);
+            }
+            let before = column.done;
+            column.done = done;
+            column.updated_at = timestamp();
+            before
+        };
+        self.updated_at = timestamp();
+        self.push_operation(BoardOperation::SetColumnDone {
+            column_id,
+            before,
+            after: done,
+        });
+        Ok(true)
+    }
+
     pub fn remove_column(&mut self, column_id: ColumnId) -> Result<(), BoardError> {
         let index = self
             .columns
@@ -2128,6 +2180,11 @@ impl Board {
                 before,
                 after,
             } => self.rename_column_raw(*column_id, if undo { before } else { after })?,
+            BoardOperation::SetColumnDone {
+                column_id,
+                before,
+                after,
+            } => self.set_column_done_raw(*column_id, if undo { *before } else { *after })?,
             BoardOperation::RemoveColumn {
                 column,
                 index,
@@ -2504,6 +2561,17 @@ impl Board {
         Ok(())
     }
 
+    fn set_column_done_raw(&mut self, column_id: ColumnId, done: bool) -> Result<(), BoardError> {
+        let column = self
+            .columns
+            .iter_mut()
+            .find(|column| column.id == column_id)
+            .ok_or(BoardError::ColumnNotFound(column_id))?;
+        column.done = done;
+        column.updated_at = timestamp();
+        Ok(())
+    }
+
     fn remove_column_raw(&mut self, column_id: ColumnId) -> Result<(), BoardError> {
         let index = self
             .columns
@@ -2569,7 +2637,24 @@ impl Column {
             position,
             created_at: now,
             updated_at: now,
+            done: false,
             cards: Vec::new(),
+        }
+    }
+
+    /// 終わったものの置き場として作る（[ADR 0038]）。
+    ///
+    /// [ADR 0038]: ../../../docs/adr/0038-a-column-that-means-done.md
+    fn new_done(
+        id: ColumnId,
+        board_id: BoardId,
+        name: impl Into<String>,
+        position: i64,
+        now: i64,
+    ) -> Self {
+        Self {
+            done: true,
+            ..Self::new(id, board_id, name, position, now)
         }
     }
 }
@@ -2950,6 +3035,62 @@ mod tests {
     }
 
     #[test]
+    fn marks_columns_as_the_place_finished_work_goes() {
+        let mut board = Board::fixture();
+        let done_column = board.columns[2].id;
+        let cancelled_column = board.add_column("キャンセル済み").unwrap();
+
+        assert!(!board.columns[2].done);
+        assert!(
+            !board.set_column_done(done_column, false).unwrap(),
+            "nothing changes, so nothing is pushed onto the undo stack"
+        );
+        assert!(board.set_column_done(done_column, true).unwrap());
+        // **何本でも立てられる**のが、ボードではなくカラムの属性にした理由
+        // （ADR 0038）。
+        assert!(board.set_column_done(cancelled_column, true).unwrap());
+        assert!(board.columns[2].done);
+        assert!(board.columns[3].done);
+
+        assert_eq!(
+            board.set_column_done(999, true),
+            Err(BoardError::ColumnNotFound(999))
+        );
+    }
+
+    #[test]
+    fn undoes_and_redoes_marking_a_column_done() {
+        let mut board = Board::fixture();
+        let column_id = board.columns[2].id;
+
+        board.set_column_done(column_id, true).unwrap();
+        board.undo().unwrap();
+        assert!(!board.columns[2].done);
+        board.redo().unwrap();
+        assert!(board.columns[2].done);
+    }
+
+    #[test]
+    fn restores_the_done_flag_when_a_removed_column_comes_back() {
+        let mut board = Board::fixture();
+        let column_id = board.columns[2].id;
+        board.set_column_done(column_id, true).unwrap();
+
+        board.remove_column(column_id).unwrap();
+        board.undo().unwrap();
+
+        let column = board
+            .columns
+            .iter()
+            .find(|column| column.id == column_id)
+            .expect("the column is back");
+        assert!(
+            column.done,
+            "the whole Column is kept by the undo operation"
+        );
+    }
+
+    #[test]
     fn rejects_empty_column_names() {
         let mut board = Board::fixture();
 
@@ -3196,6 +3337,42 @@ mod tests {
         assert_eq!(counts.today, 1);
         assert!(!counts.is_empty());
         assert!(Board::fixture().due_counts(today).is_empty());
+    }
+
+    #[test]
+    fn stops_counting_due_dates_once_the_column_means_done() {
+        let mut board = Board::fixture();
+        let today = NaiveDate::from_ymd_opt(2026, 9, 5).unwrap();
+        let column_id = board.columns[0].id;
+        let overdue = board.add_card(column_id, "過ぎている", "").unwrap();
+        let due_today = board.add_card(column_id, "今日まで", "").unwrap();
+        board
+            .set_card_due_date(overdue, NaiveDate::from_ymd_opt(2026, 8, 30))
+            .unwrap();
+        board.set_card_due_date(due_today, Some(today)).unwrap();
+        assert_eq!(board.due_counts(today).overdue, 1);
+
+        board.set_column_done(column_id, true).unwrap();
+
+        // 終わったものに期限切れも本日期限も無い（ADR 0038）。
+        assert!(board.due_counts(today).is_empty());
+    }
+
+    #[test]
+    fn starts_a_new_board_with_a_place_for_finished_work() {
+        let board = Board::new_empty(4, "新しいボード", 100, 200, 300, 400, 1);
+
+        assert_eq!(board.columns.len(), 2);
+        assert_eq!(board.columns[0].name, "やること");
+        assert!(!board.columns[0].done);
+        assert_eq!(board.columns[1].name, "完了");
+        assert!(board.columns[1].done);
+        assert_eq!(board.next_column_id, 202, "both seeded ids are taken");
+
+        let first_run = Board::first_run();
+        assert_eq!(first_run.columns.len(), 3);
+        assert!(!first_run.columns[1].done);
+        assert!(first_run.columns[2].done, "「完了」 means done");
     }
 
     #[test]
