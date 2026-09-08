@@ -15,7 +15,7 @@
 **`crates/harness` を畳み、画面のテストを 1 層にする。**
 
 - `web/e2e/` は Vite の開発サーバの上で本物の画面を開き、置き場所には `store/memory`（テストごとに空）を差す。テストは置き場所を直接読み戻して、**画面と保存の両方**を見る——見るものは [0021](0021-two-layer-testing-for-the-webview.md) と同じで、読み戻す先が SQLite からメモリの文書に変わる
-- **SQLite に届くことは Rust 側の往復テストが見る**（`crates/app/tests/`）。TypeScript が実際に書く形の JSON を fixture としてコミットし、保存して読み戻し、スキーマ 12 からの移行も同じ場所で確かめる
+- **SQLite に届くことは Rust 側の往復テストが見る**（`crates/app/tests/`）。盤面を保存して読み戻すテストはいまのまま残り、形が合っていることは `ts-rs` の生成物の差分が見る（[0040](0040-the-shape-and-the-store-stay-in-rust.md)）
 - 殻そのもの（ネイティブのメニュー、OS の保存ダイアログ、グローバルホットキー、窓の矩形）は、[0021](0021-two-layer-testing-for-the-webview.md) のまま**手で確かめる**。ここは変えない
 - webview のエンジンの差は [0023](0023-verifying-the-webview-engines.md) のまま、Chromium と WebKit の 2 つで回す
 
@@ -40,4 +40,4 @@
 引き受ける不都合。
 
 - **「画面 → SQLite」の通し確認が無くなる。** 画面が書いた文書は e2e が見て、その文書を SQLite が受け取れるかは Rust のテストが見る。**間の 1 本のつなぎ目だけ、自動では確かめられない**。fixture を TypeScript 側から生成してコミットし、形がずれたら Rust のテストが落ちるようにする。それでも、つなぎ目そのものはリリース前の手の確認が引き受ける
-- **fixture が古びうる。** TypeScript の形が変わったときに fixture を作り直すのを忘れると、Rust のテストは古い形で通り続ける。生成を `make` の的にして、差分が出たら CI が落ちるようにする（`make types-check` が果たしていた役目を、こちらが引き継ぐ）
+- **`store/memory` が本物の SQLite ではない。** 置き場所の口を満たしているだけで、書き込みの失敗（ディスクが一杯、読み取り専用、壊れている）をそのまま出すわけではない。失敗の出し分けは `error.rs` の Rust 側のテストが引き受ける

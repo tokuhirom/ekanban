@@ -119,7 +119,7 @@
 | [0037](0037-a-list-that-ends-where-you-stop-typing.md) | 箇条書きは打ち止めたところで終わる | 2026-09-07 | 有効 |
 | [0038](0038-a-column-that-means-done.md) | 「終わったもの」の置き場であることを、カラムの属性にする | 2026-09-08 | 有効 |
 | [0039](0039-the-board-model-moves-to-typescript.md) | 盤面のモデルを TypeScript に移し、Rust は殻と置き場所に絞る | 2026-09-08 | 草案（未確定。通れば 0018 を置き換える） |
-| [0040](0040-sqlite-as-the-place-a-document-goes.md) | SQLite には、盤面を文書として置く | 2026-09-08 | 草案（未確定。通れば 0036 を置き換える） |
+| [0040](0040-the-shape-and-the-store-stay-in-rust.md) | 盤面の形と置き場所は Rust に残す | 2026-09-08 | 草案（未確定） |
 | [0041](0041-one-layer-of-screen-tests.md) | 画面のテストを 1 層にし、ハーネスを畳む | 2026-09-08 | 草案（未確定。通れば 0021 を置き換える） |
-| [0042](0042-the-browser-build-is-the-same-typescript.md) | ブラウザ版を、アプリと同じ TypeScript で作る | 2026-09-08 | 草案（未確定。通れば 0035 を置き換える） |
+| [0042](0042-the-browser-build-is-the-same-typescript.md) | ブラウザ版を、アプリと同じ TypeScript で作る | 2026-09-08 | 草案（未確定。通れば 0035 と 0036 を置き換える） |
 | [0043](0043-the-menu-is-described-by-the-webview.md) | メニューの構成を webview が持ち、Rust は組み立てだけを引き受ける | 2026-09-08 | 草案（未確定） |

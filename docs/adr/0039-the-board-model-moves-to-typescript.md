@@ -2,7 +2,7 @@
 
 - 日付: 2026-09-08
 - 状態: 草案（未確定）
-- 関連: [0017](0017-moving-the-ui-to-tauri.md)、[0018](0018-rust-owns-the-board-state.md)（これを置き換える）、[0040](0040-sqlite-as-the-place-a-document-goes.md)、[0041](0041-one-layer-of-screen-tests.md)、[0042](0042-the-browser-build-is-the-same-typescript.md)
+- 関連: [0017](0017-moving-the-ui-to-tauri.md)、[0018](0018-rust-owns-the-board-state.md)（これを置き換える）、[0040](0040-the-shape-and-the-store-stay-in-rust.md)、[0041](0041-one-layer-of-screen-tests.md)、[0042](0042-the-browser-build-is-the-same-typescript.md)
 
 ## 状況
 
@@ -24,8 +24,7 @@
 - `crates/app/src/dispatch.rs`（362 行）——コマンド名で振り分ける表。Tauri の外から同じコマンドを呼ぶためだけにある
 - `crates/harness/`（514 行）——コマンドを HTTP に出す開発専用のバイナリ。Playwright から本物のモデルを触るためだけにある（[0021](0021-two-layer-testing-for-the-webview.md)）
 - `crates/web/`（351 行）と `wasm-pack` のビルド——同じコマンドを wasm に組み直す。ブラウザで本物のモデルを動かすためだけにある（[0035](0035-a-browser-build-of-the-real-core.md)）
-- `crates/core/src/store.rs`（687 行）——置き場所を 2 つに分ける口。上の 2 つが SQLite を積めないから要る（[0036](0036-one-model-two-places-to-put-it.md)）
-- `web/src/ipc/types/`（27 ファイル）と `ts-rs` と `make types-check`——境界を越える型を生成し、CI で差分を見る仕組み
+- `crates/core/src/store.rs` の `JsonStore`——置き場所を 2 つに分ける口。上の 2 つが SQLite を積めないから要る（[0036](0036-one-model-two-places-to-put-it.md)）
 - `crates/app/src/snapshot.rs`（229 行）——毎回丸ごと返すスナップショットの組み立て
 
 **足場のほうがモデルより重い。** これらは 1 つ残らず、盤面が画面の外にあることの費用である。
@@ -55,21 +54,22 @@ TypeScript（`web/src/model/`）が持つもの。
 Rust に残るもの。
 
 - **Tauri の殻**——窓と矩形の保存、ネイティブのメニュー、OS のファイル選択ダイアログ、グローバルホットキー、キャプチャの窓
-- **置き場所**——SQLite（[0040](0040-sqlite-as-the-place-a-document-goes.md)）、日次バックアップ、OS ごとのパス、1 プロセス 1 データベースのロック、クラッシュログ
+- **置き場所**——SQLite（[0040](0040-the-shape-and-the-store-stay-in-rust.md)）、日次バックアップ、OS ごとのパス、1 プロセス 1 データベースのロック、クラッシュログ
 - **環境が答えること**——動いている OS、開いてよい URL かの判定（`openable_url`。webview が打った文字列を OS に渡す口なので、最後の砦は Rust に残す）、ファイルを書く、場所を開く、ログに落とす
 
-コマンドの形が変わる。盤面を変えるコマンド（`add_card` から `set_column_done` まで 25 個）は消え、置き場所の口 3 つになる。
+コマンドの形が変わる。盤面を変えるコマンド（`add_card` から `set_column_done` まで 25 個）は消え、置き場所と環境の口だけになる。
 
-- `load_document()` ——全ボードと付随する表示の状態を 1 回で読む
-- `save(mutation)` ——変わったボード・消えたボード・追記する履歴・表示の状態を **1 トランザクションで書く**。手元の版（`rev`）が合わなければ書かずに `Conflict` を返す
-- `save_app_state(entries)` ——表示の状態だけを書く（テーマ、絞り込み、サイドバー、窓の矩形）
+- `load_board(board_id)` / `load_boards()` ——盤面と、ボードの一覧を読む
+- `save_board(board, rev, events)` ——盤面と、そのとき積まれた履歴を **1 トランザクションで書く**（`docs/DESIGN.md`「盤面とカード」）。手元の版（`rev`）が合わなければ書かずに `Conflict` を返す（[0040](0040-the-shape-and-the-store-stay-in-rust.md)）
+- `create_board` / `delete_board` ——ボードの増減。ID の名前空間を切るのは置き場所の仕事なので、ここは残る
+- `save_app_state(entries)` ——付随する表示の状態（テーマ、絞り込み、サイドバー、窓の矩形、キャプチャ先）
 
 **[0018](0018-rust-owns-the-board-state.md) が決めたことのうち、次の 2 つはそのまま残す。**
 
 - **保存が成功してから画面を差し替える。** モデルへの適用をメモリで先に見せて、失敗したら巻き戻す形にはしない。適用した文書を保存し、成功したら差し替える
 - **確定していない入力（下書き）は webview が持つ**（[0032](0032-committing-a-card-field-by-field.md)）
 
-型の出どころが TypeScript になる。`ts-rs` と `web/src/ipc/types/` の生成、`make types` / `make types-check` をやめる。Rust は盤面の形を知らない（[0040](0040-sqlite-as-the-place-a-document-goes.md)）。
+**移すのは振る舞いだけで、形と置き場所は Rust に残す**（[0040](0040-the-shape-and-the-store-stay-in-rust.md)）。`model.rs` はデータ定義だけになり、`ts-rs` が TypeScript の型を生成し続ける。SQLite のスキーマも `db/mod.rs` も変えない。
 
 ## 理由
 
@@ -93,7 +93,7 @@ Rust に残るもの。
 
 得るもの。
 
-- Rust は 15,274 行から 4,500〜5,500 行の見込みになる。`crates/harness` と `crates/web` が消え、`dispatch.rs` と `store.rs` と `snapshot.rs` と型の生成が消える
+- Rust は 15,274 行から 7,000〜8,000 行の見込みになる。`crates/harness` と `crates/web` が消え、`dispatch.rs` と `export.rs` と `JsonStore` と `snapshot.rs` の大半が消え、`model.rs` はデータ定義だけになる。**`db/mod.rs` の 2,430 行と型の生成は残る**（[0040](0040-the-shape-and-the-store-stay-in-rust.md)）
 - 画面のテストが `npm` だけで回る（[0041](0041-one-layer-of-screen-tests.md)）。ブラウザ版が `wasm-pack` なしで作れる（[0042](0042-the-browser-build-is-the-same-typescript.md)）
 - 盤面の判断が 1 か所に戻る。落とす位置を決める `dnd.ts` と、それを受ける `move_card` が、同じ言語の隣り合った関数になる
 - 打鍵ごとの絞り込みと、日付をまたいだときの再取得が、IPC を通らなくなる
@@ -103,5 +103,5 @@ Rust に残るもの。
 - **`unsafe_code = "forbid"` が守る範囲が狭くなる。** 盤面の論理は `tsc --strict` と ESLint の型付き規則に移る（`docs/DESIGN.md`「テスト」の既定どおり）。ファイルを通すために規則を切らないことが、いままでより重い意味を持つ
 - **移植の間だけ、真実が 2 つある。** 段階を踏むあいだ Rust 側の実装が残る。移す単位ごとに、同じテストを両側で回してから Rust 側を消す
 - **Undo / Redo の移植がいちばん危ない。** `apply_operation` の 315 行は、取りこぼしても「戻せない」という形でしか現れず、画面を見ても気づけない。テストの移植を実装より先に行う
-- **既存のデータベースの移行が片道になる**（[0040](0040-sqlite-as-the-place-a-document-goes.md)）
-- **2 つの窓（ボードとキャプチャ）が同じボードを書く競合が、新しく見えるようになる。** いままでは Rust の `AppState` が 1 つだったので起きなかった。`rev` で検出し、負けたほうが読み直す
+- **形を変えるときは、いままでどおり Rust を触ることになる**（[0040](0040-the-shape-and-the-store-stay-in-rust.md)）。振る舞いだけなら TypeScript で完結するが、フィールドを 1 つ足すには `make types` を回す
+- **2 つの窓（ボードとキャプチャ）が同じボードを書く競合が、新しく出てくる。** いままでは Rust の `AppState` が 1 つだったので起きなかった。`boards.rev` で検出し、負けたほうが読み直す（[0040](0040-the-shape-and-the-store-stay-in-rust.md)）
