@@ -1039,9 +1039,10 @@ test("同じ名前で断られたタグは、名前が欄に戻る", async ({ pa
   // 押せるようになったことで、打った名前が React 側に渡ったと分かる。
   await expect(add).toBeEnabled();
   await field.press("Enter");
-  await expect
-    .poll(async () => (await storedBoard()).tags.map((tag) => tag.name))
-    .toContain("重複するタグ");
+  // **1 つめの返事が画面に届くまで待ちます。** 保存された盤面を読むだけだと、
+  // 返事が画面に届く前に 2 つめを送れてしまい、遅れて届いた 1 つめの成功が
+  // 2 つめの失敗の表示（`setFailed`）を消してしまうことがあります。
+  await expect(page.getByLabel("重複するタグ の名前")).toBeVisible();
 
   // 同じ名前をもう一度。同じ名前のタグは 2 つ作らない（ADR 0027）。
   await field.fill("重複するタグ");
