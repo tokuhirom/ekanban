@@ -1,11 +1,12 @@
 // アーカイブ、書き出し、控えの保存、説明のリンク。
 //
-// 「書き出したファイルが読め、控えが増える」を確かめるので、**書けたファイルを
-// ディスクから読み直します**。画面に「書き出しました」と出ているだけでは、
-// 書けていないことに気づけません。
+// 「書き出したファイルが読める」を確かめるので、**受け取ったファイルを読み直し
+// ます**。画面に「書き出しました」と出ているだけでは、書けていないことに
+// 気づけません。
 //
-// 保存先を選ぶところだけが本物ではありません。ブラウザに OS の保存ダイアログは
-// 無いので、ハーネスがデータベースの隣のパスを返します（`src/ipc/harness.ts`）。
+// ファイルの受け取り方だけが本物と違います。ブラウザに OS の保存ダイアログと
+// 書き込み先が無いので、名前を決めてダウンロードになります
+// （`src/ipc/browser.ts`）。**書き出す中身を組み立てるところは同じ**です。
 
 import { readFileSync } from "node:fs";
 
@@ -14,7 +15,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { editStoredBoard, openBoard, startHarness, stopHarness, storedBoard } from "./harness";
 import { archiveCard } from "../src/model/board";
 
-import type {} from "../src/ipc/harness";
+import type {} from "../src/ipc/browser";
 import type { AppAction } from "../src/ipc/types/AppAction";
 
 test.beforeEach(startHarness);
@@ -26,11 +27,23 @@ async function chooseMenu(page: Page, action: AppAction): Promise<void> {
   }, action);
 }
 
-/// ダイアログが出した書き出し先を読む。
-async function writtenPath(page: Page): Promise<string> {
+/// メニューを選び、受け取ったファイルの中身を読む。
+///
+/// **知らせのダイアログも見ます**——書けたことを画面が言うところまでが、
+/// 書き出しの受け入れ条件です（`docs/DESIGN.md`「アプリが伝えること」）。
+async function exported(page: Page, action: AppAction): Promise<{ name: string; body: string }> {
+  const receiving = page.waitForEvent("download");
+  await chooseMenu(page, action);
+  const download = await receiving;
+
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
-  return (await dialog.locator(".dialog-detail").innerText()).trim();
+  await expect(dialog.locator(".dialog-title")).toHaveText("書き出しました");
+
+  // **名前は知らせのダイアログから読みます。** ブラウザが降ろすファイルに
+  // 付ける名前は環境が決めるもので、アプリが決めた行き先はこちらに出ます。
+  const name = (await dialog.locator(".dialog-detail").innerText()).trim();
+  return { name, body: readFileSync(await download.path(), "utf8") };
 }
 
 // ---------------------------------------------------------------- アーカイブ
@@ -42,7 +55,7 @@ test("アーカイブしたカードが日ごとに並び、復元でボード�
   await first.click({ button: "right" });
   await page.locator(".card-menu").getByRole("button", { name: "アーカイブ", exact: true }).click();
 
-  await expect.poll(async () => (await storedBoard()).archivedCards.length).toBe(1);
+  await expect.poll(async () => (await storedBoard(page)).archivedCards.length).toBe(1);
 
   await chooseMenu(page, "toggleArchiveView");
   const archive = page.locator(".archive");
@@ -53,21 +66,22 @@ test("アーカイブしたカードが日ごとに並び、復元でボード�
   await expect(page.locator(".column")).toHaveCount(0);
 
   await archive.locator(".restore-card").click();
-  await expect.poll(async () => (await storedBoard()).archivedCards.length).toBe(0);
-  await expect.poll(async () => (await storedBoard()).columns[0]?.cards.at(-1)?.title).toBe(title);
+  await expect.poll(async () => (await storedBoard(page)).archivedCards.length).toBe(0);
+  await expect.poll(async () => (await storedBoard(page)).columns[0]?.cards.at(-1)?.title).toBe(title);
 });
 
 test("アーカイブでは、絞り込みに外れたカードを隠す", async ({ page }) => {
-  // 画面を開く前に 2 枚アーカイブしておく。ここで確かめたいのは絞り込みの
-  // 効き方で、アーカイブする道はもう上のテストが通っている。
-  const board = await storedBoard();
-  for (const card of board.columns[0]?.cards.slice(0, 2) ?? []) {
-    await editStoredBoard((document) => archiveCard(document, card.id));
-  }
+  // 2 枚アーカイブしてから開き直す。ここで確かめたいのは絞り込みの効き方で、
+  // アーカイブする道はもう上のテストが通っている。
   await openBoard(page);
+  const board = await storedBoard(page);
+  for (const card of board.columns[0]?.cards.slice(0, 2) ?? []) {
+    await editStoredBoard(page, (document) => archiveCard(document, card.id));
+  }
+  await page.reload();
 
   await chooseMenu(page, "toggleArchiveView");
-  const archived = await storedBoard();
+  const archived = await storedBoard(page);
   expect(archived.archivedCards).toHaveLength(2);
   const target = archived.archivedCards[0]?.title ?? "";
   await page.locator(".search").fill(target);
@@ -81,34 +95,41 @@ test("アーカイブでは、絞り込みに外れたカードを隠す", async
 
 test("JSON で書き出すと、読めるファイルができる", async ({ page }) => {
   await openBoard(page);
-  await chooseMenu(page, "exportBoardJson");
 
-  const path = await writtenPath(page);
-  expect(path.endsWith(".json")).toBe(true);
-  const written: unknown = JSON.parse(readFileSync(path, "utf8"));
-  expect(written).toHaveProperty("columns");
+  const written = await exported(page, "exportBoardJson");
+  expect(written.name.endsWith(".json")).toBe(true);
+  const parsed: unknown = JSON.parse(written.body);
+  expect(parsed).toHaveProperty("columns");
+  // 置いてある形の写しなので、カードの履歴まで入る（ADR 0045）。
+  expect(parsed).toHaveProperty("card_events");
 });
 
 test("Markdown で書き出すと、カラムとカードが出ている", async ({ page }) => {
   await openBoard(page);
-  const board = await storedBoard();
-  await chooseMenu(page, "exportBoardMarkdown");
+  const board = await storedBoard(page);
 
-  const path = await writtenPath(page);
-  expect(path.endsWith(".md")).toBe(true);
-  const written = readFileSync(path, "utf8");
-  expect(written).toContain(board.columns[0]?.name ?? "");
-  expect(written).toContain(board.columns[0]?.cards[0]?.title ?? "");
+  const written = await exported(page, "exportBoardMarkdown");
+  expect(written.name.endsWith(".md")).toBe(true);
+  expect(written.body).toContain(board.columns[0]?.name ?? "");
+  expect(written.body).toContain(board.columns[0]?.cards[0]?.title ?? "");
 });
 
-test("データベースをコピーすると、開けるファイルができる", async ({ page }) => {
+/// 控えは置いてあるものを丸ごと。
+///
+/// **この組み立てに SQLite のファイルはありません**（ADR 0036）。置いてあるのは
+/// 盤面の JSON なので、それがそのまま降りてきます。SQLite のファイルが開ける
+/// ことは Rust 側のテストが見ます（`a_backup_is_a_database_that_opens`）。
+test("控えを保存すると、置いてあるものが丸ごと降りてくる", async ({ page }) => {
   await openBoard(page);
-  await chooseMenu(page, "backupDatabase");
+  const board = await storedBoard(page);
 
-  const path = await writtenPath(page);
-  expect(path.endsWith(".sqlite3")).toBe(true);
-  // SQLite のファイルは先頭がこの文字列（開けることの、いちばん軽い確かめ方）。
-  expect(readFileSync(path).subarray(0, 15).toString("utf8")).toBe("SQLite format 3");
+  const receiving = page.waitForEvent("download");
+  await chooseMenu(page, "backupDatabase");
+  const download = await receiving;
+  const body = readFileSync(await download.path(), "utf8");
+
+  const parsed = JSON.parse(body) as { boards: { name: string }[] };
+  expect(parsed.boards.map((each) => each.name)).toContain(board.name);
 });
 
 // ---------------------------------------------------------------- 説明の Markdown
@@ -134,7 +155,7 @@ test("`**` で打った太字が、そのまま Markdown で保存される", as
   await page.locator(".save-card").click();
   await expect
     .poll(async () =>
-      (await storedBoard()).columns
+      (await storedBoard(page)).columns
         .flatMap((column) => column.cards)
         .find((card) => card.title === "太字のカード")?.description,
     )
@@ -162,7 +183,7 @@ test("箇条書きは、何も打たずに `Enter` を押すと終わる", async
   await page.locator(".save-card").click();
   await expect
     .poll(async () =>
-      (await storedBoard()).columns
+      (await storedBoard(page)).columns
         .flatMap((column) => column.cards)
         .find((card) => card.title === "箇条書きのカード")?.description,
     )
@@ -190,7 +211,7 @@ test("`- [ ]` はチェック項目になり、印を押すと `- [x]` で保存
   await page.locator(".save-card").click();
   await expect
     .poll(async () =>
-      (await storedBoard()).columns
+      (await storedBoard(page)).columns
         .flatMap((column) => column.cards)
         .find((card) => card.title === "チェックのカード")?.description,
     )

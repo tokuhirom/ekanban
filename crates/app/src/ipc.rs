@@ -18,7 +18,6 @@ use crate::capture::Registration;
 use crate::commands;
 use crate::error::AppError;
 use crate::events;
-use crate::shortcut::KeyPress;
 use crate::snapshot::QuickCaptureStatus;
 use crate::snapshot::{CaptureTarget, StartupState, ThemePreference};
 use crate::state::AppState;
@@ -249,14 +248,17 @@ pub fn quick_capture_status(registration: State<'_, Registration>) -> QuickCaptu
 }
 
 /// 割り当てを差し替える。`None` で解除。保存された形が返る。
+///
+/// **登録できたものだけを保存します**（`docs/DESIGN.md`「クイックキャプチャ」）。
+/// 受ける文字列を組み立てるのは画面です（`web/src/shell/shortcut.ts`）。
 #[tauri::command]
-pub fn set_quick_capture_shortcut_from_key(
+pub fn set_quick_capture_shortcut(
     app: AppHandle,
     state: State<'_, AppState>,
     registration: State<'_, Registration>,
-    press: Option<KeyPress>,
+    shortcut: Option<String>,
 ) -> Reply<Option<String>> {
-    crate::capture::set(&app, &state, &registration, press)
+    crate::capture::set(&app, &state, &registration, shortcut)
 }
 
 /// メニューに付いているキーの割り当てを、付け外しする。
@@ -286,14 +288,6 @@ pub fn set_capture_target(
     column_id: Option<ColumnId>,
 ) -> Reply<()> {
     commands::set_capture_target(&state, board_id.zip(column_id))
-}
-
-#[tauri::command]
-pub fn set_quick_capture_shortcut(
-    state: State<'_, AppState>,
-    shortcut: Option<String>,
-) -> Reply<()> {
-    commands::set_quick_capture_shortcut(&state, shortcut.as_deref())
 }
 
 // ---------------------------------------------------------------- 記録

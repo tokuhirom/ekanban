@@ -25,7 +25,6 @@ crates/
       store.rs        盤面の置き場所。SQLite と JSON の 2 つを 1 つの口に（ADR 0036）
       db/
         mod.rs        SQLite のスキーマ移行、読み書き、トランザクション
-  harness/        ekanban-harness: コマンドを HTTP に出す。開発とテスト専用
   app/            ekanban-app: Tauri のアプリ（実行ファイルは ekanban）
     tauri.conf.json ウィンドウ、CSP、バンドルの設定
     capabilities/   webview に許すもの。使うものだけを並べる
@@ -43,12 +42,15 @@ crates/
       snapshot.rs     起動のときに読むものと、覚えてある設定の形
       error.rs        失敗の伝え方。入力欄に返すか、ダイアログに出すか
       events.rs       Rust から webview への 3 つのイベント
+    examples/
+      manual_screenshot_seed.rs  マニュアルのスクリーンショット用のデータベースを作る
     tests/
       commands.rs     コマンドを外から呼んで、SQLite まで見るテスト
 web/             画面。TypeScript + React + Vite（ADR 0019）
   src/
-    ipc/          Rust を呼ぶ唯一の口。tauri・harness・wasm の 3 実装。
+    ipc/          置き場所を呼ぶ唯一の口。tauri・browser（localStorage）・wasm。
                   `types/` は ts-rs の生成物（手で書かない）
+    store/        ブラウザで動くときの置き場所（ADR 0041）。SQLite の代わり
     model/        盤面のモデル（ADR 0039）。採番・並べ替え・Undo・タグ・期限・検索
     state/        盤面の保持と、当てて保存する 1 本の経路（`run`）
     board/        サイドバー、ヘッダ、カラム、カード、D&D
@@ -56,17 +58,14 @@ web/             画面。TypeScript + React + Vite（ADR 0019）
       keyboard.ts   矢印での選択と、修飾キー＋矢印での移動
     shell/        webview だから自分で切るもの（右クリック、拡大縮小、スワイプ）
     styles.css    色のトークンと骨組み
-  e2e/            Playwright。ハーネス越しに Chromium と WebKit で動かす
+  e2e/            Playwright。Chromium と WebKit で動かす。プロセスは立てない
   demo/           ブラウザ版の入口（ADR 0035）。メニューバーもここから足す
   e2e-demo/       ブラウザ版の e2e。組み立ての違いだけを見る
-harness/         ekanban-harness: コマンドを HTTP に出す開発・テスト専用のバイナリ
-  examples/
-    manual_screenshot_seed.rs  マニュアルのスクリーンショット用のデータベースを作る
 web(crate)/      ekanban-web: 同じコマンドを wasm で動かす。ブラウザ版の中身
 ```
 
-- **`ekanban-core` に UI ツールキットを足しません。** `tauri` に依存しないことが、テストを GUI のランタイム無しで走らせ続ける条件であり、Tauri のアプリと開発用のハーネスが同じコードを使える条件でもあります（[設計の記録](DESIGN.md)「層の分け方」）。依存の依存から入り込むほうがありがちなので、解決した依存グラフを `script/check-core-independence` が CI で見ています
-- **`crates/app/src/commands.rs` に `tauri` は出てきません。** `ipc.rs` の `#[tauri::command]` は、その関数を呼ぶだけの包みです。開発用のハーネス（[設計の記録](DESIGN.md)「テスト」）が同じ関数を HTTP に出すので、**判断を包みの側に置かないことは設計そのもの**です
+- **`ekanban-core` に UI ツールキットを足しません。** `tauri` に依存しないことが、テストを GUI のランタイム無しで走らせ続ける条件です（[設計の記録](DESIGN.md)「層の分け方」）。依存の依存から入り込むほうがありがちなので、解決した依存グラフを `script/check-core-independence` が CI で見ています
+- **`crates/app/src/commands.rs` に `tauri` は出てきません。** `ipc.rs` の `#[tauri::command]` は、その関数を呼ぶだけの包みです。ブラウザだけで動く組み立て（`crates/web`）が同じ関数を使うので、**判断を包みの側に置かないことは設計そのもの**です
 - **D&D の挿入位置と、キーボードの割り当ては `web/src/board/dnd.ts` と `keyboard.ts` に置きます。** dnd-kit に渡すのは掴む・運ぶ・オートスクロールだけです（[ADR 0022](adr/0022-dnd-kit-core-for-drag-and-drop.md)）。盤面の意味を決めるところをライブラリに預けると、外せなくなります
 - **盤面の置き場所は 2 つ、モデルは 1 つです。** `store::Store` が口で、配るアプリは SQLite、ブラウザ版は JSON です（[ADR 0036](adr/0036-one-model-two-places-to-put-it.md)）。**`Store` に盤面の判断を書かないでください**——採番も並べ替えも Undo も `web/src/model/board.ts` にあります（[ADR 0039](adr/0039-the-board-model-moves-to-typescript.md)）。`cargo build -p ekanban-core --no-default-features` が、中核が SQLite に依らない層を持っていることの確かめ方です
 - **`crates/app` の `shell` feature を外すと、Tauri を知らない層だけが残ります。** ブラウザ版（`crates/web`、[ADR 0035](adr/0035-a-browser-build-of-the-real-core.md)）がそこを使います。`cargo build -p ekanban-app --no-default-features --target wasm32-unknown-unknown` が通ることが、「コマンドの層が Tauri を知らない」の実際の確かめ方です
@@ -193,16 +192,16 @@ app_state
 
 ## テスト
 
-テストは 4 つの層に分かれます（[ADR 0021](adr/0021-two-layer-testing-for-the-webview.md)）。
+テストは 4 つの層に分かれます（[ADR 0041](adr/0041-one-layer-of-screen-tests.md)）。
 
 | 層 | 何で | 何を担保するか |
 | --- | --- | --- |
-| 中核 | `cargo test` | モデル・SQLite・移行・控え。実装と同じモジュールの `#[cfg(test)]` に置き、データベースのテストは `tempfile` を使う |
-| コマンド | `crates/app/tests/commands.rs` | コマンドを外から呼び、**返るスナップショットと SQLite の中身の両方**を見る |
-| 画面 | Playwright ＋ `ekanban-harness` | 操作からデータベースまでを通した振る舞い |
-| 部品 | Vitest | 日付の表示、挿入位置の計算、キーの振り分けのような純粋な部分 |
+| 置き場所 | `cargo test` | SQLite・移行・控え・`Board::validate`。実装と同じモジュールの `#[cfg(test)]` に置き、データベースのテストは `tempfile` を使う |
+| コマンド | `crates/app/tests/commands.rs` | コマンドを外から呼び、**置き場所に何が入ったか**を見る |
+| 盤面のモデル | Vitest（`web/src/model/`） | 採番・並べ替え・Undo / Redo・アーカイブ・タグ・期限・検索 |
+| 画面 | Playwright | 操作から置き場所までを通した振る舞い |
 
-**画面のテストはハーネス越しに動かします。** `crates/harness` が `crates/app` のコマンドをそのまま HTTP に出すので、同じ画面がふつうのブラウザで動きます。**通っているのは本物の `ekanban-core`** です——偽物のバックエンドを TypeScript で書くと、テストの中でだけ正しいものができあがります（[ADR 0021](adr/0021-two-layer-testing-for-the-webview.md)）。
+**画面のテストは `npm` だけで回ります。** 盤面のモデルは画面と同じ TypeScript にあり（[ADR 0039](adr/0039-the-board-model-moves-to-typescript.md)）、置き場所もブラウザの中（`web/src/store/`）です。**Playwright が動かしているのは本物のコードそのもの**で、間に挟むものがありません。
 
 ```ts
 test("カードを足して保存すると、タイトルがデータベースに入る", async ({ page }) => {
@@ -212,14 +211,16 @@ test("カードを足して保存すると、タイトルがデータベース�
   await page.locator(".save-card").click();
 
   // 画面ではなく、保存されたほうを読み直す。
-  await expect.poll(storedTitles).toContain("牛乳を買う");
+  await expect.poll(() => storedTitles(page)).toContain("牛乳を買う");
 });
 ```
 
 書くときの決まりごと:
 
-- **確かめるのは画面とディスクの両方です。** `e2e/harness.ts` の `invoke()` がハーネスを直に叩いて盤面を読み直します。画面に出ているだけでは、保存の配線が抜けていても気づけません
-- **盤面はテストごとに作り直します。** 1 つのデータベースを使い回すと、前のテストが動かしたカードの位置に次のテストが引きずられます
+- **確かめるのは画面と置き場所の両方です。** `e2e/harness.ts` の `storedBoard(page)` が置き場所を読み直します。画面に出ているだけでは、保存の配線が抜けていても気づけません
+- **盤面はテストごとに蒔き直します**（`e2e/fixture.ts`）。1 つの置き場所を使い回すと、前のテストが動かしたカードの位置に次のテストが引きずられます
+- **「ほかの窓が書いた」は、本当にもう 1 つの窓から書きます。** 同じ生まれのページが置き場所を書き換えると、ブラウザが `storage` で教えてくれます
+- **SQLite に届くところは Rust 側のテストが見ます。** ブラウザの置き場所は本物の SQLite ではないので、書き込みの失敗の出し分けはそちらの担当です
 - **`sleep` で待ちません。** `expect.poll` と `toBeVisible` の待ちを使います
 - **走らせるのは Chromium と WebKit の 2 つ**です。本物の webview は 3 つですが、エンジンは 2 系統しかありません（[ADR 0023](adr/0023-verifying-the-webview-engines.md)）
 
@@ -246,7 +247,7 @@ test("カードを足して保存すると、タイトルがデータベース�
 | `make check` | CI と同じ fmt / clippy / test / 型 / 依存 / 画面側の確認を走らせる |
 | `make types` | Rust の型から TypeScript の型を書き出す |
 | `make web-check` | 画面側の `tsc --noEmit` / ESLint / Vitest |
-| `make e2e` | ハーネス越しに Chromium と WebKit で画面を動かす |
+| `make e2e` | Chromium と WebKit で画面を動かす |
 | `make screenshots` | マニュアルのスクリーンショットを撮り直す（Linux/X11 のみ） |
 | `make icon` | 3 つの OS 分のアイコンを `assets/icon.png` から生成する（`tauri icon`） |
 | `make bundle` | この OS の配布物を作る（macOS は `.app` と `.dmg`、Linux は `.deb` と `.AppImage`、Windows はインストーラ） |
@@ -301,7 +302,7 @@ DISPLAY=:99 EKANBAN_DATABASE=$(mktemp -d)/board.sqlite3 ./target/debug/ekanban &
 DISPLAY=:99 import -window root shot.png
 ```
 
-**ここでしか確かめられないものがあります**——OS のメニューバー、保存ダイアログ、グローバルホットキー、キャプチャの窓。ハーネス越しの Playwright にはどれも出てきません。
+**ここでしか確かめられないものがあります**——OS のメニューバー、保存ダイアログ、グローバルホットキー、窓の矩形。ブラウザで動く Playwright にはどれも出てきません（[ADR 0041](adr/0041-one-layer-of-screen-tests.md)）。
 
 デスクトップで動いているものに紛れ込ませないためです。データベースも普段使いのものとは分けます。1 つのデータベースを開けるのは 1 プロセスだけ（[ADR 0004](adr/0004-one-process-per-database.md)）なので、同じものを指すと後から起動したほうが弾かれます。
 

@@ -28,9 +28,7 @@ web-check: web-install ## 画面側の型検査・lint・単体テスト
 	npm --prefix web run lint
 	npm --prefix web run test
 
-e2e: web-install ## ハーネスを上げて Playwright を走らせる (Chromium と WebKit)
-	cargo build -p ekanban-harness --example manual_screenshot_seed
-	cargo build -p ekanban-harness
+e2e: web-install ## Playwright を走らせる (Chromium と WebKit)
 	npm --prefix web run e2e
 
 web-demo: web-install ## ブラウザ版を組み立てる (web/dist-demo/、ADR 0035)

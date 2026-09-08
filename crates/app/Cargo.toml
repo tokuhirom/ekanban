@@ -59,6 +59,9 @@ tauri-plugin-global-shortcut = { workspace = true, optional = true }
 tauri-plugin-opener = { workspace = true, optional = true }
 
 [dev-dependencies]
+# マニュアルのスクリーンショット用の盤面を組む example が chrono を使います
+# （`examples/manual_screenshot_seed.rs`）。
+chrono.workspace = true
 ekanban-core = { workspace = true, features = ["sqlite", "test-fixtures"] }
 tempfile.workspace = true
 

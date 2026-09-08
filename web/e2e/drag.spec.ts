@@ -4,7 +4,7 @@
 // 話で、エンジンでは変わらないので、ここでは測りません（Tauri で実測済み）。
 // 条件 8 が問うているのは**エンジンの系統ごとの差**で、それがここで出ます。
 //
-// 動かしているのは本物の webview ではありません（ADR 0021）。platform 層の差
+// 動かしているのは本物の webview ではありません（ADR 0023）。platform 層の差
 // ——macOS の慣性スクロールや跳ね返り——は、ここでは出ません。
 
 import { expect, test, type Locator, type Page } from "@playwright/test";

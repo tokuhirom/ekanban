@@ -161,7 +161,6 @@ pub fn run() {
             ipc::quick_capture_status,
             ipc::set_menu_accelerators_active,
             ipc::set_quick_capture_shortcut,
-            ipc::set_quick_capture_shortcut_from_key,
             ipc::close_capture_window,
             ipc::log_frontend_error,
         ])

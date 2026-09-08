@@ -1,7 +1,22 @@
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+
+/// 動いているアプリの版。
+///
+/// **出どころは根の `Cargo.toml` の 1 行だけ**です（`docs/DESIGN.md`「アプリが
+/// 伝えること」、`.tagpr`）。配るアプリでは Rust が `CARGO_PKG_VERSION` から
+/// 渡します。ブラウザだけで動く組み立てには渡す相手がいないので、組み立てる
+/// ときに同じ行を読んで焼き込みます。`package.json` の版はアプリの版では
+/// ないので、そちらは見ません。
+function appVersion(): string {
+  const manifest = readFileSync(resolve(import.meta.dirname, "..", "Cargo.toml"), "utf8");
+  const found = /^version = "([^"]+)"/m.exec(manifest);
+  if (found?.[1] === undefined) throw new Error("Cargo.toml に version の行がありません");
+  return found[1];
+}
 
 // Tauri が開発サーバを決め打ちで見に行くので、ポートは固定します
 // (`crates/app/tauri.conf.json` の `devUrl`)。空いていなければ黙って別の
@@ -14,6 +29,7 @@ import react from "@vitejs/plugin-react";
 export default defineConfig({
   plugins: [react()],
   clearScreen: false,
+  define: { __EKANBAN_VERSION__: JSON.stringify(appVersion()) },
   server: { host: "127.0.0.1", port: 1420, strictPort: true },
   build: {
     outDir: "dist",

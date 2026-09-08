@@ -18,7 +18,7 @@ use tauri_plugin_global_shortcut::GlobalShortcutExt as _;
 use crate::commands;
 use crate::error::{AppError, ErrorKind};
 use crate::run::BOARD_WINDOW;
-use crate::shortcut::{platform_support, KeyPress, Shortcut};
+use crate::shortcut::{platform_support, Shortcut};
 use crate::snapshot::QuickCaptureStatus;
 use crate::state::AppState;
 
@@ -97,18 +97,24 @@ fn register<R: Runtime>(app: &AppHandle<R>, shortcut: &Shortcut) -> Result<(), S
     Ok(())
 }
 
-/// 画面から届いた押しかたを、割り当てとして受け取る。
+/// 画面が決めた割り当てを受け取り、OS に登録する。
+///
+/// **文字列にするのは画面**です（`web/src/shell/shortcut.ts`、[ADR 0039]）。
+/// 受け付けられない組み合わせはそちらで断るので、ここに来るのは形になっている
+/// ものだけです——それでも読み直すのは、この関数が唯一の登録の入口だからです。
 ///
 /// **登録に成功してから保存します**（`docs/DESIGN.md`「クイックキャプチャ」）。順番が逆だと、次の起動で黙って
 /// 失敗する割り当てが残ります。`None` で解除します。
+///
+/// [ADR 0039]: ../../../docs/adr/0039-the-board-model-moves-to-typescript.md
 pub(crate) fn set<R: Runtime>(
     app: &AppHandle<R>,
     state: &AppState,
     registration: &Registration,
-    press: Option<KeyPress>,
+    shortcut: Option<String>,
 ) -> Result<Option<String>, AppError> {
-    let shortcut = match press {
-        Some(press) => Some(Shortcut::from_key_press(&press).map_err(|error| {
+    let shortcut = match shortcut {
+        Some(shortcut) => Some(Shortcut::parse(&shortcut).map_err(|error| {
             AppError::new(
                 ErrorKind::Shortcut,
                 "ショートカットを割り当てられません",

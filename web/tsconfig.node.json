@@ -17,5 +17,13 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["e2e", "e2e-demo", "playwright.config.ts", "playwright.demo.config.ts"]
+  // `e2e/` は `src/` を直に読みます（盤面のモデルと置き場所、ADR 0041）。
+  // 焼き込みの宣言（`__EKANBAN_VERSION__`）もそこから辿るので、こちらにも入れます。
+  "include": [
+    "e2e",
+    "e2e-demo",
+    "playwright.config.ts",
+    "playwright.demo.config.ts",
+    "src/vite-env.d.ts"
+  ]
 }

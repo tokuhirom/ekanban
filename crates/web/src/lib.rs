@@ -2,7 +2,7 @@
 //!
 //! `crates/app` のコマンドを `wasm32-unknown-unknown` の上で動かし、盤面を
 //! **JSON にして `localStorage` に置きます**（`ekanban_core::store::JsonStore`、
-//! [ADR 0036]）。答えているのは本物の `ekanban-core` なので、[ADR 0021] の
+//! [ADR 0036]）。答えているのは本物の `ekanban-core` なので、[ADR 0035] の
 //! 「偽物のバックエンドを TypeScript で書かない」がブラウザでも成り立ちます。
 //!
 //! **SQLite はここに積みません。** `wasm32-unknown-unknown` に組んだ SQLite
@@ -19,7 +19,6 @@
 //! 中でだけ正しいものが生まれます。ここにあるのは環境の差だけです——保存先、
 //! ファイルの持ち出し方、URL の開き方。
 //!
-//! [ADR 0021]: ../../../docs/adr/0021-two-layer-testing-for-the-webview.md
 //! [ADR 0035]: ../../../docs/adr/0035-a-browser-build-of-the-real-core.md
 //! [ADR 0036]: ../../../docs/adr/0036-one-model-two-places-to-put-it.md
 

@@ -10,7 +10,6 @@ import type { BoardDocument } from "./types/BoardDocument";
 import type { CardEvent } from "./types/CardEvent";
 import type { SavedBoard } from "./types/SavedBoard";
 import type { CaptureTarget } from "./types/CaptureTarget";
-import type { KeyPress } from "./types/KeyPress";
 import type { FilterState } from "./types/FilterState";
 import type { QuickCaptureStatus } from "./types/QuickCaptureStatus";
 import type { StartupState } from "./types/StartupState";
@@ -96,8 +95,12 @@ export interface Ipc {
    * アクセラレータが webview より先に押されたキーを取ってしまいます。
    */
   setMenuAcceleratorsActive(active: boolean): Promise<void>;
-  /** 押されたキーを割り当てにする。`null` で解除。保存された形が返る。 */
-  setQuickCaptureShortcut(press: KeyPress | null): Promise<string | null>;
+  /** 割り当てを差し替える。`null` で解除。保存された形が返る。
+   *
+   * 受けるのは `ctrl-shift-n` の形の文字列で、**組み立てるのは画面**です
+   * （`shell/shortcut.ts`、ADR 0039）。ここから先は OS への登録で、
+   * 登録できなければ保存しません（`docs/DESIGN.md`「クイックキャプチャ」）。 */
+  setQuickCaptureShortcut(shortcut: string | null): Promise<string | null>;
   /** キャプチャの窓を閉じる。`focusBoard` でボードを前に出す（ADR 0012）。 */
   closeCaptureWindow(focusBoard: boolean): Promise<void>;
   /** ほかの窓が盤面を書いたときに届く（`docs/DESIGN.md`「コマンドとイベント」）。

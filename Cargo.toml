@@ -1,14 +1,16 @@
 # ワークスペースのルート。ここにはパッケージを置かない。
 #
-# `crates/core` が盤面のモデル・SQLite・控え・置き場所を持ち、UI ツールキットに
-# 依存しない。`crates/app` が Tauri のアプリ。`crates/harness` は開発とテスト
-# 専用で、そのコマンドを HTTP に出す。`crates/web` は同じコマンドを
+# `crates/core` が盤面の形・SQLite・控え・置き場所を持ち、UI ツールキットに
+# 依存しない。`crates/app` が Tauri のアプリ。`crates/web` は同じコマンドを
 # `wasm32-unknown-unknown` で動かす、ブラウザだけの組み立て（ADR 0035）。
+#
+# 画面のテストは `npm` だけで回ります（ADR 0041）——盤面のモデルは
+# `web/src/model/` にあり、置き場所もブラウザの中なので、間に立てるものが
+# ありません。
 [workspace]
 resolver = "2"
-members = ["crates/app", "crates/core", "crates/harness", "crates/web"]
-# `cargo run` にアプリを選ばせる。これが無いと「どのバイナリか決められない」と
-# 断られます (`ekanban` と `ekanban-harness` の 2 つがあるため)。
+members = ["crates/app", "crates/core", "crates/web"]
+# `cargo run` にアプリを選ばせる。
 #
 # **`--workspace` を省くと、ここに書いたものだけが対象になります。** `cargo test`
 # だけを打つと `ekanban-core` のテストが走りません。Makefile と CI は全部

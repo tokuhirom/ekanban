@@ -4,17 +4,22 @@
 // **メニューバーそのものはここに出ません。** 描くのは OS で、押されたことは
 // Rust が `app:action` で流します。ここで確かめるのは、その先——受け取った
 // webview が何をするかです。ハーネスには `window.ekanbanMenu` という口だけが
-// 開いていて（`src/ipc/harness.ts`）、押されたことにできます。
+// 開いていて（`src/ipc/browser.ts`）、押されたことにできます。
 //
 // 本物のメニューが出て、押すとこの口に届くところは、殻の煙テストの担当です
 // （`docs/DESIGN.md`「テスト」）。
 
 import { expect, test, type Page } from "@playwright/test";
 
-import { openBoard, startHarness, stopHarness, storedBoard, storedStartup } from "./harness";
+import { openBoard, startHarness, stopHarness, storedBoard, storedSetting } from "./harness";
+import {
+  FILTER_SEARCH,
+  SIDEBAR_COLLAPSED,
+  THEME_PREFERENCE,
+} from "../src/store/keys";
 
 // `window.ekanbanMenu` の宣言を読み込むためだけの取り込み（値は使わない）。
-import type {} from "../src/ipc/harness";
+import type {} from "../src/ipc/browser";
 import type { AppAction } from "../src/ipc/types/AppAction";
 
 test.beforeEach(startHarness);
@@ -27,8 +32,8 @@ async function chooseMenu(page: Page, action: AppAction): Promise<void> {
   }, action);
 }
 
-async function storedTitles(): Promise<string[]> {
-  const board = await storedBoard();
+async function storedTitles(page: Page): Promise<string[]> {
+  const board = await storedBoard(page);
   return board.columns.flatMap((column) => column.cards.map((card) => card.title));
 }
 
@@ -79,7 +84,7 @@ test("「検索にフォーカス」と「検索をクリア」が検索欄に�
   await chooseMenu(page, "clearSearch");
   await expect(page.locator(".search")).toHaveValue("");
   // 絞り込みは `app_state` に残る。画面だけ消して覚えたままにしない。
-  await expect.poll(async () => (await storedStartup()).filter.search).toBe("");
+  await expect.poll(() => storedSetting(page, FILTER_SEARCH)).toBe("");
 
   await chooseMenu(page, "focusSearch");
   await expect(page.locator(".search")).toBeFocused();
@@ -90,7 +95,7 @@ test("「ボード一覧の表示を切り替え」で畳み、次の起動で�
   await chooseMenu(page, "toggleBoardList");
 
   await expect(page.locator(".sidebar")).toHaveAttribute("data-collapsed", "true");
-  await expect.poll(async () => (await storedStartup()).sidebarCollapsed).toBe(true);
+  await expect.poll(() => storedSetting(page, SIDEBAR_COLLAPSED)).toBe("true");
 });
 
 test("テーマを選ぶと画面が切り替わり、覚えられる", async ({ page }) => {
@@ -98,7 +103,7 @@ test("テーマを選ぶと画面が切り替わり、覚えられる", async ({
 
   await chooseMenu(page, "useDarkTheme");
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
-  await expect.poll(async () => (await storedStartup()).theme).toBe("dark");
+  await expect.poll(() => storedSetting(page, THEME_PREFERENCE)).toBe("dark");
 
   await chooseMenu(page, "useLightTheme");
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
@@ -106,7 +111,7 @@ test("テーマを選ぶと画面が切り替わり、覚えられる", async ({
   // 「システムに合わせる」は属性を外すだけ。判定は CSS が持つ。
   await chooseMenu(page, "useSystemTheme");
   await expect(page.locator("html")).not.toHaveAttribute("data-theme", /.*/);
-  await expect.poll(async () => (await storedStartup()).theme).toBe("system");
+  await expect.poll(() => storedSetting(page, THEME_PREFERENCE)).toBe("system");
 });
 
 test("「元に戻す」は盤面を巻き戻し、「やり直す」で戻る", async ({ page }) => {
@@ -114,13 +119,13 @@ test("「元に戻す」は盤面を巻き戻し、「やり直す」で戻る",
   await page.locator(".column").first().locator(".add-card").click();
   await page.locator(".card-title-input").fill("取り消されるカード");
   await page.locator(".save-card").click();
-  await expect.poll(storedTitles).toContain("取り消されるカード");
+  await expect.poll(() => storedTitles(page)).toContain("取り消されるカード");
 
   await chooseMenu(page, "undo");
-  await expect.poll(storedTitles).not.toContain("取り消されるカード");
+  await expect.poll(() => storedTitles(page)).not.toContain("取り消されるカード");
 
   await chooseMenu(page, "redo");
-  await expect.poll(storedTitles).toContain("取り消されるカード");
+  await expect.poll(() => storedTitles(page)).toContain("取り消されるカード");
 });
 
 test("入力欄で Ctrl+Z を打っても、盤面は巻き戻らない", async ({ page }) => {
@@ -128,7 +133,7 @@ test("入力欄で Ctrl+Z を打っても、盤面は巻き戻らない", async 
   await page.locator(".column").first().locator(".add-card").click();
   await page.locator(".card-title-input").fill("残るカード");
   await page.locator(".save-card").click();
-  await expect.poll(storedTitles).toContain("残るカード");
+  await expect.poll(() => storedTitles(page)).toContain("残るカード");
 
   // 説明を打っている最中の取り消しは、その欄のもの。盤面まで戻ると、書いて
   // いた行が消えたように見える（`docs/DESIGN.md`「メニューとキー割り当て」）。
@@ -137,7 +142,7 @@ test("入力欄で Ctrl+Z を打っても、盤面は巻き戻らない", async 
   await page.locator(".card-description-input").press("ControlOrMeta+z");
 
   await expect(page.locator(".card-panel")).toBeVisible();
-  expect(await storedTitles()).toContain("残るカード");
+  expect(await storedTitles(page)).toContain("残るカード");
 });
 
 test("盤面の上の Ctrl+Z は盤面を巻き戻す", async ({ page }) => {
@@ -145,22 +150,24 @@ test("盤面の上の Ctrl+Z は盤面を巻き戻す", async ({ page }) => {
   await page.locator(".column").first().locator(".add-card").click();
   await page.locator(".card-title-input").fill("キーで取り消すカード");
   await page.locator(".save-card").click();
-  await expect.poll(storedTitles).toContain("キーで取り消すカード");
+  await expect.poll(() => storedTitles(page)).toContain("キーで取り消すカード");
 
   await page.locator(".board-content").click({ position: { x: 5, y: 5 } });
   await page.keyboard.press("ControlOrMeta+z");
-  await expect.poll(storedTitles).not.toContain("キーで取り消すカード");
+  await expect.poll(() => storedTitles(page)).not.toContain("キーで取り消すカード");
 });
 
-/// 「ekanban について」に版とデータベースの場所が出る（#147）。パスは
-/// ハーネスが開いている一時ファイルなので、ここで実物と突き合わせられる。
+/// 「ekanban について」に版とデータベースの場所が出る（#147）。
+///
+/// 版は組み立てるときに `Cargo.toml` から焼き込む 1 つだけ（`vite.config.ts`）。
+/// 置き場所の名前は、この組み立てではブラウザの `localStorage` になる。
 test("「ekanban について」に版と、開いているデータベースのパスが出る", async ({ page }) => {
   await openBoard(page);
-  const startup = await storedStartup();
 
   await chooseMenu(page, "about");
   const dialog = page.locator(".dialog");
-  await expect(dialog.locator(".dialog-title")).toHaveText(`ekanban v${startup.version}`);
-  await expect(dialog.locator(".dialog-detail")).toContainText(startup.databasePath);
-  await expect(dialog.getByRole("button", { name: "場所を開く" })).toBeVisible();
+  await expect(dialog.locator(".dialog-title")).toHaveText(/^ekanban v\d+\.\d+\.\d+$/);
+  await expect(dialog.locator(".dialog-detail")).toContainText("localStorage");
+  // 開く相手（OS のファイル管理）がいない組み立てなので、行き先は出さない。
+  await expect(dialog.getByRole("button", { name: "場所を開く" })).toHaveCount(0);
 });

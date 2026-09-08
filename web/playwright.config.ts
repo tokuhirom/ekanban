@@ -4,7 +4,7 @@ import { defineConfig, devices } from "@playwright/test";
 //
 // **ここで動かすのは本物の webview ではありません。** Playwright が繋がるのは
 // Chromium と WebKit であって、WebView2・WKWebView・WebKitGTK ではない
-// （ADR 0021）。それでも動かすのは、**エンジンの系統**が 2 つしかないから
+// （ADR 0023）。それでも動かすのは、**エンジンの系統**が 2 つしかないから
 // です——WebView2 は Chromium、WKWebView と WebKitGTK は WebKit。系統ごとの
 // 差はここで出ます。出ないのは各 platform 層の差（macOS の慣性スクロールや
 // ゴムのような跳ね返り）で、そこは手での確認に残ります。
@@ -14,8 +14,8 @@ export default defineConfig({
   workers: 1,
   reporter: process.env.CI ? "list" : "line",
   use: { baseURL: "http://127.0.0.1:1420" },
-  // 画面を出すのは Vite。コマンドを出すのは `ekanban-harness` で、そちらは
-  // テストの中で盤面ごとに上げ下げします（`e2e/drag.spec.ts`）。
+  // 画面を出すのは Vite だけです。**ほかにプロセスはありません**（ADR 0041）
+  // ——盤面のモデルは画面と同じ TypeScript にあり、置き場所もブラウザの中です。
   webServer: {
     command: "npm run dev",
     // `vite.config.ts` が `127.0.0.1` に結んでいます。`localhost` と書くと、

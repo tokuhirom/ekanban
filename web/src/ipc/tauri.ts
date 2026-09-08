@@ -88,8 +88,8 @@ export const tauriIpc: Ipc = {
   setMenuAcceleratorsActive: async (active) => {
     await invoke("set_menu_accelerators_active", { active });
   },
-  setQuickCaptureShortcut: (press) =>
-    invoke<string | null>("set_quick_capture_shortcut_from_key", { press }),
+  setQuickCaptureShortcut: (shortcut) =>
+    invoke<string | null>("set_quick_capture_shortcut", { shortcut }),
   closeCaptureWindow: async (focusBoard) => {
     await invoke("close_capture_window", { focusBoard });
   },
