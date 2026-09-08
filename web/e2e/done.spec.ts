@@ -44,10 +44,14 @@ test("完了扱いにすると、印が出て、カードが沈み、期限を�
   const first = page.locator(".column").first();
   const overdue = first.locator(".card").first();
 
-  // 立てる前。期限切れは赤く、件数にも入っている。
+  // 立てる前。期限切れは赤く、一覧の件数にも入っている。
+  //
+  // **件数は画面で見ます**（ADR 0039）。数えるのが webview になったので、
+  // 保存された盤面を読んでも件数は入っていません——入っているのは、数える
+  // 材料のほうです。
   await expect(overdue.locator(".card-due")).toHaveAttribute("data-tone", "danger");
   await expect(overdue.locator(".card-due")).toContainText("日超過");
-  expect((await storedSnapshot()).boards[0]?.due.overdue).toBeGreaterThan(0);
+  await expect(page.locator(".due-jump[data-tone='danger']")).toHaveCount(1);
 
   await toggleDone(page, 0, "完了扱いにする");
 
@@ -66,7 +70,6 @@ test("完了扱いにすると、印が出て、カードが沈み、期限を�
 
   const after = await storedSnapshot();
   expect(after.board.columns[0]?.done).toBe(true);
-  expect(after.boards[0]?.due.overdue).toBe(0);
   await expect(page.locator(".due-jump[data-tone='danger']")).toHaveCount(0);
 });
 
@@ -93,7 +96,7 @@ test("完了扱いは何本でも立てられ、やめれば元に戻る", async
   );
   const cleared = await storedSnapshot();
   expect(cleared.board.columns[0]?.done).toBe(false);
-  expect(cleared.boards[0]?.due.overdue).toBeGreaterThan(0);
+  await expect(page.locator(".due-jump[data-tone='danger']")).toHaveCount(1);
 });
 
 test("完了扱いにした 1 手は、Undo で戻る", async ({ page }) => {

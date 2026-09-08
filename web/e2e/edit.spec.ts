@@ -9,6 +9,7 @@
 
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
+import { localDay } from "../src/state/day";
 import { invoke, openBoard, startHarness, stopHarness } from "./harness";
 
 import type { Snapshot } from "../src/ipc/types/Snapshot";
@@ -478,7 +479,7 @@ test("右クリックから期限を当てて、Undo 1 回で戻せる", async (
     .find((each) => each.id === cardId)?.dueDate;
 
   // 「明日」は Rust が返した `Snapshot.today` から数える（ブラウザの時計ではなく）。
-  const today = ((await (await invoke("snapshot")).json()) as Snapshot).today;
+  const today = localDay(new Date());
   const tomorrow = new Date(Date.parse(`${today}T00:00:00Z`) + 86_400_000)
     .toISOString()
     .slice(0, 10);
@@ -551,7 +552,7 @@ test("「明日」と打つと、翌日の期限が保存される", async ({ pa
     await page.locator(".column").first().locator(".card").first().getAttribute("data-card"),
   );
 
-  const today = ((await (await invoke("snapshot")).json()) as Snapshot).today;
+  const today = localDay(new Date());
   const tomorrow = new Date(Date.parse(`${today}T00:00:00Z`) + 86_400_000)
     .toISOString()
     .slice(0, 10);

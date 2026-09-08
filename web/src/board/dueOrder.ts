@@ -5,7 +5,7 @@
 // （`docs/DESIGN.md`「絞り込みと検索」）。
 
 import type { Board } from "../ipc/types/Board";
-import type { DueStatus } from "../ipc/types/DueStatus";
+import type { DueStatus } from "../model/due";
 
 /** ボード一覧が数えている 2 つの件数（`DueCounts`）に対応する。 */
 export type DueKind = "overdue" | "today";

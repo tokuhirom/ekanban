@@ -7,12 +7,10 @@
 
 use std::path::Path;
 
-use chrono::{Local, NaiveDate, Utc};
+use chrono::{NaiveDate, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
 
-use crate::model::{
-    Board, BoardId, BoardSummary, Card, ChecklistItem, Column, ColumnId, DueCounts, Tag,
-};
+use crate::model::{Board, BoardId, BoardSummary, Card, ChecklistItem, Column, ColumnId, Tag};
 pub use crate::store::{FilterState, StoredDocument, WindowBoundsState};
 
 use crate::store::{
@@ -69,52 +67,30 @@ impl Database {
         self.load_board_by_id(id)
     }
 
-    pub fn load_boards(&self) -> Result<Vec<BoardSummary>, StoreError> {
-        self.load_boards_as_of(Local::now().date_naive())
-    }
-
-    /// ボード一覧。各行に出す期限の件数まで含めて 1 回のクエリで読む。
+    /// ボード一覧。**名前と並びだけ**です。
     ///
-    /// 件数をアプリ側で数えるにはボードを 1 つずつ開くことになり、ボードが増える
-    /// ほど一覧が重くなる。数えるのは SQL の仕事にする（受け入れ条件「ボードが
-    /// 増えても一覧が重くならない」#62）。
-    ///
-    /// 期限は `'YYYY-MM-DD'` の `TEXT` なので、文字列の大小がそのまま日付の前後に
-    /// なる。アーカイブ済みのカードと、終わったものの置き場（`columns.done`、
-    /// [ADR 0038]）にあるカードは数えない。
+    /// 期限の件数はここで数えません（[ADR 0039]）——盤面を持つのは webview で、
+    /// 数えるのに要る材料はそちらにあります（`web/src/model/due.ts`）。数える
+    /// 場所が 1 つになったので、[ADR 0038] が気にしていた「3 か所を同じ条件に
+    /// 保つ」も要らなくなりました。
     ///
     /// [ADR 0038]: ../../../../docs/adr/0038-a-column-that-means-done.md
-    pub fn load_boards_as_of(&self, today: NaiveDate) -> Result<Vec<BoardSummary>, StoreError> {
-        let today = today.format("%Y-%m-%d").to_string();
-        let mut statement = self.connection.prepare(
-            "SELECT boards.id, boards.name, boards.created_at, boards.updated_at,
-                    COALESCE(SUM(CASE WHEN cards.due_date < ?1 THEN 1 ELSE 0 END), 0),
-                    COALESCE(SUM(CASE WHEN cards.due_date = ?1 THEN 1 ELSE 0 END), 0)
-             FROM boards
-             LEFT JOIN columns ON columns.board_id = boards.id
-                              AND columns.done = 0
-             LEFT JOIN cards ON cards.column_id = columns.id
-                            AND cards.archived_at IS NULL
-                            AND cards.due_date IS NOT NULL
-             GROUP BY boards.id, boards.name, boards.created_at, boards.updated_at
-             ORDER BY boards.id",
-        )?;
+    /// [ADR 0039]: ../../../../docs/adr/0039-the-board-model-moves-to-typescript.md
+    pub fn load_boards(&self) -> Result<Vec<BoardSummary>, StoreError> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT id, name, created_at, updated_at FROM boards ORDER BY id")?;
         let summaries = statement
-            .query_map(params![today], |row| {
+            .query_map([], |row| {
                 Ok(BoardSummary {
                     id: row.get(0)?,
                     name: row.get(1)?,
                     created_at: row.get(2)?,
                     updated_at: row.get(3)?,
-                    due: DueCounts {
-                        overdue: row.get::<_, i64>(4)? as usize,
-                        today: row.get::<_, i64>(5)? as usize,
-                    },
                 })
             })?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(StoreError::from);
-        summaries
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(summaries)
     }
 
     pub fn load_last_board_id(&self) -> Result<Option<BoardId>, StoreError> {
@@ -1432,7 +1408,7 @@ mod tests {
         board_scoped_id, save_board_snapshot, Database, FilterState, WindowBoundsState,
         CURRENT_SCHEMA_VERSION,
     };
-    use crate::model::{Board, ChecklistItemDraft, DueCounts, TagId};
+    use crate::model::{Board, ChecklistItemDraft, TagId};
     use crate::MAX_SAFE_JS_INTEGER;
 
     /// カードの入ったボードを持つデータベースを開く。
@@ -1589,16 +1565,14 @@ mod tests {
         first.archive_card(archived).unwrap();
         database.save_board(&mut first).unwrap();
 
-        // カードの無いボードは 0 件。LEFT JOIN で行ごと落ちないこと。
         let second = database.create_board("仕事").unwrap();
 
-        let summaries = database.load_boards_as_of(today).unwrap();
+        // 名前と並びだけを返す。件数は webview が数える（ADR 0039）。
+        let summaries = database.load_boards().unwrap();
         assert_eq!(summaries.len(), 2);
         assert_eq!(summaries[0].id, first.id);
-        assert_eq!(summaries[0].due.overdue, 1, "only the past due date counts");
-        assert_eq!(summaries[0].due.today, 1);
+        assert_eq!(summaries[0].name, first.name);
         assert_eq!(summaries[1].id, second.id);
-        assert_eq!(summaries[1].due, DueCounts::default());
     }
 
     #[test]
@@ -2228,29 +2202,6 @@ mod tests {
         reloaded.set_column_done(column_id, false).unwrap();
         database.save_board(&mut reloaded).unwrap();
         assert!(!database.load_board().unwrap().columns[2].done);
-    }
-
-    #[test]
-    fn leaves_finished_cards_out_of_the_board_list_due_counts() {
-        let directory = tempdir().unwrap();
-        let path = directory.path().join("board.sqlite3");
-        let mut database = open_with_cards(&path);
-        let today = NaiveDate::from_ymd_opt(2026, 9, 5).unwrap();
-        let mut board = database.load_board().unwrap();
-        let column_id = board.columns[0].id;
-        let overdue = board.add_card(column_id, "過ぎている", "").unwrap();
-        board
-            .set_card_due_date(overdue, NaiveDate::from_ymd_opt(2026, 9, 4))
-            .unwrap();
-        database.save_board(&mut board).unwrap();
-        assert_eq!(database.load_boards_as_of(today).unwrap()[0].due.overdue, 1);
-
-        board.set_column_done(column_id, true).unwrap();
-        database.save_board(&mut board).unwrap();
-
-        // SQL の数え方と `Board::due_counts` を同じ条件に保つ（ADR 0038）。
-        assert_eq!(database.load_boards_as_of(today).unwrap()[0].due.overdue, 0);
-        assert!(board.due_counts(today).is_empty());
     }
 
     #[test]

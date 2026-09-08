@@ -2,7 +2,7 @@ import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 
 import type { Card as CardData } from "../ipc/types/Card";
-import type { DueStatus } from "../ipc/types/DueStatus";
+import type { DueStatus } from "../model/due";
 import type { Tag } from "../ipc/types/Tag";
 import { tagChipStyle } from "../panel/tags";
 import { handleId } from "./dnd";

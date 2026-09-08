@@ -37,8 +37,7 @@ pub use menu::{Action, AppAction, WindowAction};
 #[cfg(feature = "shell")]
 pub use run::run;
 pub use snapshot::{
-    CaptureTarget, CardDueStatus, Platform, QuickCaptureStatus, Snapshot, StartupState,
-    ThemePreference,
+    CaptureTarget, Platform, QuickCaptureStatus, Snapshot, StartupState, ThemePreference,
 };
 pub use state::AppState;
 

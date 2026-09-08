@@ -90,8 +90,6 @@ mod tests {
                 model::ChecklistItemDraft::inline(&config),
             ),
             ("Column", model::Column::inline(&config)),
-            ("DueCounts", model::DueCounts::inline(&config)),
-            ("DueStatus", model::DueStatus::inline(&config)),
             ("FilterState", store::FilterState::inline(&config)),
             ("Tag", model::Tag::inline(&config)),
             (

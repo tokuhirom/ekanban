@@ -5,8 +5,7 @@
 //! なります。大きさが問題になったら、そのときに測ってから、高頻度のものだけ
 //! 差分に落とします。
 
-use chrono::NaiveDate;
-use ekanban_core::model::{due_status, Board, BoardId, BoardSummary, CardId, ColumnId, DueStatus};
+use ekanban_core::model::{Board, BoardId, BoardSummary, ColumnId};
 use ekanban_core::store::WindowBoundsState;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -21,20 +20,6 @@ pub struct Snapshot {
     pub boards: Vec<BoardSummary>,
     pub can_undo: bool,
     pub can_redo: bool,
-    /// 期限を持つカードの、いま時点での状態。
-    ///
-    /// `due_status` は `model.rs` の純粋関数で、判定は Rust に残します（`docs/DESIGN.md`「絞り込みと検索」）。
-    /// カードそのものには載せられません——`Card` はデータベースから来るもので、
-    /// 「今日が何日か」を知らないからです。
-    ///
-    /// **日付をまたぐと古くなります。** 開きっぱなしで日が変わると、この判定は
-    /// 昨日のものになります。`today` を一緒に返すのはそのためで、webview は
-    /// 手元の日付とこれを比べ、ずれていたら `snapshot` を呼び直します
-    /// （`web/src/state/day.ts` と `web/src/state/board.ts`、#135）。比べるのに
-    /// 手元の時計を使うだけで、期限の判定はここに残ります。
-    pub due_statuses: Vec<CardDueStatus>,
-    /// `due_statuses` を出したときの日付。
-    pub today: NaiveDate,
     /// クイックキャプチャの入れ先が、このボードのどのカラムか。
     ///
     /// 設定が無ければ既定（先頭カラム）、別のボードを指していれば `None` です。
@@ -56,30 +41,6 @@ pub(crate) fn window_title(board_name: &str) -> String {
     } else {
         format!("{board_name} — {}", ekanban_core::APP_NAME)
     }
-}
-
-/// カード 1 枚の期限の状態。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct CardDueStatus {
-    pub card_id: CardId,
-    pub status: DueStatus,
-}
-
-/// 盤面の全部のカード（アーカイブを含む）について、期限の状態を出す。
-pub(crate) fn due_statuses_of(board: &Board, today: NaiveDate) -> Vec<CardDueStatus> {
-    board
-        .columns
-        .iter()
-        .flat_map(|column| column.cards.iter())
-        .chain(board.archived_cards.iter())
-        .filter(|card| card.due_date.is_some())
-        .map(|card| CardDueStatus {
-            card_id: card.id,
-            status: due_status(card.due_date, today),
-        })
-        .collect()
 }
 
 /// テーマの設定。`app_state` に文字列で入っている。

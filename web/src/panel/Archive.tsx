@@ -8,7 +8,7 @@
 
 import { CardFace } from "../board/Card";
 import type { Board } from "../ipc/types/Board";
-import type { DueStatus } from "../ipc/types/DueStatus";
+import type { DueStatus } from "../model/due";
 import { archivedGroups } from "./archived";
 
 interface Props {

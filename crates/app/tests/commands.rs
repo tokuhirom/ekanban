@@ -450,22 +450,15 @@ fn adding_renaming_moving_sorting_and_removing_columns() {
 }
 
 #[test]
-fn marking_columns_as_finished_work_and_dropping_them_from_the_due_counts() {
+fn marking_columns_as_the_place_finished_work_goes() {
     let harness = Harness::open();
     let column_id = harness.first_column();
-    let card_id = harness.first_card();
-    commands::set_card_due_date(&harness.state, card_id, "2000-01-01").expect("a due date is set");
-    let before = harness.state.snapshot().expect("a snapshot is read");
-    assert_eq!(before.boards[0].due.overdue, 1);
 
     let marked =
         commands::set_column_done(&harness.state, column_id, true).expect("the column is marked");
 
     assert!(marked.board.columns[0].done);
     assert!(harness.stored().columns[0].done, "it reached SQLite");
-    // 終わったものに期限切れも本日期限も無い（ADR 0038）。数えているのは SQL
-    // なので、保存されたものを読み直した一覧で見る。
-    assert_eq!(marked.boards[0].due.overdue, 0);
 
     // **何本でも立てられる。**
     let added = commands::add_column(&harness.state, "キャンセル済み").expect("a column is added");
@@ -477,7 +470,6 @@ fn marking_columns_as_finished_work_and_dropping_them_from_the_due_counts() {
         commands::set_column_done(&harness.state, column_id, false).expect("the mark is removed");
     assert!(!cleared.board.columns[0].done);
     assert!(!harness.stored().columns[0].done);
-    assert_eq!(cleared.boards[0].due.overdue, 1);
 }
 
 #[test]

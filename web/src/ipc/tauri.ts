@@ -12,12 +12,14 @@ import type { Ipc } from "./index";
 import type { AppAction } from "./types/AppAction";
 import type { CaptureTarget } from "./types/CaptureTarget";
 import type { QuickCaptureStatus } from "./types/QuickCaptureStatus";
+import type { BoardDocument } from "./types/BoardDocument";
 import type { Snapshot } from "./types/Snapshot";
 import type { StartupState } from "./types/StartupState";
 
 export const tauriIpc: Ipc = {
   startupState: () => invoke<StartupState>("startup_state"),
   snapshot: () => invoke<Snapshot>("snapshot"),
+  loadDocuments: () => invoke<BoardDocument[]>("load_documents"),
   switchBoard: (boardId) => invoke<Snapshot>("switch_board", { boardId }),
   createBoard: (name) => invoke<Snapshot>("create_board", { name }),
   renameBoard: (name) => invoke<Snapshot>("rename_board", { name }),

@@ -17,16 +17,12 @@
 
 use std::collections::BTreeMap;
 
-use chrono::{Local, NaiveDate};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use ts_rs::TS;
 
 use crate::export;
-use crate::model::{
-    due_status, Board, BoardId, BoardSummary, Card, CardEvent, Column, ColumnId, DueCounts,
-    DueStatus, Tag,
-};
+use crate::model::{Board, BoardId, BoardSummary, Card, CardEvent, Column, ColumnId, Tag};
 
 /// 置き場所が返す失敗。
 ///
@@ -213,34 +209,16 @@ impl StoredBoard {
         }
     }
 
-    fn summary(&self, today: NaiveDate) -> BoardSummary {
-        let mut due = DueCounts {
-            overdue: 0,
-            today: 0,
-        };
-        // アーカイブ済みと、終わったものの置き場（`columns.done`、[ADR 0038]）に
-        // あるカードは数えません（SQLite 側の `archived_at IS NULL` と
-        // `columns.done = 0` と同じ）。
-        //
-        // [ADR 0038]: ../../../docs/adr/0038-a-column-that-means-done.md
-        for card in self
-            .columns
-            .iter()
-            .filter(|column| !column.done)
-            .flat_map(|column| column.cards.iter())
-        {
-            match due_status(card.due_date, today) {
-                DueStatus::Overdue(_) => due.overdue += 1,
-                DueStatus::Today => due.today += 1,
-                DueStatus::Soon(_) | DueStatus::Upcoming(_) | DueStatus::None => {}
-            }
-        }
+    /// 一覧に出す 1 行。**件数は数えません**（[ADR 0039]）——盤面を持つのは
+    /// webview で、数えるのに要る材料はそちらにあります。
+    ///
+    /// [ADR 0039]: ../../../docs/adr/0039-the-board-model-moves-to-typescript.md
+    fn summary(&self) -> BoardSummary {
         BoardSummary {
             id: self.id,
             name: self.name.clone(),
             created_at: self.created_at,
             updated_at: self.updated_at,
-            due,
         }
     }
 }
@@ -380,25 +358,23 @@ impl Store<'_> {
             }
         }
         let first = self
-            .load_boards_as_of(Local::now().date_naive())?
+            .load_boards()?
             .first()
             .map(|board| board.id)
             .ok_or(StoreError::NoBoard)?;
         self.load_board_by_id(first)
     }
 
-    pub fn load_boards(&self) -> Result<Vec<BoardSummary>, StoreError> {
-        self.load_boards_as_of(Local::now().date_naive())
-    }
-
-    /// ボード一覧。各行に出す期限の件数まで含めて読む。
+    /// ボード一覧。名前と並びだけです（[ADR 0039]）。
     ///
     /// 並びは `id` の昇順です。サイドバーの並びがこれで決まります。
-    pub fn load_boards_as_of(&self, today: NaiveDate) -> Result<Vec<BoardSummary>, StoreError> {
+    ///
+    /// [ADR 0039]: ../../../docs/adr/0039-the-board-model-moves-to-typescript.md
+    pub fn load_boards(&self) -> Result<Vec<BoardSummary>, StoreError> {
         either!(
             self,
-            database => database.load_boards_as_of(today),
-            json => Ok(json.boards.iter().map(|board| board.summary(today)).collect()),
+            database => database.load_boards(),
+            json => Ok(json.boards.iter().map(StoredBoard::summary).collect()),
         )
     }
 

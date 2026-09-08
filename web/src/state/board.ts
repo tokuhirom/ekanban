@@ -7,18 +7,20 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { moveCardArgs, moveColumnArgs, parseHandle, previewMove } from "../board/dnd";
+import type { DueCounts, DueStatus } from "../model/due";
+import { dueCounts, dueStatus } from "../model/due";
 import { filterCards } from "../model/search";
 import { useIpc } from "../ipc";
 import { asAppError, describeFailure } from "../ipc/error";
 import type { AppError } from "../ipc/types/AppError";
 import type { Board } from "../ipc/types/Board";
-import type { DueStatus } from "../ipc/types/DueStatus";
+import type { BoardDocument as StoredDocument } from "../ipc/types/BoardDocument";
 import type { Platform } from "../ipc/types/Platform";
 import type { Tag } from "../ipc/types/Tag";
 import type { Snapshot } from "../ipc/types/Snapshot";
 import type { ThemePreference } from "../ipc/types/ThemePreference";
 import { applyTheme } from "../shell/theme";
-import { dayHasTurned } from "./day";
+import { dayHasTurned, localDay } from "./day";
 
 /** カードの編集パネルが開いている対象。新しいカードはまだ ID を持たない。 */
 export type Editing = { kind: "new"; columnId: number } | { kind: "card"; cardId: number };
@@ -103,9 +105,28 @@ export interface BoardState {
   /** 検索とタグに一致したカード。`null` は「絞り込んでいない」。 */
   matched: ReadonlySet<number> | null;
   dueStatuses: ReadonlyMap<number, DueStatus>;
+  /** サイドバーに出すボードの一覧。期限の件数は手元で数える（ADR 0011）。 */
+  boards: readonly BoardRow[];
+  /** 期限を数える基準日（`"YYYY-MM-DD"`）。日付をまたぐと進む。 */
+  today: string;
   setSearch: (value: string) => void;
   toggleSidebar: () => void;
   switchBoard: (boardId: number) => void;
+}
+
+/// ボード一覧の 1 行。**件数は手元で数えます**（`model/due.ts`）。
+///
+/// 名前と並びは置き場所から来たものをそのまま使い、件数だけをこちらで出します。
+/// 開いているボードは手元の盤面から数えるので、保存していない編集も画面と
+/// 合ったままです（[ADR 0011]）。
+///
+/// [ADR 0011]: ../../../docs/adr/0011-due-counts-in-the-board-list.md
+export interface BoardRow {
+  id: number;
+  name: string;
+  createdAt: number;
+  updatedAt: number;
+  due: DueCounts;
 }
 
 export function useBoardState(): BoardState {
@@ -196,45 +217,54 @@ export function useBoardState(): BoardState {
     };
   }, [ipc, report]);
 
+  // ほかのボードの盤面。**期限の件数を数えるためだけ**に持ちます（ADR 0011）。
+  //
+  // 開いているボードは `snapshot` が持っているので、ここが要るのは残りです。
+  // 変わるのはクイックキャプチャが書いたときだけなので、読むのは起動の 1 回と
+  // `board:changed` のときだけです。
+  const [documents, setDocuments] = useState<StoredDocument[]>([]);
+  const readDocuments = useCallback(() => {
+    ipc
+      .loadDocuments()
+      .then(setDocuments)
+      .catch((error: unknown) => {
+        // ほかのボードの件数が出ないだけなので、ダイアログには上げない。
+        void ipc.logFrontendError(`failed to read the other boards: ${String(error)}`);
+      });
+  }, [ipc]);
+  useEffect(readDocuments, [readDocuments]);
+
   // クイックキャプチャが書いたとき、盤面はこちらが呼んでいないところで変わる
   // （`docs/DESIGN.md`「コマンドとイベント」）。**差し替えは `run` と同じ 1 本**で、届いた盤面をそのまま載せる。
-  useEffect(() => ipc.onBoardChanged(setSnapshot), [ipc]);
+  useEffect(
+    () =>
+      ipc.onBoardChanged((fresh) => {
+        setSnapshot(fresh);
+        // 書いたのが開いていないボードなら、そちらの件数も動いている。
+        readDocuments();
+      }),
+    [ipc, readDocuments],
+  );
 
-  // 開きっぱなしで日付をまたいだら、盤面を取り直す（#135）。
+  // 開きっぱなしで日付をまたいだら、基準日を進める（#135）。
   //
-  // `due_statuses` はコマンドを呼んだ時点の日付で Rust が出しているので、
-  // 何もしないと昨日の判定が出たままになります。期限は通知しない方針で、
-  // 気づく手がかりは画面の表示だけなので、古いままにはできません。
-  //
-  // **手元の時計は「変わったかどうか」にしか使いません。** 期限の判定は
-  // Rust に残したままで、ずれていたら聞き直すだけです。契機は分ごとの
-  // タイマーと、窓が見えたとき・前に出たときの 3 つ。
-  const today = snapshot?.today ?? null;
+  // **期限の判定はここでします**（`model/due.ts`）。基準日はこの 1 つで、
+  // 進めれば「⚠」も件数も一緒に付いてきます。取り直しに行く相手はもう
+  // いません。契機は分ごとのタイマーと、窓が見えたとき・前に出たときの 3 つ。
+  const [today, setToday] = useState(() => localDay(new Date()));
   useEffect(() => {
-    if (today === null) return;
-    let cancelled = false;
-    const reread = () => {
-      if (!dayHasTurned(today, new Date())) return;
-      ipc
-        .snapshot()
-        .then((fresh) => {
-          if (!cancelled) setSnapshot(fresh);
-        })
-        .catch((error: unknown) => {
-          // 表示が古いままになるだけなので、ダイアログには上げない。
-          void ipc.logFrontendError(`failed to reread the board after midnight: ${String(error)}`);
-        });
+    const turn = () => {
+      setToday((current) => (dayHasTurned(current, new Date()) ? localDay(new Date()) : current));
     };
-    const timer = setInterval(reread, 60_000);
-    document.addEventListener("visibilitychange", reread);
-    window.addEventListener("focus", reread);
+    const timer = setInterval(turn, 60_000);
+    document.addEventListener("visibilitychange", turn);
+    window.addEventListener("focus", turn);
     return () => {
-      cancelled = true;
       clearInterval(timer);
-      document.removeEventListener("visibilitychange", reread);
-      window.removeEventListener("focus", reread);
+      document.removeEventListener("visibilitychange", turn);
+      window.removeEventListener("focus", turn);
     };
-  }, [ipc, today]);
+  }, []);
 
   // 一致するカードを、盤面が手元にあるうちに数える（`web/src/model/search.ts`）。
   //
@@ -255,13 +285,41 @@ export function useBoardState(): BoardState {
   // 変えたりしても、ヘッダの表示が古いままにならないように。
   const activeTag = snapshot?.board.tags.find((tag) => tag.id === tagId) ?? null;
 
+  // 期限の状態を、盤面が手元にあるうちに出す（`model/due.ts`）。
+  //
+  // アーカイブ表示も同じ地図を読むので、しまったカードも入れます。
   const dueStatuses = useMemo(() => {
     const map = new Map<number, DueStatus>();
-    for (const entry of snapshot?.dueStatuses ?? []) {
-      map.set(entry.cardId, entry.status);
+    if (snapshot === null) return map;
+    const cards = [
+      ...snapshot.board.columns.flatMap((column) => column.cards),
+      ...snapshot.board.archivedCards,
+    ];
+    for (const card of cards) {
+      if (card.dueDate !== null) map.set(card.id, dueStatus(card.dueDate, today));
     }
     return map;
-  }, [snapshot]);
+  }, [snapshot, today]);
+
+  // ボード一覧。**名前と並びは置き場所から、件数は手元から。**
+  //
+  // 開いているボードだけは `snapshot` の盤面から数えます——そちらには保存した
+  // ばかりの変更が入っているので、一覧と画面が食い違いません。まだ読めていない
+  // ボードは 0 件として出します（作ったばかりのボードは実際に 0 件です）。
+  const boards = useMemo<BoardRow[]>(() => {
+    if (snapshot === null) return [];
+    const others = new Map(documents.map((document) => [document.board.id, document.board]));
+    return snapshot.boards.map((summary) => {
+      const board = summary.id === snapshot.board.id ? snapshot.board : others.get(summary.id);
+      return {
+        id: summary.id,
+        name: summary.name,
+        createdAt: summary.createdAt,
+        updatedAt: summary.updatedAt,
+        due: board === undefined ? { overdue: 0, today: 0 } : dueCounts(board, today),
+      };
+    });
+  }, [documents, snapshot, today]);
 
   // 絞り込みを覚える。打鍵ごとに書いてもよいのは、これが `app_state` の
   // 1 行の更新だからで、盤面の保存とは別の経路。
@@ -503,6 +561,8 @@ export function useBoardState(): BoardState {
     redo,
     matched,
     dueStatuses,
+    boards,
+    today,
     setSearch,
     toggleSidebar,
     switchBoard,
