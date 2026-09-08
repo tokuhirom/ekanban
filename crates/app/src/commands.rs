@@ -12,6 +12,9 @@
 #[cfg(feature = "shell")]
 use std::path::{Path, PathBuf};
 
+// `shell` の外では使いません（日次バックアップだけが今日を要る）。素の
+// `use` にすると、ブラウザ向けの組み立てで未使用の警告が出ます。
+#[cfg(feature = "shell")]
 use chrono::Local;
 use ekanban_core::model::{
     parse_stored_due_date, Board, BoardError, BoardId, CardId, ChecklistItemDraft, ColumnId, TagId,
