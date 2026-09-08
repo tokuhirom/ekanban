@@ -11,9 +11,9 @@
 import { expect, test } from "@playwright/test";
 
 import { localDay } from "../src/state/day";
-import { invoke, openBoard, startHarness, stopHarness } from "./harness";
+import { editStoredBoard, openBoard, startHarness, stopHarness, storedBoard } from "./harness";
+import { setCardDueDate } from "../src/model/board";
 import type { Board } from "../src/ipc/types/Board";
-import type { Snapshot } from "../src/ipc/types/Snapshot";
 
 test.beforeEach(startHarness);
 test.afterEach(stopHarness);
@@ -25,9 +25,8 @@ test("日付をまたぐと、コマンドを呼ばなくても期限の表示�
     .slice(0, 10);
 
   // 明日が期限のカードを 1 枚用意する。
-  const board = ((await (await invoke("snapshot")).json()) as Snapshot).board;
-  const cardId = firstCard(board);
-  await invoke("set_card_due_date", { cardId, dueDate: tomorrow });
+  const cardId = firstCard(await storedBoard());
+  await editStoredBoard((document) => setCardDueDate(document, cardId, tomorrow));
 
   // 画面を開く前に時計を握る。開いたあとでは、起動のときに読んだ日付が
   // すでに差し替えたものになってしまう。

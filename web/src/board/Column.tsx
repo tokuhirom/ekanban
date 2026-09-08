@@ -6,11 +6,11 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { useState } from "react";
 
-import { useIpc } from "../ipc";
 import type { AppError } from "../ipc/types/AppError";
 import type { Column as ColumnData } from "../ipc/types/Column";
 import type { DueStatus } from "../model/due";
-import type { Snapshot } from "../ipc/types/Snapshot";
+import type { BoardDocument, Outcome } from "../model/board";
+import { renameColumn, setColumnDone } from "../model/board";
 import type { Tag } from "../ipc/types/Tag";
 import { isComposing } from "../shell/ime";
 import { Card } from "./Card";
@@ -29,9 +29,11 @@ interface Props {
   selectedCard: number | null;
   /** 最後の 1 本は消せない。理由を言わずにコントロールを無効にする（`docs/DESIGN.md`）。 */
   lastColumn: boolean;
-  /** クイックキャプチャの入れ先。どこが入れ先かは Rust が決める（`Snapshot`）。 */
+  /** クイックキャプチャの入れ先。決めるのは画面（`state/board.ts`）。 */
   captureTarget: boolean;
-  run: (call: () => Promise<Snapshot>) => Promise<AppError | null>;
+  /** このカラムをクイックキャプチャの入れ先にする。 */
+  onSetCaptureColumn: (columnId: number) => void;
+  run: (act: (document: BoardDocument) => Outcome<unknown>) => Promise<AppError | null>;
   onSelectCard: (cardId: number) => void;
   onOpenCard: (cardId: number) => void;
   onCardContextMenu: (cardId: number, at: { x: number; y: number }) => void;
@@ -55,6 +57,7 @@ export function Column({
   selectedCard,
   lastColumn,
   captureTarget,
+  onSetCaptureColumn,
   run,
   onSelectCard,
   onOpenCard,
@@ -63,7 +66,6 @@ export function Column({
   onArchiveColumn,
   onRemoveColumn,
 }: Props) {
-  const ipc = useIpc();
   const [menuOpen, setMenuOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const {
@@ -181,7 +183,7 @@ export function Column({
             className="ghost set-column-done"
             onClick={() => {
               setMenuOpen(false);
-              void run(() => ipc.setColumnDone(column.id, !column.done));
+              void run((document) => setColumnDone(document, column.id, !column.done));
             }}
           >
             {column.done ? "完了扱いをやめる" : "完了扱いにする"}
@@ -193,7 +195,7 @@ export function Column({
             disabled={captureTarget}
             onClick={() => {
               setMenuOpen(false);
-              void run(() => ipc.setCaptureColumn(column.id));
+              onSetCaptureColumn(column.id);
             }}
           >
             クイックキャプチャ先にする
@@ -274,10 +276,9 @@ function ColumnEditor({
   onDone,
 }: {
   column: ColumnData;
-  run: (call: () => Promise<Snapshot>) => Promise<AppError | null>;
+  run: (act: (document: BoardDocument) => Outcome<unknown>) => Promise<AppError | null>;
   onDone: () => void;
 }) {
-  const ipc = useIpc();
   const [name, setName] = useState(column.name);
   const [failed, setFailed] = useState<AppError | null>(null);
 
@@ -285,7 +286,7 @@ function ColumnEditor({
     if (name.trim() === "") return;
     // 変わっていなければ呼びません——同じ値で呼ぶと Undo に空の 1 手が積まれます。
     if (name !== column.name) {
-      const failure = await run(() => ipc.renameColumn(column.id, name));
+      const failure = await run((document) => renameColumn(document, column.id, name));
       if (failure !== null) {
         setFailed(failure);
         return;

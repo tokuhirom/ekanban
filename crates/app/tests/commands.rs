@@ -1,19 +1,25 @@
 //! `docs/DESIGN.md`「コマンドとイベント」のコマンドを、外から呼んで確かめる。
 //!
-//! 見るのは 2 つです。**返ってきたスナップショット**と、**SQLite に何が入ったか**。
-//! 保存はコマンドの中で終わるので（`docs/DESIGN.md`「状態の持ち主」）、待ち合わせも巻き戻しも要りません。
-//! SQLite は毎回**開き直して**読みます。メモリ上の盤面を覗くと、保存を
-//! 忘れたコマンドがテストの中でだけ通ってしまいます。
+//! **盤面の操作はここにありません**（[ADR 0039]）。カードを足す・動かす・戻す
+//! は webview のモデル（`web/src/model/board.ts`）にあり、Vitest が見ています。
+//! こちらが見るのは、ウェブアプリならサーバ側に書くだろうもの——置き場所の
+//! 読み書きと、覚えておく設定、書き出しと控えです。
+//!
+//! SQLite は毎回**開き直して**読みます。メモリ上の値を覗くと、保存を忘れた
+//! コマンドがテストの中でだけ通ってしまいます。
+//!
+//! [ADR 0039]: ../../docs/adr/0039-the-board-model-moves-to-typescript.md
 
 use std::path::PathBuf;
 
 use ekanban_app::commands;
+use ekanban_app::commands::BoardDocument;
 use ekanban_app::error::{ErrorKind, Field};
-use ekanban_app::snapshot::ThemePreference;
+use ekanban_app::snapshot::{CaptureTarget, ThemePreference};
 use ekanban_app::state::Source;
 use ekanban_app::AppState;
 use ekanban_core::db::{Database, FilterState, WindowBoundsState};
-use ekanban_core::model::{Board, CardEvent, CardEventKind, CardId, ChecklistItemDraft, ColumnId};
+use ekanban_core::model::{Board, BoardId, CardEvent, CardEventKind, CardId};
 use tempfile::TempDir;
 
 struct Harness {
@@ -51,21 +57,16 @@ impl Harness {
             .expect("the board loads")
     }
 
-    fn first_column(&self) -> ColumnId {
-        self.stored().columns[0].id
+    /// webview が受け取るのと同じ形の、先頭のボード。
+    fn document(&self) -> BoardDocument {
+        commands::load_documents(&self.state)
+            .expect("the documents load")
+            .remove(0)
     }
 
     fn first_card(&self) -> CardId {
         self.stored().columns[0].cards[0].id
     }
-}
-
-fn titles(board: &Board, column: usize) -> Vec<String> {
-    board.columns[column]
-        .cards
-        .iter()
-        .map(|card| card.title.clone())
-        .collect()
 }
 
 // ---------------------------------------------------------------- 起動
@@ -93,9 +94,9 @@ fn the_startup_state_carries_everything_the_window_needs_to_open() {
     assert_eq!(startup.theme, ThemePreference::Dark);
     assert!(startup.sidebar_collapsed);
     assert_eq!(startup.window_bounds.map(|b| b.width), Some(900.));
-    assert_eq!(startup.snapshot.board, harness.stored());
-    assert!(!startup.snapshot.boards.is_empty());
-    assert!(!startup.snapshot.can_undo, "開いた直後に戻せるものはない");
+    // **盤面は入っていません。** 開くボードだけを渡し、中身は `load_documents`
+    // で読みます（ADR 0039）。
+    assert_eq!(startup.open_board_id, harness.stored().id);
     assert_eq!(startup.capture_target, None);
     assert_eq!(startup.quick_capture_shortcut, None);
 }
@@ -110,453 +111,42 @@ fn a_missing_last_board_falls_back_to_the_first_one() {
 
     let (_, startup) = commands::load_startup_state(Source::Sqlite(harness.path.clone()))
         .expect("the state is read");
-    assert_ne!(startup.snapshot.board.id, created_id);
+    assert_ne!(startup.open_board_id, created_id);
 }
 
 // ---------------------------------------------------------------- ボード
 
+/// ボードを作る・開いていたものを覚える・消す。
+///
+/// **名前を変えるのはここにありません**——それは盤面の操作なので、webview が
+/// 当てて `save_document` で書きます（ADR 0039）。
 #[test]
-fn creating_switching_renaming_and_deleting_boards() {
+fn creating_remembering_and_deleting_boards() {
     let harness = Harness::open();
-    let first_id = harness.state.snapshot().expect("a snapshot").board.id;
+    let first_id = harness.stored().id;
 
     let created = commands::create_board(&harness.state, "2 つ目").expect("a board is created");
     assert_eq!(created.board.name, "2 つ目");
-    assert_eq!(created.boards.len(), 2);
+    // 作ったばかりの文書は、そのまま手元の一覧へ足せる形で返る。
+    assert_eq!(created.next_card_id, created.board.next_card_id);
+    assert_eq!(commands::load_documents(&harness.state).unwrap().len(), 2);
 
-    let renamed = commands::rename_board(&harness.state, "名前を変えた").expect("renamed");
-    assert_eq!(renamed.board.name, "名前を変えた");
-    assert_eq!(harness.stored().name, "名前を変えた", "保存まで届いている");
+    commands::set_open_board(&harness.state, first_id).expect("the open board is remembered");
+    let (_, startup) = commands::load_startup_state(Source::Sqlite(harness.path.clone()))
+        .expect("the state is read");
+    assert_eq!(startup.open_board_id, first_id);
 
-    let switched = commands::switch_board(&harness.state, first_id).expect("switched");
-    assert_eq!(switched.board.id, first_id);
-
-    let deleted = commands::delete_board(&harness.state, created.board.id).expect("deleted");
-    assert_eq!(deleted.boards.len(), 1);
-    assert_eq!(deleted.board.id, first_id);
+    commands::delete_board(&harness.state, created.board.id).expect("the board is deleted");
+    assert_eq!(commands::load_documents(&harness.state).unwrap().len(), 1);
 }
 
+/// 最後の 1 つは消せない。開く相手がいなくなる。
 #[test]
-fn an_empty_board_name_lands_next_to_the_field_that_took_it() {
+fn the_last_board_cannot_be_deleted() {
     let harness = Harness::open();
-    let error =
-        commands::rename_board(&harness.state, "   ").expect_err("an empty name is refused");
-    assert_eq!(error.kind, ErrorKind::Validation);
-    assert_eq!(error.field, Some(Field::BoardName));
-}
-
-// ---------------------------------------------------------------- カード
-
-/// 期限もタグもチェックリストも付けずにカードを足す。
-///
-/// `add_card` は下書きを丸ごと受け取る（#127）ので、そこを見ないテストでは
-/// 空の一式を毎回並べることになる。並べる代わりにここへ寄せる。
-fn add_plain_card(
-    harness: &Harness,
-    column: ColumnId,
-    title: &str,
-    description: &str,
-) -> Result<ekanban_app::snapshot::Snapshot, ekanban_app::error::AppError> {
-    commands::add_card(
-        &harness.state,
-        column,
-        title,
-        description,
-        "",
-        Vec::new(),
-        Vec::new(),
-    )
-}
-
-#[test]
-fn adding_editing_moving_copying_and_deleting_a_card() {
-    let harness = Harness::open();
-    let column = harness.first_column();
-
-    let added =
-        add_plain_card(&harness, column, "足したカード", "説明").expect("the card is added");
-    assert!(titles(&added.board, 0).contains(&"足したカード".to_string()));
-    assert!(added.can_undo, "足したら戻せる");
-    assert!(titles(&harness.stored(), 0).contains(&"足したカード".to_string()));
-
-    let card_id = added.board.columns[0]
-        .cards
-        .iter()
-        .find(|card| card.title == "足したカード")
-        .expect("the card is on the board")
-        .id;
-
-    let updated = commands::update_card(
-        &harness.state,
-        card_id,
-        "書き換えた",
-        "新しい説明",
-        "2026-03-04",
-        Vec::new(),
-        vec![ChecklistItemDraft {
-            id: None,
-            text: "項目".to_string(),
-            checked: false,
-        }],
-    )
-    .expect("the card is updated");
-    let card = updated.board.columns[0]
-        .cards
-        .iter()
-        .find(|card| card.id == card_id)
-        .expect("the card is still there");
-    assert_eq!(card.title, "書き換えた");
-    assert_eq!(
-        card.due_date.map(|d| d.to_string()).as_deref(),
-        Some("2026-03-04")
-    );
-    assert_eq!(card.checklist_items.len(), 1);
-
-    let second_column = harness.stored().columns[1].id;
-    let moved =
-        commands::move_card(&harness.state, card_id, second_column, 0).expect("the card is moved");
-    assert_eq!(moved.board.columns[1].cards[0].id, card_id);
-    assert_eq!(harness.stored().columns[1].cards[0].id, card_id);
-
-    let before_copy = moved.board.columns[1].cards.len();
-    let copied = commands::copy_card(&harness.state, card_id).expect("the card is copied");
-    assert_eq!(copied.board.columns[1].cards.len(), before_copy + 1);
-
-    let deleted = commands::delete_card(&harness.state, card_id).expect("the card is deleted");
-    assert!(!deleted.board.columns[1]
-        .cards
-        .iter()
-        .any(|card| card.id == card_id));
-}
-
-/// 足すときに期限・タグ・チェックリストを付けられる（#127）。
-///
-/// 見るのは返ったスナップショットと SQLite の両方。足したあとに `update_card`
-/// を呼んでいないので、届いているならカード 1 枚ぶんの保存で入っている。
-#[test]
-fn adding_a_card_carries_its_due_date_tags_and_checklist_to_sqlite() {
-    let harness = Harness::open();
-    let column = harness.first_column();
-    let tag_id = commands::add_tag(&harness.state, "重要", "#ef4444")
-        .expect("the tag is added")
-        .board
-        .tags[0]
-        .id;
-
-    let added = commands::add_card(
-        &harness.state,
-        column,
-        "備えて足すカード",
-        "説明",
-        "2026-09-30",
-        vec![tag_id],
-        vec![
-            ChecklistItemDraft {
-                id: None,
-                text: "先にやる".to_string(),
-                checked: false,
-            },
-            ChecklistItemDraft {
-                id: None,
-                text: "  ".to_string(),
-                checked: false,
-            },
-        ],
-    )
-    .expect("the card is added");
-
-    for board in [&added.board, &harness.stored()] {
-        let card = board.columns[0]
-            .cards
-            .iter()
-            .find(|card| card.title == "備えて足すカード")
-            .expect("the card is there");
-        assert_eq!(
-            card.due_date.map(|date| date.to_string()).as_deref(),
-            Some("2026-09-30")
-        );
-        assert_eq!(card.tag_ids, vec![tag_id]);
-        // 名前の入っていない項目は落ちる（#114 と同じ規則）。
-        assert_eq!(
-            card.checklist_items
-                .iter()
-                .map(|item| item.text.as_str())
-                .collect::<Vec<_>>(),
-            ["先にやる"]
-        );
-    }
-
-    // 積まれた操作は 1 件。足したばかりのカードは 1 回の Undo で消える。
-    let undone = commands::undo(&harness.state).expect("undone");
-    assert!(!titles(&undone.board, 0).contains(&"備えて足すカード".to_string()));
-    assert!(!titles(&harness.stored(), 0).contains(&"備えて足すカード".to_string()));
-}
-
-/// 読めない期限は入力欄に返し、カードは 1 枚も増やさない。
-#[test]
-fn adding_a_card_with_an_unreadable_due_date_is_refused() {
-    let harness = Harness::open();
-    let before = harness.stored();
-
-    let error = commands::add_card(
-        &harness.state,
-        before.columns[0].id,
-        "足せないカード",
-        "",
-        "2026/09/30",
-        Vec::new(),
-        Vec::new(),
-    )
-    .expect_err("an unreadable due date is refused");
-    assert_eq!(error.kind, ErrorKind::Validation);
-    assert_eq!(error.field, Some(Field::DueDate));
-
-    assert_eq!(harness.state.snapshot().expect("a snapshot").board, before);
-    assert_eq!(harness.stored(), before);
-}
-
-#[test]
-fn archiving_and_restoring_a_card() {
-    let harness = Harness::open();
-    let card_id = harness.first_card();
-
-    let archived = commands::archive_card(&harness.state, card_id).expect("archived");
-    assert!(archived
-        .board
-        .archived_cards
-        .iter()
-        .any(|c| c.id == card_id));
-    assert!(harness
-        .stored()
-        .archived_cards
-        .iter()
-        .any(|c| c.id == card_id));
-
-    let restored = commands::restore_card(&harness.state, card_id).expect("restored");
-    assert!(!restored
-        .board
-        .archived_cards
-        .iter()
-        .any(|c| c.id == card_id));
-}
-
-#[test]
-fn setting_a_due_date_and_tags_on_a_card() {
-    let harness = Harness::open();
-    let card_id = harness.first_card();
-
-    commands::set_card_due_date(&harness.state, card_id, "2026-01-02").expect("the date is set");
-    let stored = harness.stored();
-    let card = stored.columns[0]
-        .cards
-        .iter()
-        .find(|c| c.id == card_id)
-        .unwrap();
-    assert_eq!(
-        card.due_date.map(|d| d.to_string()).as_deref(),
-        Some("2026-01-02")
-    );
-
-    let tagged = commands::add_tag(&harness.state, "重要", "#60a5fa").expect("a tag is added");
-    let tag_id = tagged.board.tags[0].id;
-    let snapshot =
-        commands::set_card_tags(&harness.state, card_id, vec![tag_id]).expect("tags are set");
-    let card = snapshot.board.columns[0]
-        .cards
-        .iter()
-        .find(|c| c.id == card_id)
-        .unwrap();
-    assert_eq!(card.tag_ids, vec![tag_id]);
-
-    // 空欄は「期限なし」。
-    commands::set_card_due_date(&harness.state, card_id, "").expect("the date is cleared");
-    let stored = harness.stored();
-    assert!(stored.columns[0]
-        .cards
-        .iter()
-        .find(|c| c.id == card_id)
-        .unwrap()
-        .due_date
-        .is_none());
-}
-
-/// 読めない期限は、打った入力欄に返す。ダイアログには出さない（`docs/DESIGN.md`「コマンドとイベント」）。
-#[test]
-fn an_unreadable_due_date_comes_back_to_the_field_with_the_value_that_was_typed() {
-    let harness = Harness::open();
-    let card_id = harness.first_card();
-
-    let error = commands::set_card_due_date(&harness.state, card_id, "2026/03/04")
-        .expect_err("the format is refused");
-
-    assert_eq!(error.kind, ErrorKind::Validation);
-    assert_eq!(error.field, Some(Field::DueDate));
-    assert_eq!(error.value.as_deref(), Some("2026/03/04"));
-}
-
-/// 失敗したら盤面は動かない。画面には何も届いていないので、戻すものもない（`docs/DESIGN.md`「状態の持ち主」）。
-#[test]
-fn a_refused_operation_leaves_the_board_exactly_as_it_was() {
-    let harness = Harness::open();
-    let before = harness.state.snapshot().expect("a snapshot").board;
-
-    let error = add_plain_card(&harness, harness.first_column(), "   ", "")
-        .expect_err("an empty title is refused");
-    assert_eq!(error.field, Some(Field::CardTitle));
-
-    assert_eq!(harness.state.snapshot().expect("a snapshot").board, before);
-    assert_eq!(harness.stored(), before);
-}
-
-/// 無題のカードは作らない（`docs/DESIGN.md`）。
-///
-/// 下書きは webview のものなので（`docs/DESIGN.md`「状態の持ち主」）、断る場所は
-/// コマンドの入口しかない。
-#[test]
-fn an_untitled_card_never_reaches_the_board_or_the_database() {
-    let harness = Harness::open();
-    let column = harness.first_column();
-    let before = harness.stored();
-
-    for title in ["", "   ", "\u{3000}"] {
-        add_plain_card(&harness, column, title, "説明だけある")
-            .expect_err("an untitled card is refused");
-    }
-    commands::set_capture_target(&harness.state, Some((before.id, column)))
-        .expect("the target is stored");
-    commands::capture_card(&harness.state, "  ").expect_err("an untitled capture is refused");
-
-    assert_eq!(harness.stored(), before);
-}
-
-// ---------------------------------------------------------------- カラム
-
-#[test]
-fn adding_renaming_moving_sorting_and_removing_columns() {
-    let harness = Harness::open();
-
-    let added = commands::add_column(&harness.state, "レビュー").expect("a column is added");
-    let column_id = added.board.columns.last().expect("a column").id;
-    assert_eq!(added.board.columns.last().unwrap().name, "レビュー");
-
-    commands::rename_column(&harness.state, column_id, "確認").expect("renamed");
-    assert_eq!(harness.stored().columns.last().unwrap().name, "確認");
-
-    let moved = commands::move_column(&harness.state, column_id, 0).expect("moved");
-    assert_eq!(moved.board.columns[0].id, column_id);
-
-    let removed = commands::remove_column(&harness.state, column_id).expect("removed");
-    assert!(!removed.board.columns.iter().any(|c| c.id == column_id));
-}
-
-#[test]
-fn marking_columns_as_the_place_finished_work_goes() {
-    let harness = Harness::open();
-    let column_id = harness.first_column();
-
-    let marked =
-        commands::set_column_done(&harness.state, column_id, true).expect("the column is marked");
-
-    assert!(marked.board.columns[0].done);
-    assert!(harness.stored().columns[0].done, "it reached SQLite");
-
-    // **何本でも立てられる。**
-    let added = commands::add_column(&harness.state, "キャンセル済み").expect("a column is added");
-    let cancelled = added.board.columns.last().expect("the new column").id;
-    let both = commands::set_column_done(&harness.state, cancelled, true).expect("marked");
-    assert!(both.board.columns.iter().filter(|c| c.done).count() == 2);
-
-    let cleared =
-        commands::set_column_done(&harness.state, column_id, false).expect("the mark is removed");
-    assert!(!cleared.board.columns[0].done);
-    assert!(!harness.stored().columns[0].done);
-}
-
-#[test]
-fn a_new_board_comes_with_a_place_for_finished_work() {
-    let harness = Harness::open();
-
-    let created = commands::create_board(&harness.state, "2 つ目").expect("a board is created");
-
-    let names = created
-        .board
-        .columns
-        .iter()
-        .map(|column| (column.name.as_str(), column.done))
-        .collect::<Vec<_>>();
-    assert_eq!(names, vec![("やること", false), ("完了", true)]);
-    assert_eq!(
-        harness
-            .stored()
-            .columns
-            .iter()
-            .map(|column| (column.name.clone(), column.done))
-            .collect::<Vec<_>>(),
-        vec![("やること".to_string(), false), ("完了".to_string(), true)],
-        "it reached SQLite"
-    );
-}
-
-#[test]
-fn archiving_a_column_moves_its_cards_to_the_archive() {
-    let harness = Harness::open();
-    let column_id = harness.first_column();
-    let count = harness.stored().columns[0].cards.len();
-    assert!(count > 0, "テスト用の盤面にはカードが載っている");
-
-    let snapshot = commands::archive_column(&harness.state, column_id).expect("archived");
-
-    assert!(snapshot.board.columns[0].cards.is_empty());
-    assert_eq!(snapshot.board.archived_cards.len(), count);
-    assert_eq!(harness.stored().archived_cards.len(), count);
-}
-
-// ---------------------------------------------------------------- タグ
-
-#[test]
-fn adding_renaming_recoloring_and_removing_tags() {
-    let harness = Harness::open();
-
-    let added = commands::add_tag(&harness.state, "重要", "#60a5fa").expect("a tag is added");
-    let tag_id = added.board.tags[0].id;
-
-    commands::rename_tag(&harness.state, tag_id, "急ぎ").expect("renamed");
-    assert_eq!(harness.stored().tags[0].name, "急ぎ");
-
-    commands::set_tag_color(&harness.state, tag_id, "#f87171").expect("recolored");
-    assert_eq!(harness.stored().tags[0].color, "#f87171");
-
-    let removed = commands::remove_tag(&harness.state, tag_id).expect("removed");
-    assert!(removed.board.tags.is_empty());
-}
-
-#[test]
-fn a_duplicate_tag_name_comes_back_to_the_field() {
-    let harness = Harness::open();
-    commands::add_tag(&harness.state, "重要", "#60a5fa").expect("a tag is added");
-    let error =
-        commands::add_tag(&harness.state, "重要", "#f87171").expect_err("the name is taken");
-    assert_eq!(error.field, Some(Field::TagName));
-}
-
-// ---------------------------------------------------------------- 取り消し
-
-#[test]
-fn undo_and_redo_reach_sqlite_as_well_as_the_snapshot() {
-    let harness = Harness::open();
-    let column = harness.first_column();
-    let before = titles(&harness.stored(), 0);
-
-    add_plain_card(&harness, column, "戻す対象", "").expect("added");
-
-    let undone = commands::undo(&harness.state).expect("undone");
-    assert_eq!(titles(&undone.board, 0), before);
-    assert_eq!(titles(&harness.stored(), 0), before, "保存まで戻っている");
-    assert!(undone.can_redo);
-
-    let redone = commands::redo(&harness.state).expect("redone");
-    assert!(titles(&redone.board, 0).contains(&"戻す対象".to_string()));
-    assert!(titles(&harness.stored(), 0).contains(&"戻す対象".to_string()));
+    let only = harness.stored().id;
+    commands::delete_board(&harness.state, only).expect_err("the last board is refused");
+    assert_eq!(commands::load_documents(&harness.state).unwrap().len(), 1);
 }
 
 // ---------------------------------------------------------------- 表示の状態
@@ -600,13 +190,12 @@ fn the_display_state_survives_a_restart() {
 /// ——webview が手元で番号を採るのに要るので、`Board` の `#[serde(skip)]` の
 /// 外側に出してあります。
 ///
-/// [ADR 0039]: ../../../docs/adr/0039-the-board-model-moves-to-typescript.md
+/// [ADR 0039]: ../../docs/adr/0039-the-board-model-moves-to-typescript.md
 #[test]
 fn a_document_round_trips_through_the_store() {
     let harness = Harness::open();
 
-    let documents = commands::load_documents(&harness.state).expect("the documents load");
-    let document = documents.first().expect("there is a board").clone();
+    let document = harness.document();
     assert_eq!(document.board.id, harness.stored().id);
     assert_eq!(document.next_card_id, harness.stored().next_card_id);
 
@@ -614,20 +203,37 @@ fn a_document_round_trips_through_the_store() {
         .expect("the document is saved");
     assert_eq!(saved.rev, document.rev + 1, "書くたびに版が 1 つ進む");
 
-    let reread = commands::load_documents(&harness.state).expect("the documents load again");
-    let after = reread.first().expect("there is a board");
+    let after = harness.document();
     assert_eq!(after.board, document.board);
     assert_eq!(after.next_card_id, document.next_card_id);
     assert_eq!(after.rev, saved.rev);
+}
+
+/// webview が当てた盤面が、そのまま置き場所に届く。
+///
+/// **中身は見直しません**（ADR 0039）。行として成り立っているかだけを見ます。
+#[test]
+fn what_the_webview_changed_reaches_sqlite() {
+    let harness = Harness::open();
+    let mut document = harness.document();
+    document.board.name = "画面が名前を変えた".to_string();
+    let card = document.board.columns[0].cards[0].id;
+    document.board.columns[0].cards[0].title = "画面が書き換えた".to_string();
+
+    commands::save_document(&harness.state, document, Vec::new()).expect("the document is saved");
+
+    let stored = harness.stored();
+    assert_eq!(stored.name, "画面が名前を変えた");
+    assert_eq!(stored.columns[0].cards[0].id, card);
+    assert_eq!(stored.columns[0].cards[0].title, "画面が書き換えた");
 }
 
 /// 積まれた履歴は、そのまま追記される。**中身は見直しません**（ADR 0039）。
 #[test]
 fn the_events_the_webview_stacked_are_appended_as_they_are() {
     let harness = Harness::open();
-    let document = commands::load_documents(&harness.state)
-        .expect("the documents load")
-        .remove(0);
+    let document = harness.document();
+    let board_id = document.board.id;
     let card_id = harness.first_card();
 
     commands::save_document(
@@ -643,7 +249,8 @@ fn the_events_the_webview_stacked_are_appended_as_they_are() {
     )
     .expect("the document is saved");
 
-    let contents = commands::export_board_json_contents(&harness.state).expect("the JSON is built");
+    let contents =
+        commands::export_board_json_contents(&harness.state, board_id).expect("the JSON is built");
     let parsed: serde_json::Value = serde_json::from_str(&contents).expect("valid JSON");
     // 土台のボードを作ったときの `created` が既に並んでいる。足したものは最後。
     let events = parsed["card_events"]
@@ -660,13 +267,11 @@ fn the_events_the_webview_stacked_are_appended_as_they_are() {
 ///
 /// 断ったあとの置き場所には、先に書いたほうの内容が残っている。
 ///
-/// [ADR 0040]: ../../../docs/adr/0040-the-shape-and-the-store-stay-in-rust.md
+/// [ADR 0040]: ../../docs/adr/0040-the-shape-and-the-store-stay-in-rust.md
 #[test]
 fn saving_an_old_copy_is_refused_and_changes_nothing() {
     let harness = Harness::open();
-    let document = commands::load_documents(&harness.state)
-        .expect("the documents load")
-        .remove(0);
+    let document = harness.document();
 
     // 1 つ目の窓が書く。
     let mut first = document.clone();
@@ -690,9 +295,7 @@ fn saving_an_old_copy_is_refused_and_changes_nothing() {
 fn a_board_that_does_not_hold_together_is_refused() {
     let harness = Harness::open();
     let before = harness.stored();
-    let document = commands::load_documents(&harness.state)
-        .expect("the documents load")
-        .remove(0);
+    let document = harness.document();
 
     let mut empty_title = document.clone();
     empty_title.board.columns[0].cards[0].title = "  ".to_string();
@@ -730,7 +333,8 @@ fn exporting_json_writes_a_file_that_can_be_read_back() {
     let directory = tempfile::tempdir().expect("a temporary directory");
 
     let json = directory.path().join("board.json");
-    let written = commands::export_board_json(&harness.state, &json).expect("the JSON is written");
+    let written = commands::export_board_json(&harness.state, harness.stored().id, &json)
+        .expect("the JSON is written");
     assert_eq!(written, json);
 
     let contents = std::fs::read_to_string(&json).expect("the file is readable");
@@ -740,6 +344,20 @@ fn exporting_json_writes_a_file_that_can_be_read_back() {
         parsed.get("card_events").is_some(),
         "カードの履歴が入る。画面が持っているのはいまの盤面だけ"
     );
+}
+
+/// 書き出すのは**頼まれたボード**。開いているボードを Rust は知らない（ADR 0039）。
+#[test]
+fn exporting_json_writes_the_board_it_was_asked_for() {
+    let harness = Harness::open();
+    let other = commands::create_board(&harness.state, "2 つ目")
+        .expect("a board is created")
+        .board;
+
+    let contents =
+        commands::export_board_json_contents(&harness.state, other.id).expect("the JSON is built");
+    let parsed: serde_json::Value = serde_json::from_str(&contents).expect("valid JSON");
+    assert_eq!(parsed["board"]["name"], "2 つ目");
 }
 
 /// 組み立てた中身は、そのまま受け取って書く（ADR 0045）。読み方も形も見ない。
@@ -816,146 +434,72 @@ fn an_export_gets_the_extension_it_was_told() {
 
 // ---------------------------------------------------------------- キャプチャ
 
+/// キャプチャ先は、覚えて、そのまま返すだけ（ADR 0039）。
+///
+/// **既定に落とすのも、消えていたときに戻すのも webview** です。盤面を全部
+/// 持っているのはそちらなので、往復せずに決められます。
 #[test]
-fn quick_capture_adds_to_the_chosen_column_through_the_same_save_path() {
+fn the_capture_target_is_remembered_and_handed_back_as_it_is() {
     let harness = Harness::open();
     let stored = harness.stored();
-    let target_column = stored.columns[1].id;
-    commands::set_capture_target(&harness.state, Some((stored.id, target_column)))
+    let column_id = stored.columns[1].id;
+
+    assert_eq!(
+        commands::capture_target(&harness.state).expect("the target is read"),
+        None,
+        "選ばれていなければ何も言わない"
+    );
+
+    commands::set_capture_target(&harness.state, Some((stored.id, column_id)))
         .expect("the target is stored");
-
-    let snapshot = commands::capture_card(&harness.state, "拾ったこと").expect("the card is added");
-
     assert_eq!(
-        snapshot.board.columns[1].cards.last().unwrap().title,
-        "拾ったこと",
-        "カラムの末尾に足す"
+        commands::capture_target(&harness.state).expect("the target is read"),
+        Some(CaptureTarget {
+            board_id: stored.id,
+            column_id,
+        })
     );
-    assert!(snapshot.can_undo, "Undo の対象になる");
+
+    let (_, startup) = commands::load_startup_state(Source::Sqlite(harness.path.clone()))
+        .expect("the state is read");
     assert_eq!(
-        harness.stored().columns[1].cards.last().unwrap().title,
-        "拾ったこと"
+        startup.capture_target.map(|target| target.column_id),
+        Some(column_id)
+    );
+
+    commands::set_capture_target(&harness.state, None).expect("the target is cleared");
+    assert_eq!(
+        commands::capture_target(&harness.state).expect("the target is read"),
+        None
     );
 }
 
-/// キャプチャ先が別のボードでも書ける。開いている盤面はそのまま。
+/// 消えたカラムを指したままでも、置き場所は黙って返す。**直すのは画面**。
 #[test]
-fn quick_capture_writes_to_a_board_that_is_not_open() {
-    let harness = Harness::open();
-    let first = harness.state.snapshot().expect("a snapshot").board;
-    let other = commands::create_board(&harness.state, "受け皿")
-        .expect("a board is created")
-        .board;
-    commands::switch_board(&harness.state, first.id).expect("switched back");
-    commands::set_capture_target(&harness.state, Some((other.id, other.columns[0].id)))
-        .expect("the target is stored");
-
-    let snapshot =
-        commands::capture_card(&harness.state, "別のボードへ").expect("the card is added");
-
-    assert_eq!(snapshot.board.id, first.id, "開いている盤面は変わらない");
-    let written = Database::open(&harness.path)
-        .expect("the database opens")
-        .load_board_by_id(other.id)
-        .expect("the other board loads");
-    assert_eq!(
-        written.columns[0].cards.last().unwrap().title,
-        "別のボードへ"
-    );
-}
-
-#[test]
-fn quick_capture_falls_back_to_the_first_column_when_no_target_has_been_chosen() {
-    let harness = Harness::open();
-    // 決まっていないから足せない、にはしない。キャプチャは 1 行を放り込む
-    // ためのもので、そこで設定を求めると用が足りない。
-    commands::capture_card(&harness.state, "行き先を決めていない").expect("the card is added");
-
-    let stored = harness.stored();
-    assert_eq!(
-        stored.columns[0]
-            .cards
-            .last()
-            .map(|card| card.title.as_str()),
-        Some("行き先を決めていない")
-    );
-}
-
-/// 設定が無いときの既定は、開いているボードではなく**先頭のボード**（#117）。
-#[test]
-fn the_default_capture_target_is_the_first_board_whichever_board_is_open() {
-    let harness = Harness::open();
-    let first = harness.state.snapshot().expect("a snapshot").board;
-    let other = commands::create_board(&harness.state, "あとから足したボード")
-        .expect("a board is created")
-        .board;
-    assert_eq!(
-        commands::capture_target(&harness.state)
-            .expect("the target resolves")
-            .map(|target| target.board_id),
-        Some(first.id),
-        "2 つめのボードを開いていても、入れ先は先頭のボードのまま"
-    );
-
-    commands::capture_card(&harness.state, "先頭のボードへ").expect("the card is added");
-
-    let database = Database::open(&harness.path).expect("the database opens");
-    let written = database
-        .load_board_by_id(first.id)
-        .expect("the first board loads");
-    assert_eq!(
-        written.columns[0].cards.last().unwrap().title,
-        "先頭のボードへ"
-    );
-    let open_board = database
-        .load_board_by_id(other.id)
-        .expect("the open board loads");
-    assert!(
-        open_board
-            .columns
-            .iter()
-            .all(|column| column.cards.is_empty()),
-        "開いているボードには入らない"
-    );
-}
-
-/// 「⚡ クイックキャプチャ先」の印はアプリ全体で 1 か所にしか出ない（#117）。
-#[test]
-fn the_capture_mark_shows_on_one_board_only() {
-    let harness = Harness::open();
-    let first = harness.state.snapshot().expect("a snapshot").board;
-    let other = commands::create_board(&harness.state, "2 つめ")
-        .expect("a board is created")
-        .board;
-
-    let on_other = harness.state.snapshot().expect("a snapshot");
-    assert_eq!(on_other.board.id, other.id);
-    assert_eq!(
-        on_other.capture_column, None,
-        "先頭でないボードには印を出さない"
-    );
-
-    let on_first = commands::switch_board(&harness.state, first.id).expect("switched back");
-    assert_eq!(
-        on_first.capture_column,
-        on_first.board.columns.first().map(|column| column.id),
-        "先頭のボードの先頭カラムにだけ印が出る"
-    );
-}
-
-/// キャプチャ先のカラムが消えていたら、黙って未設定に戻す。起動を妨げない。
-#[test]
-fn a_capture_target_that_no_longer_exists_falls_back_to_none() {
+fn a_capture_target_that_no_longer_exists_comes_back_unchanged() {
     let harness = Harness::open();
     let stored = harness.stored();
     let column_id = stored.columns[2].id;
     commands::set_capture_target(&harness.state, Some((stored.id, column_id)))
         .expect("the target is stored");
-    commands::remove_column(&harness.state, column_id).expect("the column is removed");
 
-    let (_, startup) = commands::load_startup_state(Source::Sqlite(harness.path.clone()))
-        .expect("the state is read");
-    assert_eq!(startup.capture_target, None);
+    let mut document = harness.document();
+    document
+        .board
+        .columns
+        .retain(|column| column.id != column_id);
+    for (at, column) in document.board.columns.iter_mut().enumerate() {
+        column.position = i64::try_from(at).expect("a column index fits");
+    }
+    commands::save_document(&harness.state, document, Vec::new()).expect("the column is removed");
+
+    assert_eq!(
+        commands::capture_target(&harness.state)
+            .expect("the target is read")
+            .map(|target| target.column_id),
+        Some(column_id),
+        "置き場所は覚えたものをそのまま返す"
+    );
 }
 
 #[test]
@@ -972,4 +516,31 @@ fn the_quick_capture_shortcut_is_remembered_as_it_was_given() {
         startup.quick_capture_shortcut.as_deref(),
         Some("ctrl-shift-n")
     );
+}
+
+/// ボードを跨いだ書き込みも、同じ 1 本の口を通る（ADR 0039）。
+///
+/// クイックキャプチャの窓は、開いているボード以外にも書きます。Rust から見れば
+/// 「頼まれた文書を書く」だけで、どの窓が呼んだかは関係ありません。
+#[test]
+fn a_board_that_is_not_open_is_written_through_the_same_door() {
+    let harness = Harness::open();
+    let other_id: BoardId = commands::create_board(&harness.state, "受け皿")
+        .expect("a board is created")
+        .board
+        .id;
+
+    let mut other = commands::load_documents(&harness.state)
+        .expect("the documents load")
+        .into_iter()
+        .find(|document| document.board.id == other_id)
+        .expect("the new board is there");
+    other.board.name = "別の窓が書いた".to_string();
+    commands::save_document(&harness.state, other, Vec::new()).expect("the document is saved");
+
+    let written = Database::open(&harness.path)
+        .expect("the database opens")
+        .load_board_by_id(other_id)
+        .expect("the other board loads");
+    assert_eq!(written.name, "別の窓が書いた");
 }

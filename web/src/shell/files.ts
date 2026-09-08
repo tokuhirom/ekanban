@@ -75,7 +75,7 @@ export function useFileActions(notify: (alert: Alert) => void, board: Board | nu
           (destination) =>
             format === "markdown"
               ? ipc.writeTextFile(destination, extension, renderBoardMarkdown(board))
-              : ipc.exportBoardJson(destination),
+              : ipc.exportBoardJson(board.id, destination),
         );
       },
       backupDatabase: () => {

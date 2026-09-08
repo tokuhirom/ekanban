@@ -11,13 +11,11 @@
 
 import { expect, test, type Page } from "@playwright/test";
 
-import { invoke, openBoard, startHarness, stopHarness } from "./harness";
+import { openBoard, startHarness, stopHarness, storedBoard, storedStartup } from "./harness";
 
 // `window.ekanbanMenu` の宣言を読み込むためだけの取り込み（値は使わない）。
 import type {} from "../src/ipc/harness";
 import type { AppAction } from "../src/ipc/types/AppAction";
-import type { Snapshot } from "../src/ipc/types/Snapshot";
-import type { StartupState } from "../src/ipc/types/StartupState";
 
 test.beforeEach(startHarness);
 test.afterEach(stopHarness);
@@ -29,15 +27,9 @@ async function chooseMenu(page: Page, action: AppAction): Promise<void> {
   }, action);
 }
 
-async function storedStartup(): Promise<StartupState> {
-  const response = await invoke("startup_state");
-  return (await response.json()) as StartupState;
-}
-
 async function storedTitles(): Promise<string[]> {
-  const response = await invoke("snapshot");
-  const snapshot = (await response.json()) as Snapshot;
-  return snapshot.board.columns.flatMap((column) => column.cards.map((card) => card.title));
+  const board = await storedBoard();
+  return board.columns.flatMap((column) => column.cards.map((card) => card.title));
 }
 
 test("「カードを追加」は、選んでいるカードのカラムに下書きを開く", async ({ page }) => {

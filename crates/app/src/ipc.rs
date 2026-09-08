@@ -9,7 +9,7 @@
 use std::path::{Path, PathBuf};
 
 use ekanban_core::db::{FilterState, WindowBoundsState};
-use ekanban_core::model::{BoardId, CardId, ChecklistItemDraft, ColumnId, TagId};
+use ekanban_core::model::{BoardId, ColumnId};
 use tauri::{AppHandle, Emitter as _, State, WebviewWindow};
 use tauri_plugin_dialog::DialogExt as _;
 use tauri_plugin_opener::OpenerExt as _;
@@ -20,7 +20,7 @@ use crate::error::AppError;
 use crate::events;
 use crate::shortcut::KeyPress;
 use crate::snapshot::QuickCaptureStatus;
-use crate::snapshot::{CaptureTarget, Snapshot, StartupState, ThemePreference};
+use crate::snapshot::{CaptureTarget, StartupState, ThemePreference};
 use crate::state::AppState;
 
 type Reply<T> = Result<T, AppError>;
@@ -33,214 +33,47 @@ pub fn startup_state(state: State<'_, AppState>) -> Reply<StartupState> {
 }
 
 #[tauri::command]
-pub fn snapshot(state: State<'_, AppState>) -> Reply<Snapshot> {
-    state.snapshot()
-}
-
-#[tauri::command]
-pub fn create_board(state: State<'_, AppState>, name: String) -> Reply<Snapshot> {
-    commands::create_board(&state, &name)
-}
-
-#[tauri::command]
-pub fn rename_board(state: State<'_, AppState>, name: String) -> Reply<Snapshot> {
-    commands::rename_board(&state, &name)
-}
-
-#[tauri::command]
-pub fn delete_board(state: State<'_, AppState>, board_id: BoardId) -> Reply<Snapshot> {
-    commands::delete_board(&state, board_id)
-}
-
-#[tauri::command]
-pub fn switch_board(state: State<'_, AppState>, board_id: BoardId) -> Reply<Snapshot> {
-    commands::switch_board(&state, board_id)
-}
-
-// ---------------------------------------------------------------- カード
-
-#[tauri::command]
-#[allow(clippy::too_many_arguments)]
-pub fn add_card(
-    state: State<'_, AppState>,
-    column_id: ColumnId,
-    title: String,
-    description: String,
-    due_date: String,
-    tag_ids: Vec<TagId>,
-    checklist: Vec<ChecklistItemDraft>,
-) -> Reply<Snapshot> {
-    commands::add_card(
-        &state,
-        column_id,
-        &title,
-        &description,
-        &due_date,
-        tag_ids,
-        checklist,
-    )
-}
-
-#[tauri::command]
-#[allow(clippy::too_many_arguments)]
-pub fn update_card(
-    state: State<'_, AppState>,
-    card_id: CardId,
-    title: String,
-    description: String,
-    due_date: String,
-    tag_ids: Vec<TagId>,
-    checklist: Vec<ChecklistItemDraft>,
-) -> Reply<Snapshot> {
-    commands::update_card(
-        &state,
-        card_id,
-        &title,
-        &description,
-        &due_date,
-        tag_ids,
-        checklist,
-    )
-}
-
-#[tauri::command]
-pub fn move_card(
-    state: State<'_, AppState>,
-    card_id: CardId,
-    to_column_id: ColumnId,
-    to_index: usize,
-) -> Reply<Snapshot> {
-    commands::move_card(&state, card_id, to_column_id, to_index)
-}
-
-#[tauri::command]
-pub fn copy_card(state: State<'_, AppState>, card_id: CardId) -> Reply<Snapshot> {
-    commands::copy_card(&state, card_id)
-}
-
-#[tauri::command]
-pub fn delete_card(state: State<'_, AppState>, card_id: CardId) -> Reply<Snapshot> {
-    commands::delete_card(&state, card_id)
-}
-
-#[tauri::command]
-pub fn archive_card(state: State<'_, AppState>, card_id: CardId) -> Reply<Snapshot> {
-    commands::archive_card(&state, card_id)
-}
-
-#[tauri::command]
-pub fn restore_card(state: State<'_, AppState>, card_id: CardId) -> Reply<Snapshot> {
-    commands::restore_card(&state, card_id)
-}
-
-#[tauri::command]
-pub fn set_card_due_date(
-    state: State<'_, AppState>,
-    card_id: CardId,
-    due_date: String,
-) -> Reply<Snapshot> {
-    commands::set_card_due_date(&state, card_id, &due_date)
-}
-
-#[tauri::command]
-pub fn set_card_tags(
-    state: State<'_, AppState>,
-    card_id: CardId,
-    tag_ids: Vec<TagId>,
-) -> Reply<Snapshot> {
-    commands::set_card_tags(&state, card_id, tag_ids)
-}
-
-// ---------------------------------------------------------------- カラム
-
-#[tauri::command]
-pub fn add_column(state: State<'_, AppState>, name: String) -> Reply<Snapshot> {
-    commands::add_column(&state, &name)
-}
-
-#[tauri::command]
-pub fn rename_column(
-    state: State<'_, AppState>,
-    column_id: ColumnId,
-    name: String,
-) -> Reply<Snapshot> {
-    commands::rename_column(&state, column_id, &name)
-}
-
-#[tauri::command]
-pub fn set_column_done(
-    state: State<'_, AppState>,
-    column_id: ColumnId,
-    done: bool,
-) -> Reply<Snapshot> {
-    commands::set_column_done(&state, column_id, done)
-}
-
-#[tauri::command]
-pub fn remove_column(state: State<'_, AppState>, column_id: ColumnId) -> Reply<Snapshot> {
-    commands::remove_column(&state, column_id)
-}
-
-#[tauri::command]
-pub fn move_column(
-    state: State<'_, AppState>,
-    column_id: ColumnId,
-    to_index: usize,
-) -> Reply<Snapshot> {
-    commands::move_column(&state, column_id, to_index)
-}
-
-#[tauri::command]
-pub fn archive_column(state: State<'_, AppState>, column_id: ColumnId) -> Reply<Snapshot> {
-    commands::archive_column(&state, column_id)
-}
-
-// ---------------------------------------------------------------- タグ
-
-#[tauri::command]
-pub fn add_tag(state: State<'_, AppState>, name: String, color: String) -> Reply<Snapshot> {
-    commands::add_tag(&state, &name, &color)
-}
-
-#[tauri::command]
-pub fn rename_tag(state: State<'_, AppState>, tag_id: TagId, name: String) -> Reply<Snapshot> {
-    commands::rename_tag(&state, tag_id, &name)
-}
-
-#[tauri::command]
-pub fn set_tag_color(state: State<'_, AppState>, tag_id: TagId, color: String) -> Reply<Snapshot> {
-    commands::set_tag_color(&state, tag_id, &color)
-}
-
-#[tauri::command]
-pub fn remove_tag(state: State<'_, AppState>, tag_id: TagId) -> Reply<Snapshot> {
-    commands::remove_tag(&state, tag_id)
-}
-
-// ---------------------------------------------------------------- 取り消し
-
-#[tauri::command]
 pub fn load_documents(state: State<'_, AppState>) -> Reply<Vec<commands::BoardDocument>> {
     commands::load_documents(&state)
 }
 
+/// 盤面を書く。**書いたことをほかの窓へ知らせるのはここ**です。
+///
+/// 書いた本人には戻り値で届くので、送るのはボードの窓が書いていないときだけ。
+/// クイックキャプチャの窓が書いたら、ボードの窓は読み直します
+/// （`docs/DESIGN.md`「コマンドとイベント」）。
 #[tauri::command]
 pub fn save_document(
+    app: AppHandle,
+    window: WebviewWindow,
     state: State<'_, AppState>,
     document: commands::BoardDocument,
     events: Vec<ekanban_core::model::CardEvent>,
 ) -> Reply<commands::SavedBoard> {
-    commands::save_document(&state, document, events)
+    let saved = commands::save_document(&state, document, events)?;
+    if window.label() != crate::run::BOARD_WINDOW {
+        if let Err(error) = app.emit_to(crate::run::BOARD_WINDOW, events::BOARD_CHANGED, ()) {
+            ekanban_core::diagnostics::log(&format!(
+                "failed to tell the board about a change: {error}"
+            ));
+        }
+    }
+    Ok(saved)
 }
 
 #[tauri::command]
-pub fn undo(state: State<'_, AppState>) -> Reply<Snapshot> {
-    commands::undo(&state)
+pub fn create_board(state: State<'_, AppState>, name: String) -> Reply<commands::BoardDocument> {
+    commands::create_board(&state, &name)
 }
 
 #[tauri::command]
-pub fn redo(state: State<'_, AppState>) -> Reply<Snapshot> {
-    commands::redo(&state)
+pub fn delete_board(state: State<'_, AppState>, board_id: BoardId) -> Reply<()> {
+    commands::delete_board(&state, board_id)
+}
+
+#[tauri::command]
+pub fn set_open_board(state: State<'_, AppState>, board_id: BoardId) -> Reply<()> {
+    commands::set_open_board(&state, board_id)
 }
 
 // ---------------------------------------------------------------- 絞り込み
@@ -264,8 +97,10 @@ pub fn set_sidebar_collapsed(state: State<'_, AppState>, collapsed: bool) -> Rep
 
 /// ウィンドウのタイトルを差し替える。
 ///
-/// 文言は `Snapshot::window_title` が組んだものをそのまま受けます。ここに
-/// 組み立てを書くと、同じ規則が Rust と TypeScript の 2 か所に散ります。
+/// 文言は webview が組みます（`web/src/state/board.ts`）。ボード名をどう見せるか
+/// は表示の判断なので、盤面と同じところに置きました（[ADR 0039]）。
+///
+/// [ADR 0039]: ../../../docs/adr/0039-the-board-model-moves-to-typescript.md
 #[tauri::command]
 pub fn set_window_title(window: WebviewWindow, title: String) {
     // 失敗しても盤面は動く。使う人に打てる手も無いので、記録だけ残す。
@@ -282,8 +117,12 @@ pub fn set_window_bounds(state: State<'_, AppState>, bounds: WindowBoundsState) 
 // ---------------------------------------------------------------- ファイル
 
 #[tauri::command]
-pub fn export_board_json(state: State<'_, AppState>, destination: PathBuf) -> Reply<PathBuf> {
-    commands::export_board_json(&state, &destination)
+pub fn export_board_json(
+    state: State<'_, AppState>,
+    board_id: BoardId,
+    destination: PathBuf,
+) -> Reply<PathBuf> {
+    commands::export_board_json(&state, board_id, &destination)
 }
 
 #[tauri::command]
@@ -393,19 +232,13 @@ pub fn open_url(app: AppHandle, url: String) {
 
 // ---------------------------------------------------------------- キャプチャ
 
-/// クイックキャプチャの入れ先。窓の見出しに出す「〇〇ボード / △△カラム」。
+/// クイックキャプチャの入れ先。**名前は付きません**——引くのは画面です
+/// （[ADR 0039]）。
+///
+/// [ADR 0039]: ../../../docs/adr/0039-the-board-model-moves-to-typescript.md
 #[tauri::command]
 pub fn capture_target(state: State<'_, AppState>) -> Reply<Option<CaptureTarget>> {
     commands::capture_target(&state)
-}
-
-/// 開いているボードのカラムをキャプチャ先にする。`None` で既定に戻す。
-#[tauri::command]
-pub fn set_capture_column(
-    state: State<'_, AppState>,
-    column_id: Option<ColumnId>,
-) -> Reply<Snapshot> {
-    commands::set_capture_column(&state, column_id)
 }
 
 /// 割り当てのダイアログが開くときに読むもの。使えない環境の理由と、保存されて
@@ -444,18 +277,6 @@ pub fn set_menu_accelerators_active(app: AppHandle, active: bool) {
 #[tauri::command]
 pub fn close_capture_window(app: AppHandle, focus_board: bool) {
     crate::capture::close(&app, focus_board);
-}
-
-#[tauri::command]
-pub fn capture_card(app: AppHandle, state: State<'_, AppState>, title: String) -> Reply<Snapshot> {
-    let snapshot = commands::capture_card(&state, &title)?;
-    // ボードの窓は、自分が呼んでいないこの変更を知らない（`docs/DESIGN.md`「コマンドとイベント」）。
-    if let Err(error) = app.emit_to(crate::run::BOARD_WINDOW, events::BOARD_CHANGED, &snapshot) {
-        ekanban_core::diagnostics::log(&format!(
-            "failed to tell the board about a capture: {error}"
-        ));
-    }
-    Ok(snapshot)
 }
 
 #[tauri::command]

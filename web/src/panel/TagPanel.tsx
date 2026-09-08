@@ -15,9 +15,9 @@
 
 import { useState } from "react";
 
-import { useIpc } from "../ipc";
 import type { AppError } from "../ipc/types/AppError";
-import type { Snapshot } from "../ipc/types/Snapshot";
+import type { BoardDocument, Outcome } from "../model/board";
+import { addTag, removeTag, renameTag, setTagColor } from "../model/board";
 import type { Tag } from "../ipc/types/Tag";
 import { useAppActions } from "../shell/actions";
 import { isComposing } from "../shell/ime";
@@ -25,12 +25,11 @@ import { AUTO_TAG_COLOR, tagColor } from "./tags";
 
 interface Props {
   tags: readonly Tag[];
-  run: (call: () => Promise<Snapshot>) => Promise<AppError | null>;
+  run: (act: (document: BoardDocument) => Outcome<unknown>) => Promise<AppError | null>;
   onClose: () => void;
 }
 
 export function TagPanel({ tags, run, onClose }: Props) {
-  const ipc = useIpc();
   const [name, setName] = useState("");
   const [failed, setFailed] = useState<AppError | null>(null);
 
@@ -47,7 +46,7 @@ export function TagPanel({ tags, run, onClose }: Props) {
     // 2 回目は欄が空なので、上の行で戻ります。
     setName("");
     // 色は渡しません。決めていないタグは自動で色が付きます（ADR 0044）。
-    const failure = await run(() => ipc.addTag(name, AUTO_TAG_COLOR));
+    const failure = await run((document) => addTag(document, name, AUTO_TAG_COLOR));
     setFailed(failure);
     // 断られた名前は打ち直せるように戻します（`docs/DESIGN.md`）。**ただし、
     // 往復のあいだに次の名前が打たれていたら戻しません**——断られた理由は欄の
@@ -129,15 +128,14 @@ function TagRow({
   run,
 }: {
   tag: Tag;
-  run: (call: () => Promise<Snapshot>) => Promise<AppError | null>;
+  run: (act: (document: BoardDocument) => Outcome<unknown>) => Promise<AppError | null>;
 }) {
-  const ipc = useIpc();
   const [name, setName] = useState(tag.name);
   const [failed, setFailed] = useState<AppError | null>(null);
 
   async function rename() {
     if (name.trim() === "" || name === tag.name) return;
-    setFailed(await run(() => ipc.renameTag(tag.id, name)));
+    setFailed(await run((document) => renameTag(document, tag.id, name)));
   }
 
   return (
@@ -166,7 +164,7 @@ function TagRow({
         value={tagColor(tag)}
         aria-label={`${tag.name} の色`}
         onChange={(event) => {
-          void run(() => ipc.setTagColor(tag.id, event.target.value));
+          void run((document) => setTagColor(document, tag.id, event.target.value));
         }}
       />
       {/* タグを消してもカードは残る（付いていたタグが外れるだけ）ので、Undo で
@@ -176,7 +174,7 @@ function TagRow({
         className="danger-item remove-tag"
         aria-label={`${tag.name} を削除`}
         onClick={() => {
-          void run(() => ipc.removeTag(tag.id));
+          void run((document) => removeTag(document, tag.id));
         }}
       >
         削除

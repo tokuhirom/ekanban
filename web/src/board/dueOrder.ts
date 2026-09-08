@@ -1,7 +1,7 @@
 // ボード一覧の件数から、その 1 枚へ辿るための並び（#136）。
 //
 // **判定はここでしません。** 期限が過ぎているかどうかを決めるのは Rust の
-// `due_status` で、ここが見るのはその結果（`Snapshot.due_statuses`）だけです
+// `dueStatus` で、ここが見るのはその結果（`BoardState.dueStatuses`）だけです
 // （`docs/DESIGN.md`「絞り込みと検索」）。
 
 import type { Board } from "../ipc/types/Board";

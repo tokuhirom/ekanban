@@ -25,7 +25,7 @@ import type { CaptureTarget } from "./types/CaptureTarget";
 import type { Platform } from "./types/Platform";
 import type { QuickCaptureStatus } from "./types/QuickCaptureStatus";
 import type { BoardDocument } from "./types/BoardDocument";
-import type { Snapshot } from "./types/Snapshot";
+import type { SavedBoard } from "./types/SavedBoard";
 import type { StartupState } from "./types/StartupState";
 import type { WebSection } from "./types/WebSection";
 import { invoke as callWasm, startWasm } from "./wasmModule";
@@ -96,51 +96,15 @@ export function fireAppAction(action: AppAction): void {
 
 export const wasmIpc: Ipc = {
   startupState: () => call<StartupState>("startup_state"),
-  snapshot: () => call<Snapshot>("snapshot"),
   loadDocuments: () => call<BoardDocument[]>("load_documents"),
-  switchBoard: (boardId) => call<Snapshot>("switch_board", { boardId }),
-  createBoard: (name) => call<Snapshot>("create_board", { name }),
-  renameBoard: (name) => call<Snapshot>("rename_board", { name }),
-  deleteBoard: (boardId) => call<Snapshot>("delete_board", { boardId }),
-  addCard: (columnId, title, description, dueDate, tagIds, checklist) =>
-    call<Snapshot>("add_card", {
-      columnId,
-      title,
-      description,
-      dueDate,
-      tagIds,
-      checklist,
-    }),
-  updateCard: (cardId, title, description, dueDate, tagIds, checklist) =>
-    call<Snapshot>("update_card", {
-      cardId,
-      title,
-      description,
-      dueDate,
-      tagIds,
-      checklist,
-    }),
-  copyCard: (cardId) => call<Snapshot>("copy_card", { cardId }),
-  deleteCard: (cardId) => call<Snapshot>("delete_card", { cardId }),
-  archiveCard: (cardId) => call<Snapshot>("archive_card", { cardId }),
-  restoreCard: (cardId) => call<Snapshot>("restore_card", { cardId }),
-  setCardTags: (cardId, tagIds) => call<Snapshot>("set_card_tags", { cardId, tagIds }),
-  setCardDueDate: (cardId, dueDate) => call<Snapshot>("set_card_due_date", { cardId, dueDate }),
-  addColumn: (name) => call<Snapshot>("add_column", { name }),
-  renameColumn: (columnId, name) => call<Snapshot>("rename_column", { columnId, name }),
-  removeColumn: (columnId) => call<Snapshot>("remove_column", { columnId }),
-  setColumnDone: (columnId, done) =>
-    call<Snapshot>("set_column_done", { columnId, done }),
-  archiveColumn: (columnId) => call<Snapshot>("archive_column", { columnId }),
-  addTag: (name, color) => call<Snapshot>("add_tag", { name, color }),
-  renameTag: (tagId, name) => call<Snapshot>("rename_tag", { tagId, name }),
-  setTagColor: (tagId, color) => call<Snapshot>("set_tag_color", { tagId, color }),
-  removeTag: (tagId) => call<Snapshot>("remove_tag", { tagId }),
-  moveCard: (cardId, toColumnId, toIndex) =>
-    call<Snapshot>("move_card", { cardId, toColumnId, toIndex }),
-  moveColumn: (columnId, toIndex) => call<Snapshot>("move_column", { columnId, toIndex }),
-  undo: () => call<Snapshot>("undo"),
-  redo: () => call<Snapshot>("redo"),
+  saveDocument: (document, events) => call<SavedBoard>("save_document", { document, events }),
+  setOpenBoard: async (boardId) => {
+    await call("set_open_board", { boardId });
+  },
+  createBoard: (name) => call<BoardDocument>("create_board", { name }),
+  deleteBoard: async (boardId) => {
+    await call("delete_board", { boardId });
+  },
   setFilterState: async (filter) => {
     await call("set_filter_state", { filter });
   },
@@ -170,8 +134,8 @@ export const wasmIpc: Ipc = {
     download(destination, contents, contentType(extension));
     return Promise.resolve(destination);
   },
-  exportBoardJson: async (destination) => {
-    const contents = await call<string>("export_board_json_contents");
+  exportBoardJson: async (boardId, destination) => {
+    const contents = await call<string>("export_board_json_contents", { boardId });
     download(destination, contents, "application/json");
     return destination;
   },
@@ -198,8 +162,12 @@ export const wasmIpc: Ipc = {
     window.open(allowed, "_blank", "noopener,noreferrer");
   },
   captureTarget: () => call<CaptureTarget | null>("capture_target"),
-  setCaptureColumn: (columnId) => call<Snapshot>("set_capture_column", { columnId }),
-  captureCard: (title) => call<Snapshot>("capture_card", { title }),
+  setCaptureTarget: async (target) => {
+    await call("set_capture_target", {
+      boardId: target?.boardId ?? null,
+      columnId: target?.columnId ?? null,
+    });
+  },
   quickCaptureStatus: () => call<QuickCaptureStatus>("quick_capture_status"),
   // ネイティブのメニューがありません。外すものがない。
   setMenuAcceleratorsActive: () => Promise.resolve(),

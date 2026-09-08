@@ -309,8 +309,8 @@ export interface MenuProps {
   onArchive: () => void;
   onDelete: () => void;
   onToggleTag: (tagId: number) => void;
-  /** 期限をその場で当て外しする（#132）。`""` で期限なし。 */
-  onSetDueDate: (dueDate: string) => void;
+  /** 期限をその場で当て外しする（#132）。`null` で期限なし。 */
+  onSetDueDate: (dueDate: string | null) => void;
 }
 
 /// カードの右クリックメニュー。
@@ -356,7 +356,7 @@ export function CardMenu({
         コピー
       </button>
       {/* 期限は、パネルを開かずに当て外しできるようにします（#132）。
-          当てるのは `set_card_due_date` の 1 コマンドなので、Undo も 1 手。 */}
+          当てるのは `setCardDueDate` の 1 操作なので、Undo も 1 手。 */}
       <span className="menu-label">期限</span>
       {dueChoices(today).map((choice) => (
         <button
@@ -378,7 +378,7 @@ export function CardMenu({
         className="ghost"
         onClick={() => {
           onClose();
-          onSetDueDate("");
+          onSetDueDate(null);
         }}
       >
         {card.dueDate === null ? "✓ " : "□ "}

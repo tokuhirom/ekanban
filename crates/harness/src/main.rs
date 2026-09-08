@@ -158,6 +158,12 @@ fn invoke(command: &str, args: Value, state: &AppState) -> Result<Value, AppErro
     }
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
+    struct ExportBoard {
+        board_id: i64,
+        destination: PathBuf,
+    }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
     struct Url {
         url: String,
     }
@@ -179,10 +185,14 @@ fn invoke(command: &str, args: Value, state: &AppState) -> Result<Value, AppErro
                 .unwrap_or_else(|| PathBuf::from("."));
             ok(directory.join(file_name))
         }
-        "export_board_json" => ok(commands::export_board_json(
-            state,
-            &read::<Destination>(args)?.destination,
-        )?),
+        "export_board_json" => {
+            let a: ExportBoard = read(args)?;
+            ok(commands::export_board_json(
+                state,
+                a.board_id,
+                &a.destination,
+            )?)
+        }
         "write_text_file" => {
             let a: TextFile = read(args)?;
             ok(commands::write_text_file(

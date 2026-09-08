@@ -47,102 +47,20 @@ pub fn invoke(command: &str, args: Value, state: &AppState) -> Option<Result<Val
 fn dispatch(command: &str, args: Value, state: &AppState) -> Result<Option<Value>, AppError> {
     let answer = match command {
         "startup_state" => json(commands::startup_state(state)?)?,
-        "snapshot" => json(state.snapshot()?)?,
-        "switch_board" => json(commands::switch_board(
-            state,
-            read::<BoardId>(args)?.board_id,
-        )?)?,
+        "load_documents" => json(commands::load_documents(state)?)?,
+        "save_document" => {
+            let a: SaveDocument = read(args)?;
+            json(commands::save_document(state, a.document, a.events)?)?
+        }
         "create_board" => json(commands::create_board(state, &read::<Name>(args)?.name)?)?,
-        "rename_board" => json(commands::rename_board(state, &read::<Name>(args)?.name)?)?,
         "delete_board" => json(commands::delete_board(
             state,
             read::<BoardId>(args)?.board_id,
         )?)?,
-        "add_card" => {
-            let a: AddCard = read(args)?;
-            json(commands::add_card(
-                state,
-                a.column_id,
-                &a.title,
-                &a.description,
-                &a.due_date,
-                a.tag_ids,
-                a.checklist,
-            )?)?
-        }
-        "update_card" => {
-            let a: UpdateCard = read(args)?;
-            json(commands::update_card(
-                state,
-                a.card_id,
-                &a.title,
-                &a.description,
-                &a.due_date,
-                a.tag_ids,
-                a.checklist,
-            )?)?
-        }
-        "copy_card" => json(commands::copy_card(state, read::<CardId>(args)?.card_id)?)?,
-        "delete_card" => json(commands::delete_card(state, read::<CardId>(args)?.card_id)?)?,
-        "archive_card" => json(commands::archive_card(
+        "set_open_board" => json(commands::set_open_board(
             state,
-            read::<CardId>(args)?.card_id,
+            read::<BoardId>(args)?.board_id,
         )?)?,
-        "restore_card" => json(commands::restore_card(
-            state,
-            read::<CardId>(args)?.card_id,
-        )?)?,
-        "set_card_tags" => {
-            let a: CardTags = read(args)?;
-            json(commands::set_card_tags(state, a.card_id, a.tag_ids)?)?
-        }
-        "set_card_due_date" => {
-            let a: CardDueDate = read(args)?;
-            json(commands::set_card_due_date(state, a.card_id, &a.due_date)?)?
-        }
-        "add_column" => json(commands::add_column(state, &read::<Name>(args)?.name)?)?,
-        "rename_column" => {
-            let a: ColumnName = read(args)?;
-            json(commands::rename_column(state, a.column_id, &a.name)?)?
-        }
-        "set_column_done" => {
-            let a: ColumnDone = read(args)?;
-            json(commands::set_column_done(state, a.column_id, a.done)?)?
-        }
-        "remove_column" => json(commands::remove_column(
-            state,
-            read::<ColumnId>(args)?.column_id,
-        )?)?,
-        "archive_column" => json(commands::archive_column(
-            state,
-            read::<ColumnId>(args)?.column_id,
-        )?)?,
-        "add_tag" => {
-            let a: AddTag = read(args)?;
-            json(commands::add_tag(state, &a.name, &a.color)?)?
-        }
-        "rename_tag" => {
-            let a: TagName = read(args)?;
-            json(commands::rename_tag(state, a.tag_id, &a.name)?)?
-        }
-        "set_tag_color" => {
-            let a: TagColor = read(args)?;
-            json(commands::set_tag_color(state, a.tag_id, &a.color)?)?
-        }
-        "remove_tag" => json(commands::remove_tag(state, read::<TagId>(args)?.tag_id)?)?,
-        "move_card" => {
-            let a: MoveCard = read(args)?;
-            json(commands::move_card(
-                state,
-                a.card_id,
-                a.to_column_id,
-                a.to_index,
-            )?)?
-        }
-        "move_column" => {
-            let a: MoveColumn = read(args)?;
-            json(commands::move_column(state, a.column_id, a.to_index)?)?
-        }
         "set_filter_state" => json(commands::set_filter_state(
             state,
             &read::<Filtering>(args)?.filter,
@@ -155,19 +73,14 @@ fn dispatch(command: &str, args: Value, state: &AppState) -> Result<Option<Value
             state,
             read::<Theme>(args)?.preference,
         )?)?,
-        "load_documents" => json(commands::load_documents(state)?)?,
-        "save_document" => {
-            let a: SaveDocument = read(args)?;
-            json(commands::save_document(state, a.document, a.events)?)?
-        }
-        "undo" => json(commands::undo(state)?)?,
-        "redo" => json(commands::redo(state)?)?,
         "capture_target" => json(commands::capture_target(state)?)?,
-        "set_capture_column" => json(commands::set_capture_column(
-            state,
-            read::<CaptureColumn>(args)?.column_id,
-        )?)?,
-        "capture_card" => json(commands::capture_card(state, &read::<Title>(args)?.title)?)?,
+        "set_capture_target" => {
+            let a: SetCaptureTarget = read(args)?;
+            json(commands::set_capture_target(
+                state,
+                a.board_id.zip(a.column_id),
+            )?)?
+        }
         "log_frontend_error" => {
             commands::log_frontend_error(&read::<Message>(args)?.message);
             json(())?
@@ -222,96 +135,6 @@ struct Name {
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct AddCard {
-    column_id: i64,
-    title: String,
-    description: String,
-    due_date: String,
-    tag_ids: Vec<i64>,
-    checklist: Vec<ekanban_core::model::ChecklistItemDraft>,
-}
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct UpdateCard {
-    card_id: i64,
-    title: String,
-    description: String,
-    due_date: String,
-    tag_ids: Vec<i64>,
-    checklist: Vec<ekanban_core::model::ChecklistItemDraft>,
-}
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct CardId {
-    card_id: i64,
-}
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct CardTags {
-    card_id: i64,
-    tag_ids: Vec<i64>,
-}
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct CardDueDate {
-    card_id: i64,
-    due_date: String,
-}
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ColumnId {
-    column_id: i64,
-}
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ColumnName {
-    column_id: i64,
-    name: String,
-}
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ColumnDone {
-    column_id: i64,
-    done: bool,
-}
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AddTag {
-    name: String,
-    color: String,
-}
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct TagName {
-    tag_id: i64,
-    name: String,
-}
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct TagColor {
-    tag_id: i64,
-    color: String,
-}
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct TagId {
-    tag_id: i64,
-}
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct MoveCard {
-    card_id: i64,
-    to_column_id: i64,
-    to_index: usize,
-}
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct MoveColumn {
-    column_id: i64,
-    to_index: usize,
-}
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct Filtering {
     filter: ekanban_core::store::FilterState,
 }
@@ -338,11 +161,7 @@ struct Theme {
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct CaptureColumn {
+struct SetCaptureTarget {
+    board_id: Option<ekanban_core::model::BoardId>,
     column_id: Option<ekanban_core::model::ColumnId>,
-}
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Title {
-    title: String,
 }

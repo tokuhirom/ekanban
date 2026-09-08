@@ -1002,6 +1002,19 @@ impl Database {
     /// 1 回と、ほかの窓が書いたときだけです。
     ///
     /// [ADR 0039]: ../../../../docs/adr/0039-the-board-model-moves-to-typescript.md
+    /// 1 つのボードの版だけを読む。
+    ///
+    /// 作ったばかりのボードを webview へ返すときに要ります（`create_board`）。
+    /// 盤面まで読み直さずに済ませるためのものです。
+    pub fn load_board_rev(&self, id: BoardId) -> Result<i64, StoreError> {
+        self.connection
+            .query_row("SELECT rev FROM boards WHERE id = ?1", params![id], |row| {
+                row.get::<_, i64>(0)
+            })
+            .optional()?
+            .ok_or(StoreError::NoBoard)
+    }
+
     pub fn load_documents(&self) -> Result<Vec<StoredDocument>, StoreError> {
         let mut statement = self
             .connection

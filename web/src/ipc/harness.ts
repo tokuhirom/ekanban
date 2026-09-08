@@ -14,7 +14,7 @@ import type { AppAction } from "./types/AppAction";
 import type { CaptureTarget } from "./types/CaptureTarget";
 import type { QuickCaptureStatus } from "./types/QuickCaptureStatus";
 import type { BoardDocument } from "./types/BoardDocument";
-import type { Snapshot } from "./types/Snapshot";
+import type { SavedBoard } from "./types/SavedBoard";
 import type { StartupState } from "./types/StartupState";
 
 /// ハーネスの居場所。`?harness=http://127.0.0.1:1421` で差し替えられます。
@@ -47,66 +47,23 @@ declare global {
     /** ハーネスのときだけ生える、メニューを押したことにする口。 */
     ekanbanMenu?: (action: AppAction) => void;
     /** 同じく、`board:changed` が届いたことにする口。 */
-    ekanbanBoardChanged?: (snapshot: Snapshot) => void;
+    ekanbanBoardChanged?: () => void;
   }
 }
 
 export function harnessIpc(base: string): Ipc {
   return {
     startupState: () => call<StartupState>(base, "startup_state"),
-    snapshot: () => call<Snapshot>(base, "snapshot"),
     loadDocuments: () => call<BoardDocument[]>(base, "load_documents"),
-    switchBoard: (boardId) => call<Snapshot>(base, "switch_board", { boardId }),
-    createBoard: (name) => call<Snapshot>(base, "create_board", { name }),
-    renameBoard: (name) => call<Snapshot>(base, "rename_board", { name }),
-    deleteBoard: (boardId) => call<Snapshot>(base, "delete_board", { boardId }),
-    addCard: (columnId, title, description, dueDate, tagIds, checklist) =>
-      call<Snapshot>(base, "add_card", {
-        columnId,
-        title,
-        description,
-        dueDate,
-        tagIds,
-        checklist,
-      }),
-    updateCard: (cardId, title, description, dueDate, tagIds, checklist) =>
-      call<Snapshot>(base, "update_card", {
-        cardId,
-        title,
-        description,
-        dueDate,
-        tagIds,
-        checklist,
-      }),
-    copyCard: (cardId) => call<Snapshot>(base, "copy_card", { cardId }),
-    deleteCard: (cardId) => call<Snapshot>(base, "delete_card", { cardId }),
-    archiveCard: (cardId) => call<Snapshot>(base, "archive_card", { cardId }),
-    restoreCard: (cardId) => call<Snapshot>(base, "restore_card", { cardId }),
-    setCardTags: (cardId, tagIds) =>
-      call<Snapshot>(base, "set_card_tags", { cardId, tagIds }),
-    setCardDueDate: (cardId, dueDate) =>
-      call<Snapshot>(base, "set_card_due_date", { cardId, dueDate }),
-    addColumn: (name) => call<Snapshot>(base, "add_column", { name }),
-    renameColumn: (columnId, name) =>
-      call<Snapshot>(base, "rename_column", { columnId, name }),
-    removeColumn: (columnId) =>
-      call<Snapshot>(base, "remove_column", { columnId }),
-    setColumnDone: (columnId, done) =>
-      call<Snapshot>(base, "set_column_done", { columnId, done }),
-    archiveColumn: (columnId) =>
-      call<Snapshot>(base, "archive_column", { columnId }),
-    addTag: (name, color) => call<Snapshot>(base, "add_tag", { name, color }),
-    renameTag: (tagId, name) =>
-      call<Snapshot>(base, "rename_tag", { tagId, name }),
-    setTagColor: (tagId, color) =>
-      call<Snapshot>(base, "set_tag_color", { tagId, color }),
-    removeTag: (tagId) => call<Snapshot>(base, "remove_tag", { tagId }),
-    moveCard: (cardId, toColumnId, toIndex) =>
-      call<Snapshot>(base, "move_card", { cardId, toColumnId, toIndex }),
-    moveColumn: (columnId, toIndex) =>
-      call<Snapshot>(base, "move_column", { columnId, toIndex }),
-    undo: () => call<Snapshot>(base, "undo"),
-    redo: () => call<Snapshot>(base, "redo"),
+    saveDocument: (document, events) =>
+      call<SavedBoard>(base, "save_document", { document, events }),
+    setOpenBoard: async (boardId) => {
+      await call(base, "set_open_board", { boardId });
+    },
+    createBoard: (name) => call<BoardDocument>(base, "create_board", { name }),
+    deleteBoard: async (boardId) => {
+      await call(base, "delete_board", { boardId });
+    },
     setFilterState: async (filter) => {
       await call(base, "set_filter_state", { filter });
     },
@@ -138,8 +95,8 @@ export function harnessIpc(base: string): Ipc {
       call<string | null>(base, "choose_save_path", { fileName }),
     writeTextFile: (destination, extension, contents) =>
       call<string>(base, "write_text_file", { destination, extension, contents }),
-    exportBoardJson: (destination) =>
-      call<string>(base, "export_board_json", { destination }),
+    exportBoardJson: (boardId, destination) =>
+      call<string>(base, "export_board_json", { boardId, destination }),
     backupDatabase: (destination) =>
       call<string>(base, "backup_database", { destination }),
     databaseLocation: () => call<string>(base, "database_location"),
@@ -159,9 +116,12 @@ export function harnessIpc(base: string): Ipc {
       await call(base, "open_url", { url });
     },
     captureTarget: () => call<CaptureTarget | null>(base, "capture_target"),
-    setCaptureColumn: (columnId) =>
-      call<Snapshot>(base, "set_capture_column", { columnId }),
-    captureCard: (title) => call<Snapshot>(base, "capture_card", { title }),
+    setCaptureTarget: async (target) => {
+      await call(base, "set_capture_target", {
+        boardId: target?.boardId ?? null,
+        columnId: target?.columnId ?? null,
+      });
+    },
     quickCaptureStatus: () =>
       call<QuickCaptureStatus>(base, "quick_capture_status"),
     // ブラウザにネイティブのメニューはないので、外すものがない。

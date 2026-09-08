@@ -13,12 +13,19 @@
 
 import { expect, test, type Page } from "@playwright/test";
 
-import { HARNESS_PORT, invoke, openBoard, startHarness, stopHarness } from "./harness";
+import {
+  HARNESS_PORT,
+  editStoredBoard,
+  openBoard,
+  startHarness,
+  stopHarness,
+  storedBoard,
+  storedStartup,
+} from "./harness";
 
 import type {} from "../src/ipc/harness";
+import { addCard } from "../src/model/board";
 import type { AppAction } from "../src/ipc/types/AppAction";
-import type { Snapshot } from "../src/ipc/types/Snapshot";
-import type { StartupState } from "../src/ipc/types/StartupState";
 
 test.beforeEach(startHarness);
 test.afterEach(stopHarness);
@@ -27,17 +34,6 @@ async function chooseMenu(page: Page, action: AppAction): Promise<void> {
   await page.evaluate((name: AppAction) => {
     window.ekanbanMenu?.(name);
   }, action);
-}
-
-async function storedBoard(): Promise<Snapshot["board"]> {
-  const response = await invoke("snapshot");
-  const snapshot = (await response.json()) as Snapshot;
-  return snapshot.board;
-}
-
-async function storedStartup(): Promise<StartupState> {
-  const response = await invoke("startup_state");
-  return (await response.json()) as StartupState;
 }
 
 async function openCapture(page: Page): Promise<void> {
@@ -109,12 +105,12 @@ test("入れ先を選ぶと、そのカラムに印が出て、キャプチャ�
 test("ほかの窓が盤面を変えたら、開いているボードにも出る", async ({ page }) => {
   await openBoard(page);
   // キャプチャの窓が書いたことにする。届く経路（`board:changed`）は本物では
-  // Rust が投げるので、ここでは届いたあとの差し替えだけを見る。
-  const response = await invoke("capture_card", { title: "別の窓から足したカード" });
-  const snapshot = (await response.json()) as Snapshot;
-  await page.evaluate((payload: Snapshot) => {
-    window.ekanbanBoardChanged?.(payload);
-  }, snapshot);
+  // Rust が投げるので、ここでは届いたあとの読み直しだけを見る。
+  const columnId = (await storedBoard()).columns[0]?.id ?? 0;
+  await editStoredBoard((document) => addCard(document, columnId, "別の窓から足したカード", ""));
+  await page.evaluate(() => {
+    window.ekanbanBoardChanged?.();
+  });
 
   await expect(page.locator(".card", { hasText: "別の窓から足したカード" })).toBeVisible();
 });

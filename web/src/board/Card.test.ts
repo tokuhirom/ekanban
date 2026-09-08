@@ -4,7 +4,7 @@
 // ここに画面の組み立てを持ち込むと、両方で同じことを確かめることになります。
 //
 // **時計を読むテストはありません**（#133）。今日が何日かは Rust から来る
-// `Snapshot.today` で、ここに渡すのもその値です。
+// `BoardState.today` で、ここに渡すのもその値です。
 
 import { describe, expect, it } from "vitest";
 

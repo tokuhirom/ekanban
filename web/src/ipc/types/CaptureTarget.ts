@@ -2,9 +2,14 @@
 
 /**
  * クイックキャプチャが書き込む先。アプリ全体で 1 つ（`docs/DESIGN.md`）。
+ *
+ * **名前は入っていません。** どのボードのどのカラムかを覚えているのが
+ * 置き場所の仕事で、それを「〇〇ボード / △△カラム」と読ませるのは画面の
+ * 仕事です（[ADR 0039]）。盤面は webview が全部持っているので、引くのに
+ * 往復が要りません。指している先が消えていたときに既定へ落とすのも、
+ * そちらで済みます（[ADR 0028]）。
+ *
+ * [ADR 0028]: ../../../docs/adr/0028-a-single-default-quick-capture-target.md
+ * [ADR 0039]: ../../../docs/adr/0039-the-board-model-moves-to-typescript.md
  */
-export type CaptureTarget = { boardId: number, columnId: number, 
-/**
- * 表示用に覚えておく名前。別のボードのカラムでも「どこに入るか」を出せるように。
- */
-boardName: string, columnName: string, };
+export type CaptureTarget = { boardId: number, columnId: number, };

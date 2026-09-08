@@ -6,7 +6,7 @@
 /** メニューが押された。積荷は `AppAction`。 */
 export const APP_ACTION = "app:action";
 
-/** 盤面が別のところで変わった。積荷は `Snapshot`。 */
+/** 盤面が別のところで変わった。**積荷はありません**——受け取った側が読み直す。 */
 export const BOARD_CHANGED = "board:changed";
 
 /** クイックキャプチャの保存が終わった。積荷は `CaptureResult`。 */

@@ -134,10 +134,9 @@ pub fn invoke(command: &str, args: JsValue) -> Result<JsValue, JsValue> {
 
 /// 読むだけのコマンド。写しを取り直す必要がありません。
 ///
-/// **`startup_state` はここに入りません。** 消えたタグを指したままの絞り込みを
-/// 既定に戻すことがあり、それは書き込みです。
+/// **`startup_state` はここに入りません。** 何も入っていなければ最初の盤面を
+/// 蒔き、開いていたボードを覚え直すので、それは書き込みです。
 const READ_ONLY: &[&str] = &[
-    "snapshot",
     "load_documents",
     "database_location",
     "capture_target",
@@ -165,7 +164,10 @@ fn host(command: &str, args: Value, state: &AppState) -> Result<Value, AppError>
         // 自分で組み立てるので、ここには来ません。
         //
         // [ADR 0045]: ../../../docs/adr/0045-two-kinds-of-export.md
-        "export_board_json_contents" => ok(commands::export_board_json_contents(state)?),
+        "export_board_json_contents" => ok(commands::export_board_json_contents(
+            state,
+            read::<ExportBoard>(args)?.board_id,
+        )?),
         // 盤面まるごとの控え。**SQLite のファイルではありません**（[ADR 0036]）
         // ——置いてあるのが JSON なので、そのままページに渡します。
         "stored_board" => ok(encoded_store()?),
@@ -331,6 +333,11 @@ fn parse_platform(platform: &str) -> Platform {
 #[serde(rename_all = "camelCase")]
 struct FileName {
     file_name: String,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ExportBoard {
+    board_id: i64,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
