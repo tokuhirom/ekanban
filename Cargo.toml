@@ -18,7 +18,7 @@ default-members = ["crates/app"]
 [workspace.package]
 # tagpr がここを書き換え、`script/bundle-mac` がここから .app のバージョンを作る
 # (`.tagpr` を見てください)。行頭の `version = "..."` はこの 1 か所だけにする。
-version = "0.2.2"
+version = "0.2.3"
 edition = "2021"
 license = "MIT"
 

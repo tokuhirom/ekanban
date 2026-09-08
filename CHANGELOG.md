@@ -1,5 +1,11 @@
 # Changelog
 
+## [v0.2.3](https://github.com/tokuhirom/ekanban/compare/v0.2.2...v0.2.3) - 2026-09-08
+
+### 変更
+- Let the bundler find the binary it just built by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/179
+- Let a column say that work in it is finished by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/181
+
 ## [v0.2.2](https://github.com/tokuhirom/ekanban/compare/v0.2.1...v0.2.2) - 2026-09-07
 
 ### 変更
