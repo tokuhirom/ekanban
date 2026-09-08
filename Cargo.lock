@@ -891,7 +891,7 @@ checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 
 [[package]]
 name = "ekanban-app"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "chrono",
  "ekanban-core",
@@ -910,7 +910,7 @@ dependencies = [
 
 [[package]]
 name = "ekanban-core"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "chrono",
  "rusqlite",
@@ -923,7 +923,7 @@ dependencies = [
 
 [[package]]
 name = "ekanban-harness"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "chrono",
  "ekanban-app",
@@ -935,7 +935,7 @@ dependencies = [
 
 [[package]]
 name = "ekanban-web"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "console_error_panic_hook",
  "ekanban-app",
