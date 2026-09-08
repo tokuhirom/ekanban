@@ -1,0 +1,43 @@
+# 0041. 画面のテストを 1 層にし、ハーネスを畳む
+
+- 日付: 2026-09-08
+- 状態: 草案（未確定）
+- 関連: [0021](0021-two-layer-testing-for-the-webview.md)（これを置き換える）、[0023](0023-verifying-the-webview-engines.md)、[0039](0039-the-board-model-moves-to-typescript.md)
+
+## 状況
+
+[0021](0021-two-layer-testing-for-the-webview.md) は「**偽物のバックエンドを TypeScript で書かない**」ために `ekanban-harness` を作った。`crates/app` のコマンドを同じ名前で HTTP に出し、Playwright が本物の `ekanban-core` を相手にする。`web/e2e/harness.ts` はテストごとにデータベースとハーネスを 1 つずつ立て、`invoke()` で盤面を読み戻して「画面と SQLite の両方」を見る。
+
+[0039](0039-the-board-model-moves-to-typescript.md) で盤面のモデルが TypeScript に移ると、**Playwright が動かすのは本物のモデルそのものになる**。偽物を書く余地が無くなり、HTTP に出す相手もいなくなる。ハーネスは、守るものが無くなった層として残る。
+
+## 決定
+
+**`crates/harness` を畳み、画面のテストを 1 層にする。**
+
+- `web/e2e/` は Vite の開発サーバの上で本物の画面を開き、置き場所には `store/memory`（テストごとに空）を差す。テストは置き場所を直接読み戻して、**画面と保存の両方**を見る——見るものは [0021](0021-two-layer-testing-for-the-webview.md) と同じで、読み戻す先が SQLite からメモリの文書に変わる
+- **SQLite に届くことは Rust 側の往復テストが見る**（`crates/app/tests/`）。TypeScript が実際に書く形の JSON を fixture としてコミットし、保存して読み戻し、スキーマ 12 からの移行も同じ場所で確かめる
+- 殻そのもの（ネイティブのメニュー、OS の保存ダイアログ、グローバルホットキー、窓の矩形）は、[0021](0021-two-layer-testing-for-the-webview.md) のまま**手で確かめる**。ここは変えない
+- webview のエンジンの差は [0023](0023-verifying-the-webview-engines.md) のまま、Chromium と WebKit の 2 つで回す
+
+## 理由
+
+**守るものが無くなった層だから。** [0021](0021-two-layer-testing-for-the-webview.md) の禁止事項は「モデルの挙動がテストの中でだけ違う」ことだった。モデルが 1 つしかなく、それが画面と同じ言語で同じ場所にあるなら、テストの中でだけ違うものを作る方法がそもそも無い。
+
+**入口が 1 つになるから。** いま `make e2e` は `cargo run -p ekanban-harness` をテストごとに立てる。画面を 1 行直して確かめるのに Rust のビルドを待つ。移したあとは `npm` だけで回る。
+
+**確かめる対象を、確かめられる場所に置くから。** 「TypeScript が書いた JSON を SQLite が受け取れるか」は Rust のテストで直接書ける。いまはそれが Playwright 経由の遠回りになっていて、失敗したときにどちらの層かを切り分ける手間がある。
+
+## 採らなかった案
+
+- **ハーネスを残し、TypeScript のモデルを Node で HTTP に出す。** 画面が直に呼べるものを、わざわざ HTTP に出して呼び直すことになる。何も守らない層が 1 つ残るだけ
+- **e2e を Tauri の実物（`tauri-driver`）で回す。** WKWebView / WebView2 / WebKitGTK の実物を動かせるのは利点だが、3 OS ぶんの CI と、そこで出る不安定さを抱えることになる。[0023](0023-verifying-the-webview-engines.md) が「エンジンの系統で確かめ、実物はリリース前に手で見る」と決めた判断は、その費用を見たうえでのものである。ここは変えない
+- **`store/local`（localStorage）を e2e にも使う。** ブラウザ版の e2e（`web/e2e-demo/`）はそれでよいが、こちらはテストごとに空から始めたい。前のテストが動かしたカードの位置に次が引きずられる形は、いまの `harness.ts` が避けているものである
+
+## 結果
+
+得るもの。画面のテストが `npm` だけで回り、Rust のビルドを待たない。テストごとにプロセスを立てて 250ms ごとに繋がるまで待つ、という起動の作りが消える。`crates/harness`（514 行）と `web/e2e/harness.ts` の大半が消える。
+
+引き受ける不都合。
+
+- **「画面 → SQLite」の通し確認が無くなる。** 画面が書いた文書は e2e が見て、その文書を SQLite が受け取れるかは Rust のテストが見る。**間の 1 本のつなぎ目だけ、自動では確かめられない**。fixture を TypeScript 側から生成してコミットし、形がずれたら Rust のテストが落ちるようにする。それでも、つなぎ目そのものはリリース前の手の確認が引き受ける
+- **fixture が古びうる。** TypeScript の形が変わったときに fixture を作り直すのを忘れると、Rust のテストは古い形で通り続ける。生成を `make` の的にして、差分が出たら CI が落ちるようにする（`make types-check` が果たしていた役目を、こちらが引き継ぐ）
