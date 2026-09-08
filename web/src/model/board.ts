@@ -17,6 +17,9 @@
 // [ADR 0040]: ../../../docs/adr/0040-the-shape-and-the-store-stay-in-rust.md
 
 import type { Board } from "../ipc/types/Board";
+import type { BoardDocument as StoredDocument } from "../ipc/types/BoardDocument";
+import type { CardEvent } from "../ipc/types/CardEvent";
+import type { CardEventKind } from "../ipc/types/CardEventKind";
 import type { Card } from "../ipc/types/Card";
 import type { ChecklistItem } from "../ipc/types/ChecklistItem";
 import type { Column } from "../ipc/types/Column";
@@ -24,17 +27,15 @@ import type { Tag } from "../ipc/types/Tag";
 
 /// 盤面と、それに付いて回るもの。
 ///
-/// **`board` だけが画面へ出ます。** 採番の続きは置き場所と一緒に運ばれ
-/// （[ADR 0040]）、Undo のスタックと積まれた履歴はここにしかありません。
+/// **置き場所から来る形（`ipc/types/BoardDocument`）を広げたもの**です。盤面と
+/// 採番の続きと版はあちらから来て（[ADR 0040]）、Undo のスタックと積まれた履歴
+/// はここにしかありません——どちらもセッションの間だけのもので、保存しません。
+///
+/// 広げる形にしてあるのは、**境界を越える形が変わったらここも一緒に動く**ように
+/// するためです。並べて書くと、片方だけ増えた日に気づけません。
 ///
 /// [ADR 0040]: ../../../docs/adr/0040-the-shape-and-the-store-stay-in-rust.md
-export interface BoardDocument {
-  board: Board;
-  /** 次に振るカードの番号。ボードごとの名前空間の中で進む。 */
-  nextCardId: number;
-  nextColumnId: number;
-  nextTagId: number;
-  nextChecklistItemId: number;
+export interface BoardDocument extends StoredDocument {
   /** 次の保存で書き、書けたら捨てるカードの履歴。 */
   pendingEvents: CardEvent[];
   /** 取り消せる操作。**セッションの間だけ**で、保存しない。 */
@@ -42,16 +43,10 @@ export interface BoardDocument {
   redoStack: BoardOperation[];
 }
 
-/** カードのライフサイクル。カラム内の並べ替えと属性変更は残さない。 */
-export type CardEventKind = "created" | "moved" | "archived" | "restored" | "deleted";
-
-export interface CardEvent {
-  cardId: number;
-  kind: CardEventKind;
-  fromColumnId: number | null;
-  toColumnId: number | null;
-  at: number;
-}
+// カードの履歴の形は置き場所と共有します（`ipc/types/`）。積むのはこちら、
+// 書くのはあちらなので、形が食い違うと積んだものが書けません。
+export type { CardEvent } from "../ipc/types/CardEvent";
+export type { CardEventKind } from "../ipc/types/CardEventKind";
 
 /// 断る理由。**例外にしません**——入力欄の脇に出すものと、画面を更新すれば
 /// 直るものが混ざっており、呼ぶ側が行き先を選びます（[ADR 0016]）。
