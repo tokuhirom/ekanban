@@ -38,10 +38,21 @@ export function TagPanel({ tags, run, onClose }: Props) {
 
   async function add() {
     if (name.trim() === "") return;
+    // **送る前に空にします**（#185）。保存の往復を待ってから空にすると、待って
+    // いるあいだに打った文字が、返ってきた空への差し替えに巻き込まれて消えます。
+    // カード編集パネルのタグ欄も送る前に空にしており（`CardPanel.tsx` の
+    // `commit()`）、タグを作れる 2 か所（ADR 0027）はこれで揃います。
+    //
+    // `Enter` の二重押しで同じタグを 2 回送らないのも、ここで済みます——
+    // 2 回目は欄が空なので、上の行で戻ります。
+    setName("");
     // 色は渡しません。決めていないタグは自動で色が付きます（ADR 0044）。
     const failure = await run(() => ipc.addTag(name, AUTO_TAG_COLOR));
     setFailed(failure);
-    if (failure === null) setName("");
+    // 断られた名前は打ち直せるように戻します（`docs/DESIGN.md`）。**ただし、
+    // 往復のあいだに次の名前が打たれていたら戻しません**——断られた理由は欄の
+    // 脇に出ているので、打ちかけを消してまで戻す値打ちがありません。
+    if (failure !== null) setName((current) => (current === "" ? name : current));
   }
 
   return (
