@@ -580,3 +580,368 @@ function sameChecklist(left: ChecklistItem[], right: ChecklistItem[]): boolean {
     })
   );
 }
+
+// ---------------------------------------------------------------- チェックリスト
+
+/// カードのチェックリストの `position` を、並びのとおりに振り直す。
+function reindexChecklist(card: Card): void {
+  for (const [index, item] of card.checklistItems.entries()) item.position = index;
+}
+
+/// カードの `updatedAt` を進める。チェックリストを触ったときも、カードは動いた。
+function touchCard(board: Board, cardId: number, at: number): Card | null {
+  const card = findActiveCard(board, cardId);
+  if (card === null) return null;
+  card.updatedAt = at;
+  return card;
+}
+
+/// 項目を 1 つ足す。**空の項目は断ります**——空の行を作れという指示なので。
+export function addChecklistItem(
+  document: BoardDocument,
+  cardId: number,
+  text: string,
+): Outcome<number> {
+  if (text.trim() === "") return fail({ kind: "emptyChecklistItemText" });
+  const card = findActiveCard(document.board, cardId);
+  if (card === null) return fail({ kind: "cardNotFound", cardId });
+
+  const at = now();
+  const item: ChecklistItem = {
+    id: document.nextChecklistItemId,
+    cardId,
+    text,
+    checked: false,
+    position: card.checklistItems.length,
+    createdAt: at,
+    updatedAt: at,
+  };
+  document.nextChecklistItemId += 1;
+  card.checklistItems.push(item);
+  reindexChecklist(card);
+  card.updatedAt = at;
+  document.board.updatedAt = at;
+  pushOperation(document, { kind: "addChecklistItem", cardId, item: structuredClone(item) });
+  return ok(item.id);
+}
+
+export function updateChecklistItem(
+  document: BoardDocument,
+  cardId: number,
+  itemId: number,
+  text: string,
+): Outcome<boolean> {
+  if (text.trim() === "") return fail({ kind: "emptyChecklistItemText" });
+  const found = findChecklistItem(document.board, cardId, itemId);
+  if (!found.ok) return found;
+  const { item } = found.value;
+  if (item.text === text) return ok(false);
+
+  const beforeText = item.text;
+  const at = now();
+  item.text = text;
+  item.updatedAt = at;
+  touchCard(document.board, cardId, at);
+  document.board.updatedAt = at;
+  pushOperation(document, { kind: "updateChecklistItem", cardId, itemId, beforeText, afterText: text });
+  return ok(true);
+}
+
+export function setChecklistItemChecked(
+  document: BoardDocument,
+  cardId: number,
+  itemId: number,
+  checked: boolean,
+): Outcome<boolean> {
+  const found = findChecklistItem(document.board, cardId, itemId);
+  if (!found.ok) return found;
+  const { item } = found.value;
+  if (item.checked === checked) return ok(false);
+
+  const before = item.checked;
+  const at = now();
+  item.checked = checked;
+  item.updatedAt = at;
+  touchCard(document.board, cardId, at);
+  document.board.updatedAt = at;
+  pushOperation(document, { kind: "setChecklistItemChecked", cardId, itemId, before, after: checked });
+  return ok(true);
+}
+
+export function deleteChecklistItem(
+  document: BoardDocument,
+  cardId: number,
+  itemId: number,
+): Outcome<void> {
+  const found = findChecklistItem(document.board, cardId, itemId);
+  if (!found.ok) return found;
+  const { card, index } = found.value;
+  const [item] = card.checklistItems.splice(index, 1);
+  if (item === undefined) return fail({ kind: "checklistItemNotFound", itemId, cardId });
+  reindexChecklist(card);
+  const at = now();
+  card.updatedAt = at;
+  document.board.updatedAt = at;
+  pushOperation(document, { kind: "deleteChecklistItem", cardId, item, index });
+  return ok(undefined);
+}
+
+export function moveChecklistItem(
+  document: BoardDocument,
+  cardId: number,
+  itemId: number,
+  targetIndex: number,
+): Outcome<boolean> {
+  const found = findChecklistItem(document.board, cardId, itemId);
+  if (!found.ok) return found;
+  const { card, index } = found.value;
+
+  let insertIndex = Math.min(targetIndex, card.checklistItems.length);
+  if (index < insertIndex) insertIndex -= 1;
+  if (index === insertIndex) return ok(false);
+
+  const [item] = card.checklistItems.splice(index, 1);
+  if (item === undefined) return fail({ kind: "checklistItemNotFound", itemId, cardId });
+  card.checklistItems.splice(insertIndex, 0, item);
+  reindexChecklist(card);
+  const at = now();
+  card.updatedAt = at;
+  document.board.updatedAt = at;
+  pushOperation(document, {
+    kind: "moveChecklistItem",
+    cardId,
+    itemId,
+    fromIndex: index,
+    toIndex: insertIndex,
+  });
+  return ok(true);
+}
+
+function findChecklistItem(
+  board: Board,
+  cardId: number,
+  itemId: number,
+): Outcome<{ card: Card; item: ChecklistItem; index: number }> {
+  const card = findActiveCard(board, cardId);
+  if (card === null) return fail({ kind: "cardNotFound", cardId });
+  const index = card.checklistItems.findIndex((item) => item.id === itemId);
+  const item = card.checklistItems[index];
+  if (item === undefined) return fail({ kind: "checklistItemNotFound", itemId, cardId });
+  return ok({ card, item, index });
+}
+
+// ---------------------------------------------------------------- 複製・削除・アーカイブ
+
+/// カードを複製して、すぐ下に置く。
+///
+/// **期限とチェックは引き継ぎません。** 複製は「同じ形の、これからやること」を
+/// 作る操作なので、済んだ印と、過ぎているかもしれない期限は持ち越しません。
+export function copyCard(document: BoardDocument, cardId: number): Outcome<number> {
+  const { board } = document;
+  const location = locateCard(board, cardId);
+  if (location === null) return fail({ kind: "cardNotFound", cardId });
+  const column = board.columns[location.column];
+  const source = column?.cards[location.card];
+  if (column === undefined || source === undefined) return fail({ kind: "cardNotFound", cardId });
+
+  const newCardId = document.nextCardId;
+  const at = now();
+  const checklistItems: ChecklistItem[] = source.checklistItems.map((item, position) => {
+    const id = document.nextChecklistItemId;
+    document.nextChecklistItemId += 1;
+    return {
+      id,
+      cardId: newCardId,
+      text: item.text,
+      checked: false,
+      position,
+      createdAt: at,
+      updatedAt: at,
+    };
+  });
+  const card: Card = {
+    id: newCardId,
+    columnId: source.columnId,
+    title: source.title,
+    description: source.description,
+    position: location.card + 1,
+    createdAt: at,
+    updatedAt: at,
+    dueDate: null,
+    tagIds: [...source.tagIds],
+    checklistItems,
+    archivedAt: null,
+  };
+  document.nextCardId += 1;
+  column.cards.splice(location.card + 1, 0, card);
+  reindex(board);
+  board.updatedAt = at;
+  recordEvent(document, newCardId, "created", null, source.columnId, at);
+  pushOperation(document, { kind: "copyCard", card: structuredClone(card), index: location.card + 1 });
+  return ok(newCardId);
+}
+
+/// 足した直後の、まだ一度も保存していないカードを無かったことにする。
+///
+/// `deleteCard` とは別のものです。あちらは「あったカードを消す」操作で、履歴に
+/// `deleted` を残し、Undo にも積みます。こちらは**追加そのものを取りやめる**ので、
+/// `created` の記録ごと取り下げ、Undo にも何も残しません。使う人から見れば、
+/// そのカードは一度も存在していません。
+export function discardAddedCard(document: BoardDocument, cardId: number): Outcome<void> {
+  const { board } = document;
+  const location = locateCard(board, cardId);
+  if (location === null) return fail({ kind: "cardNotFound", cardId });
+  board.columns[location.column]?.cards.splice(location.card, 1);
+  reindex(board);
+
+  // 追加を積んだ操作を取り下げる。残すと、取りやめたあとの Undo が
+  // 「消えているカードをもう一度消す」ことになって失敗する。
+  for (let at = document.undoStack.length - 1; at >= 0; at -= 1) {
+    const operation = document.undoStack[at];
+    if (operation?.kind === "addCard" && operation.card.id === cardId) {
+      document.undoStack.splice(at, 1);
+      break;
+    }
+  }
+  // 保存していないので `created` もまだ書かれていない。残すと、次の保存で
+  // 存在しないカードの履歴が 1 件だけ書かれる。
+  document.pendingEvents = document.pendingEvents.filter(
+    (event) => !(event.cardId === cardId && event.kind === "created"),
+  );
+
+  // ID は詰めない。採番は単調増加のままにする。
+  board.updatedAt = now();
+  return ok(undefined);
+}
+
+export function deleteCard(document: BoardDocument, cardId: number): Outcome<void> {
+  const { board } = document;
+  const location = locateCard(board, cardId);
+  if (location === null) return fail({ kind: "cardNotFound", cardId });
+  const column = board.columns[location.column];
+  if (column === undefined) return fail({ kind: "cardNotFound", cardId });
+
+  const columnId = column.id;
+  const [card] = column.cards.splice(location.card, 1);
+  if (card === undefined) return fail({ kind: "cardNotFound", cardId });
+  reindex(board);
+  const at = now();
+  board.updatedAt = at;
+  recordEvent(document, cardId, "deleted", columnId, null, at);
+  pushOperation(document, { kind: "deleteCard", card, index: location.card });
+  return ok(undefined);
+}
+
+export function archiveCard(document: BoardDocument, cardId: number): Outcome<boolean> {
+  const { board } = document;
+  const location = locateCard(board, cardId);
+  if (location === null) return fail({ kind: "cardNotFound", cardId });
+  const column = board.columns[location.column];
+  if (column === undefined) return fail({ kind: "cardNotFound", cardId });
+
+  const sourceColumnId = column.id;
+  const at = now();
+  const [card] = column.cards.splice(location.card, 1);
+  if (card === undefined) return fail({ kind: "cardNotFound", cardId });
+  const original = structuredClone(card);
+  card.archivedAt = at;
+  card.updatedAt = at;
+  board.archivedCards.push(card);
+  reindex(board);
+  board.updatedAt = at;
+  recordEvent(document, cardId, "archived", sourceColumnId, null, at);
+  pushOperation(document, {
+    kind: "archiveCard",
+    card: original,
+    archivedCard: structuredClone(card),
+    index: location.card,
+    archivedIndex: board.archivedCards.length - 1,
+  });
+  return ok(true);
+}
+
+/// カラムのカードをまとめてアーカイブする。積まれる操作は 1 件。
+export function archiveColumn(document: BoardDocument, columnId: number): Outcome<number> {
+  const { board } = document;
+  const column = findColumn(board, columnId);
+  if (column === null) return fail({ kind: "columnNotFound", columnId });
+  if (column.cards.length === 0) return ok(0);
+
+  const at = now();
+  const archivedStart = board.archivedCards.length;
+  const originals = structuredClone(column.cards);
+  const cards = column.cards;
+  column.cards = [];
+  for (const card of cards) {
+    card.archivedAt = at;
+    card.updatedAt = at;
+    recordEvent(document, card.id, "archived", columnId, null, at);
+  }
+  board.archivedCards.push(...cards);
+  reindex(board);
+  board.updatedAt = at;
+  pushOperation(document, {
+    kind: "archiveColumn",
+    columnId,
+    cards: originals.map((card, index) => ({
+      card,
+      archivedCard: structuredClone(cards[index] ?? card),
+      index,
+    })),
+    archivedStart,
+  });
+  return ok(cards.length);
+}
+
+/// アーカイブから盤面へ戻す。戻り先は元のカラムの末尾。
+///
+/// 元のカラムが消えていたら先頭のカラムへ。**戻せる先が 1 つも無いときだけ**
+/// 断ります。
+export function restoreCard(document: BoardDocument, cardId: number): Outcome<boolean> {
+  const { board } = document;
+  const archiveIndex = board.archivedCards.findIndex((card) => card.id === cardId);
+  const archived = board.archivedCards[archiveIndex];
+  if (archived === undefined) return fail({ kind: "cardNotFound", cardId });
+
+  const target =
+    board.columns.find((column) => column.id === archived.columnId) ?? board.columns[0];
+  if (target === undefined) return fail({ kind: "lastColumn" });
+
+  const at = now();
+  const archivedCard = structuredClone(archived);
+  board.archivedCards.splice(archiveIndex, 1);
+  archived.columnId = target.id;
+  archived.position = target.cards.length;
+  archived.archivedAt = null;
+  archived.updatedAt = at;
+  target.cards.push(archived);
+  reindex(board);
+  board.updatedAt = at;
+  recordEvent(document, cardId, "restored", null, target.id, at);
+  pushOperation(document, {
+    kind: "restoreCard",
+    archivedCard,
+    restoredCard: structuredClone(archived),
+    index: target.cards.length - 1,
+    archiveIndex,
+  });
+  return ok(true);
+}
+
+export function setCardDueDate(
+  document: BoardDocument,
+  cardId: number,
+  dueDate: string | null,
+): Outcome<boolean> {
+  const card = findActiveCard(document.board, cardId);
+  if (card === null) return fail({ kind: "cardNotFound", cardId });
+  if (card.dueDate === dueDate) return ok(false);
+
+  const before = card.dueDate;
+  const at = now();
+  card.dueDate = dueDate;
+  card.updatedAt = at;
+  document.board.updatedAt = at;
+  pushOperation(document, { kind: "setDueDate", cardId, before, after: dueDate });
+  return ok(true);
+}
