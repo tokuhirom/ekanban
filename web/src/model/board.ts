@@ -945,3 +945,771 @@ export function setCardDueDate(
   pushOperation(document, { kind: "setDueDate", cardId, before, after: dueDate });
   return ok(true);
 }
+
+// ---------------------------------------------------------------- タグ
+
+/// タグを 1 つ作る。**同じ名前は 2 つ作れません。**
+export function addTag(document: BoardDocument, name: string, color: string): Outcome<number> {
+  const { board } = document;
+  if (name.trim() === "") return fail({ kind: "emptyTagName" });
+  if (board.tags.some((tag) => tag.name === name)) return fail({ kind: "duplicateTagName", name });
+
+  const at = now();
+  const tag: Tag = {
+    id: document.nextTagId,
+    boardId: board.id,
+    name,
+    color,
+    createdAt: at,
+    updatedAt: at,
+  };
+  board.tags.push(tag);
+  document.nextTagId += 1;
+  board.updatedAt = at;
+  pushOperation(document, { kind: "addTag", tag: structuredClone(tag) });
+  return ok(tag.id);
+}
+
+export function renameTag(document: BoardDocument, tagId: number, name: string): Outcome<boolean> {
+  const { board } = document;
+  if (name.trim() === "") return fail({ kind: "emptyTagName" });
+  if (board.tags.some((tag) => tag.id !== tagId && tag.name === name)) {
+    return fail({ kind: "duplicateTagName", name });
+  }
+  const tag = board.tags.find((tag) => tag.id === tagId);
+  if (tag === undefined) return fail({ kind: "tagNotFound", tagId });
+  if (tag.name === name) return ok(false);
+
+  const before = tag.name;
+  const at = now();
+  tag.name = name;
+  tag.updatedAt = at;
+  board.updatedAt = at;
+  pushOperation(document, { kind: "renameTag", tagId, before, after: name });
+  return ok(true);
+}
+
+export function setTagColor(document: BoardDocument, tagId: number, color: string): Outcome<boolean> {
+  const { board } = document;
+  const tag = board.tags.find((tag) => tag.id === tagId);
+  if (tag === undefined) return fail({ kind: "tagNotFound", tagId });
+  if (tag.color === color) return ok(false);
+
+  const before = tag.color;
+  const at = now();
+  tag.color = color;
+  tag.updatedAt = at;
+  board.updatedAt = at;
+  pushOperation(document, { kind: "setTagColor", tagId, before, after: color });
+  return ok(true);
+}
+
+/// タグを消し、付いていたカードからも外す。
+///
+/// **外したことを覚えておきます**——Undo で戻すときに、付いていたカードにだけ
+/// 付け直すためです。
+export function removeTag(document: BoardDocument, tagId: number): Outcome<void> {
+  const { board } = document;
+  const index = board.tags.findIndex((tag) => tag.id === tagId);
+  const tag = board.tags[index];
+  if (tag === undefined) return fail({ kind: "tagNotFound", tagId });
+
+  const activeCardTags = allCards(board)
+    .filter((card) => card.tagIds.includes(tagId))
+    .map((card): [number, number[]] => [card.id, [...card.tagIds]]);
+  const archivedCardTags = board.archivedCards
+    .filter((card) => card.tagIds.includes(tagId))
+    .map((card): [number, number[]] => [card.id, [...card.tagIds]]);
+
+  board.tags.splice(index, 1);
+  for (const card of [...allCards(board), ...board.archivedCards]) {
+    card.tagIds = card.tagIds.filter((id) => id !== tagId);
+  }
+  board.updatedAt = now();
+  pushOperation(document, { kind: "removeTag", tag, index, activeCardTags, archivedCardTags });
+  return ok(undefined);
+}
+
+/// カードに付いているタグを、渡された一式に置き換える。
+export function setCardTags(
+  document: BoardDocument,
+  cardId: number,
+  tagIds: number[],
+): Outcome<boolean> {
+  const { board } = document;
+  for (const tagId of tagIds) {
+    if (!board.tags.some((tag) => tag.id === tagId)) return fail({ kind: "tagNotFound", tagId });
+  }
+  const card = findActiveCard(board, cardId);
+  if (card === null) return fail({ kind: "cardNotFound", cardId });
+
+  const after = normalizeTagIds(tagIds);
+  if (sameIds(card.tagIds, after)) return ok(false);
+
+  const before = [...card.tagIds];
+  const at = now();
+  card.tagIds = after;
+  card.updatedAt = at;
+  board.updatedAt = at;
+  pushOperation(document, { kind: "setCardTags", cardId, before, after: [...after] });
+  return ok(true);
+}
+
+// ---------------------------------------------------------------- カラム
+
+export function addColumn(document: BoardDocument, name: string): Outcome<number> {
+  const { board } = document;
+  if (name.trim() === "") return fail({ kind: "emptyColumnName" });
+
+  const at = now();
+  const column: Column = {
+    id: document.nextColumnId,
+    boardId: board.id,
+    name,
+    position: board.columns.length,
+    createdAt: at,
+    updatedAt: at,
+    done: false,
+    cards: [],
+  };
+  board.columns.push(column);
+  document.nextColumnId += 1;
+  board.updatedAt = at;
+  pushOperation(document, {
+    kind: "addColumn",
+    column: structuredClone(column),
+    index: board.columns.length - 1,
+  });
+  return ok(column.id);
+}
+
+export function renameColumn(
+  document: BoardDocument,
+  columnId: number,
+  name: string,
+): Outcome<boolean> {
+  const { board } = document;
+  if (name.trim() === "") return fail({ kind: "emptyColumnName" });
+  const column = findColumn(board, columnId);
+  if (column === null) return fail({ kind: "columnNotFound", columnId });
+  if (column.name === name) return ok(false);
+
+  const before = column.name;
+  const at = now();
+  column.name = name;
+  column.updatedAt = at;
+  board.updatedAt = at;
+  pushOperation(document, { kind: "renameColumn", columnId, before, after: name });
+  return ok(true);
+}
+
+/// 終わったものの置き場かどうかを切り替える（[ADR 0038]）。
+///
+/// **何本立てても構いません。** 「完了」と「キャンセル済み」を並べて両方立てる
+/// のが、ボードの属性ではなくカラムの属性にした理由です。
+///
+/// [ADR 0038]: ../../../docs/adr/0038-a-column-that-means-done.md
+export function setColumnDone(
+  document: BoardDocument,
+  columnId: number,
+  done: boolean,
+): Outcome<boolean> {
+  const { board } = document;
+  const column = findColumn(board, columnId);
+  if (column === null) return fail({ kind: "columnNotFound", columnId });
+  if (column.done === done) return ok(false);
+
+  const before = column.done;
+  const at = now();
+  column.done = done;
+  column.updatedAt = at;
+  board.updatedAt = at;
+  pushOperation(document, { kind: "setColumnDone", columnId, before, after: done });
+  return ok(true);
+}
+
+/// カラムを消す。中のカードも一緒に消える。
+///
+/// **最後の 1 本は消せません。** 0 カラムのボードは、次にやることが「カラムを
+/// 作る」になり、Kanban の形が画面から消えます。
+///
+/// アーカイブ済みのカードは消しません——このカラムを指していたものは、残った
+/// カラムを指すように付け替えます。消すと、盤面に無いだけのカードが道連れに
+/// なります。
+export function removeColumn(document: BoardDocument, columnId: number): Outcome<void> {
+  const { board } = document;
+  const index = board.columns.findIndex((column) => column.id === columnId);
+  const column = board.columns[index];
+  if (column === undefined) return fail({ kind: "columnNotFound", columnId });
+  if (board.columns.length === 1) return fail({ kind: "lastColumn" });
+
+  const fallback = board.columns.find((other) => other.id !== columnId);
+  if (fallback === undefined) return fail({ kind: "lastColumn" });
+  const fallbackColumnId = fallback.id;
+
+  const archivedCardColumnIds = board.archivedCards
+    .filter((card) => card.columnId === columnId)
+    .map((card): [number, number] => [card.id, card.columnId]);
+  const deletedCardIds = column.cards.map((card) => card.id);
+
+  const removed = structuredClone(column);
+  board.columns.splice(index, 1);
+  const at = now();
+  for (const card of board.archivedCards) {
+    if (card.columnId === columnId) {
+      card.columnId = fallbackColumnId;
+      card.updatedAt = at;
+    }
+  }
+  reindex(board);
+  board.updatedAt = at;
+  for (const cardId of deletedCardIds) {
+    recordEvent(document, cardId, "deleted", columnId, null, at);
+  }
+  pushOperation(document, {
+    kind: "removeColumn",
+    column: removed,
+    index,
+    fallbackColumnId,
+    archivedCardColumnIds,
+  });
+  return ok(undefined);
+}
+
+// ---------------------------------------------------------------- ボード
+
+/// ボードの名前を変える。**空の名前は断ります。**
+export function renameBoard(document: BoardDocument, name: string): Outcome<boolean> {
+  if (name.trim() === "") return fail({ kind: "emptyBoardName" });
+  if (document.board.name === name) return ok(false);
+  document.board.name = name;
+  document.board.updatedAt = now();
+  return ok(true);
+}
+
+/// 次の保存で書く履歴を捨てる。保存に失敗したときに、盤面と一緒に巻き戻す。
+export function discardPendingEvents(document: BoardDocument): void {
+  document.pendingEvents.length = 0;
+}
+
+// ---------------------------------------------------------------- 取り消しとやり直し
+
+export function canUndo(document: BoardDocument): boolean {
+  return document.undoStack.length > 0;
+}
+
+export function canRedo(document: BoardDocument): boolean {
+  return document.redoStack.length > 0;
+}
+
+/// 1 手戻す。戻せなければ `false`（断りではない）。
+///
+/// **戻せなかったときは積み直します。** 失敗した操作をスタックから落とすと、
+/// そこから先の履歴が二度と辿れなくなります。
+export function undo(document: BoardDocument): Outcome<boolean> {
+  const operation = document.undoStack.pop();
+  if (operation === undefined) return ok(false);
+  const applied = applyOperation(document, operation, true);
+  if (!applied.ok) {
+    document.undoStack.push(operation);
+    return applied;
+  }
+  document.redoStack.push(operation);
+  return ok(true);
+}
+
+export function redo(document: BoardDocument): Outcome<boolean> {
+  const operation = document.redoStack.pop();
+  if (operation === undefined) return ok(false);
+  const applied = applyOperation(document, operation, false);
+  if (!applied.ok) {
+    document.redoStack.push(operation);
+    return applied;
+  }
+  document.undoStack.push(operation);
+  return ok(true);
+}
+
+/// 積んだ操作を、戻す向き（`undo`）か進める向きで当てる。
+///
+/// **履歴（`pendingEvents`）は積みません。** 取り消しはフローの出来事ではなく、
+/// 打ち間違いの取り消しです（`docs/DESIGN.md`「盤面とカード」）。
+///
+/// 採番は戻しません——`nextCardId` は戻したカードの ID より必ず先へ進めます。
+/// 詰めてしまうと、やり直したときに同じ ID が 2 枚のカードに付きます。
+function applyOperation(
+  document: BoardDocument,
+  operation: BoardOperation,
+  undoing: boolean,
+): Outcome<void> {
+  const { board } = document;
+  let step: Outcome<unknown> = ok(undefined);
+
+  switch (operation.kind) {
+    case "moveCard": {
+      step = undoing
+        ? moveCardRaw(board, operation.cardId, operation.fromColumnId, operation.fromIndex)
+        : moveCardRaw(board, operation.cardId, operation.toColumnId, operation.toIndex);
+      break;
+    }
+    case "moveColumn": {
+      step = moveColumnRaw(
+        board,
+        operation.columnId,
+        undoing ? operation.fromIndex : operation.toIndex,
+      );
+      break;
+    }
+    case "addCard": {
+      if (undoing) {
+        step = removeActiveCard(board, operation.card.id);
+      } else {
+        step = insertActiveCard(board, structuredClone(operation.card), operation.card.position);
+        document.nextCardId = Math.max(document.nextCardId, operation.card.id + 1);
+      }
+      break;
+    }
+    case "updateCard": {
+      step = updateCardRaw(
+        board,
+        operation.cardId,
+        undoing ? operation.beforeTitle : operation.afterTitle,
+        undoing ? operation.beforeDescription : operation.afterDescription,
+      );
+      break;
+    }
+    case "editCard": {
+      const content = undoing ? operation.before : operation.after;
+      step = updateCardRaw(board, operation.cardId, content.title, content.description);
+      if (step.ok) step = setDueDateRaw(board, operation.cardId, content.dueDate);
+      if (step.ok) step = setCardTagsRaw(board, operation.cardId, content.tagIds);
+      if (step.ok) {
+        step = setChecklistItemsRaw(board, operation.cardId, structuredClone(content.checklistItems));
+      }
+      break;
+    }
+    case "copyCard": {
+      if (undoing) {
+        step = removeActiveCard(board, operation.card.id);
+      } else {
+        step = insertActiveCard(board, structuredClone(operation.card), operation.index);
+        document.nextCardId = Math.max(document.nextCardId, operation.card.id + 1);
+        for (const item of operation.card.checklistItems) {
+          document.nextChecklistItemId = Math.max(document.nextChecklistItemId, item.id + 1);
+        }
+      }
+      break;
+    }
+    case "addChecklistItem": {
+      if (undoing) {
+        step = removeChecklistItemRaw(board, operation.item.cardId, operation.item.id);
+      } else {
+        step = insertChecklistItemRaw(
+          board,
+          operation.item.cardId,
+          structuredClone(operation.item),
+          Number.MAX_SAFE_INTEGER,
+        );
+        document.nextChecklistItemId = Math.max(
+          document.nextChecklistItemId,
+          operation.item.id + 1,
+        );
+      }
+      break;
+    }
+    case "updateChecklistItem": {
+      step = updateChecklistItemRaw(
+        board,
+        operation.cardId,
+        operation.itemId,
+        undoing ? operation.beforeText : operation.afterText,
+      );
+      break;
+    }
+    case "setChecklistItemChecked": {
+      step = setChecklistItemCheckedRaw(
+        board,
+        operation.cardId,
+        operation.itemId,
+        undoing ? operation.before : operation.after,
+      );
+      break;
+    }
+    case "deleteChecklistItem": {
+      step = undoing
+        ? insertChecklistItemRaw(
+            board,
+            operation.cardId,
+            structuredClone(operation.item),
+            operation.index,
+          )
+        : removeChecklistItemRaw(board, operation.cardId, operation.item.id);
+      break;
+    }
+    case "moveChecklistItem": {
+      step = moveChecklistItemRaw(
+        board,
+        operation.cardId,
+        undoing ? operation.toIndex : operation.fromIndex,
+        undoing ? operation.fromIndex : operation.toIndex,
+      );
+      break;
+    }
+    case "deleteCard": {
+      step = undoing
+        ? insertActiveCard(board, structuredClone(operation.card), operation.index)
+        : removeActiveCard(board, operation.card.id);
+      break;
+    }
+    case "archiveCard": {
+      if (undoing) {
+        step = removeArchivedCard(board, operation.card.id);
+        if (step.ok) step = insertActiveCard(board, structuredClone(operation.card), operation.index);
+      } else {
+        step = removeActiveCard(board, operation.card.id);
+        if (step.ok) {
+          const index = Math.min(operation.archivedIndex, board.archivedCards.length);
+          board.archivedCards.splice(index, 0, structuredClone(operation.archivedCard));
+        }
+      }
+      reindex(board);
+      break;
+    }
+    case "archiveColumn": {
+      for (const entry of operation.cards) {
+        if (!step.ok) break;
+        if (undoing) {
+          step = removeArchivedCard(board, entry.card.id);
+          if (step.ok) step = insertActiveCard(board, structuredClone(entry.card), entry.index);
+        } else {
+          step = removeActiveCard(board, entry.card.id);
+          if (step.ok) {
+            const index = Math.min(
+              operation.archivedStart + entry.index,
+              board.archivedCards.length,
+            );
+            board.archivedCards.splice(index, 0, structuredClone(entry.archivedCard));
+          }
+        }
+      }
+      reindex(board);
+      break;
+    }
+    case "restoreCard": {
+      if (undoing) {
+        step = removeActiveCard(board, operation.restoredCard.id);
+        if (step.ok) {
+          const index = Math.min(operation.archiveIndex, board.archivedCards.length);
+          board.archivedCards.splice(index, 0, structuredClone(operation.archivedCard));
+        }
+      } else {
+        step = removeArchivedCard(board, operation.archivedCard.id);
+        if (step.ok) {
+          step = insertActiveCard(board, structuredClone(operation.restoredCard), operation.index);
+        }
+      }
+      reindex(board);
+      break;
+    }
+    case "setDueDate": {
+      step = setDueDateRaw(board, operation.cardId, undoing ? operation.before : operation.after);
+      break;
+    }
+    case "addTag": {
+      if (undoing) {
+        step = removeTagRaw(board, operation.tag.id);
+      } else {
+        board.tags.push(structuredClone(operation.tag));
+        document.nextTagId = Math.max(document.nextTagId, operation.tag.id + 1);
+      }
+      break;
+    }
+    case "renameTag": {
+      step = renameTagRaw(board, operation.tagId, undoing ? operation.before : operation.after);
+      break;
+    }
+    case "setTagColor": {
+      step = setTagColorRaw(board, operation.tagId, undoing ? operation.before : operation.after);
+      break;
+    }
+    case "removeTag": {
+      if (undoing) {
+        board.tags.splice(operation.index, 0, structuredClone(operation.tag));
+        restoreCardTags(board, operation.activeCardTags);
+        restoreCardTags(board, operation.archivedCardTags);
+      } else {
+        step = removeTagRaw(board, operation.tag.id);
+      }
+      break;
+    }
+    case "setCardTags": {
+      step = setCardTagsRaw(board, operation.cardId, undoing ? operation.before : operation.after);
+      break;
+    }
+    case "addColumn": {
+      if (undoing) {
+        step = removeColumnRaw(board, operation.column.id);
+      } else {
+        board.columns.splice(operation.index, 0, structuredClone(operation.column));
+        document.nextColumnId = Math.max(document.nextColumnId, operation.column.id + 1);
+        reindex(board);
+      }
+      break;
+    }
+    case "renameColumn": {
+      step = renameColumnRaw(
+        board,
+        operation.columnId,
+        undoing ? operation.before : operation.after,
+      );
+      break;
+    }
+    case "setColumnDone": {
+      step = setColumnDoneRaw(
+        board,
+        operation.columnId,
+        undoing ? operation.before : operation.after,
+      );
+      break;
+    }
+    case "removeColumn": {
+      if (undoing) {
+        board.columns.splice(operation.index, 0, structuredClone(operation.column));
+        for (const [cardId, columnId] of operation.archivedCardColumnIds) {
+          const card = board.archivedCards.find((card) => card.id === cardId);
+          if (card !== undefined) card.columnId = columnId;
+        }
+      } else {
+        step = removeColumnRaw(board, operation.column.id);
+        for (const [cardId] of operation.archivedCardColumnIds) {
+          const card = board.archivedCards.find((card) => card.id === cardId);
+          if (card !== undefined) card.columnId = operation.fallbackColumnId;
+        }
+      }
+      reindex(board);
+      break;
+    }
+  }
+
+  if (!step.ok) return step;
+  board.updatedAt = now();
+  return ok(undefined);
+}
+
+// 以下は「積んだ操作を当てる」ためだけの書き換えです。**断りの検査も、操作の
+// 積み直しも、履歴も付けません**——それは一度通った判断で、二度目に通す必要が
+// ないからです。
+
+function removeActiveCard(board: Board, cardId: number): Outcome<Card> {
+  const location = locateCard(board, cardId);
+  if (location === null) return fail({ kind: "cardNotFound", cardId });
+  const [card] = board.columns[location.column]?.cards.splice(location.card, 1) ?? [];
+  if (card === undefined) return fail({ kind: "cardNotFound", cardId });
+  reindex(board);
+  return ok(card);
+}
+
+function insertActiveCard(board: Board, card: Card, index: number): Outcome<void> {
+  const column = findColumn(board, card.columnId);
+  if (column === null) return fail({ kind: "columnNotFound", columnId: card.columnId });
+  card.archivedAt = null;
+  column.cards.splice(Math.min(index, column.cards.length), 0, card);
+  reindex(board);
+  return ok(undefined);
+}
+
+function removeArchivedCard(board: Board, cardId: number): Outcome<Card> {
+  const index = board.archivedCards.findIndex((card) => card.id === cardId);
+  const [card] = board.archivedCards.splice(index === -1 ? board.archivedCards.length : index, 1);
+  if (card === undefined) return fail({ kind: "cardNotFound", cardId });
+  return ok(card);
+}
+
+function moveCardRaw(
+  board: Board,
+  cardId: number,
+  targetColumnId: number,
+  targetIndex: number,
+): Outcome<void> {
+  const removed = removeActiveCard(board, cardId);
+  if (!removed.ok) return removed;
+  removed.value.columnId = targetColumnId;
+  return insertActiveCard(board, removed.value, targetIndex);
+}
+
+function moveColumnRaw(board: Board, columnId: number, targetIndex: number): Outcome<void> {
+  const sourceIndex = board.columns.findIndex((column) => column.id === columnId);
+  if (sourceIndex === -1) return fail({ kind: "columnNotFound", columnId });
+  const [column] = board.columns.splice(sourceIndex, 1);
+  if (column === undefined) return fail({ kind: "columnNotFound", columnId });
+  board.columns.splice(Math.min(targetIndex, board.columns.length), 0, column);
+  reindex(board);
+  return ok(undefined);
+}
+
+function updateCardRaw(
+  board: Board,
+  cardId: number,
+  title: string,
+  description: string,
+): Outcome<void> {
+  const card = findActiveCard(board, cardId);
+  if (card === null) return fail({ kind: "cardNotFound", cardId });
+  card.title = title;
+  card.description = description;
+  card.updatedAt = now();
+  return ok(undefined);
+}
+
+function setDueDateRaw(board: Board, cardId: number, dueDate: string | null): Outcome<void> {
+  const card = findActiveCard(board, cardId);
+  if (card === null) return fail({ kind: "cardNotFound", cardId });
+  card.dueDate = dueDate;
+  card.updatedAt = now();
+  return ok(undefined);
+}
+
+function setCardTagsRaw(board: Board, cardId: number, tagIds: number[]): Outcome<void> {
+  const card = findActiveCard(board, cardId);
+  if (card === null) return fail({ kind: "cardNotFound", cardId });
+  card.tagIds = [...tagIds];
+  card.updatedAt = now();
+  return ok(undefined);
+}
+
+function setChecklistItemsRaw(
+  board: Board,
+  cardId: number,
+  items: ChecklistItem[],
+): Outcome<void> {
+  const card = findActiveCard(board, cardId);
+  if (card === null) return fail({ kind: "cardNotFound", cardId });
+  card.checklistItems = items;
+  for (const item of card.checklistItems) item.cardId = card.id;
+  reindexChecklist(card);
+  return ok(undefined);
+}
+
+function insertChecklistItemRaw(
+  board: Board,
+  cardId: number,
+  item: ChecklistItem,
+  index: number,
+): Outcome<void> {
+  const card = findActiveCard(board, cardId);
+  if (card === null) return fail({ kind: "cardNotFound", cardId });
+  item.cardId = cardId;
+  card.checklistItems.splice(Math.min(index, card.checklistItems.length), 0, item);
+  reindexChecklist(card);
+  return ok(undefined);
+}
+
+function removeChecklistItemRaw(board: Board, cardId: number, itemId: number): Outcome<void> {
+  const found = findChecklistItem(board, cardId, itemId);
+  if (!found.ok) return found;
+  found.value.card.checklistItems.splice(found.value.index, 1);
+  reindexChecklist(found.value.card);
+  return ok(undefined);
+}
+
+function moveChecklistItemRaw(
+  board: Board,
+  cardId: number,
+  fromIndex: number,
+  targetIndex: number,
+): Outcome<void> {
+  const card = findActiveCard(board, cardId);
+  if (card === null) return fail({ kind: "cardNotFound", cardId });
+  if (fromIndex >= card.checklistItems.length) {
+    return fail({ kind: "checklistItemNotFound", itemId: fromIndex, cardId });
+  }
+  const [item] = card.checklistItems.splice(fromIndex, 1);
+  if (item === undefined) return fail({ kind: "checklistItemNotFound", itemId: fromIndex, cardId });
+  card.checklistItems.splice(Math.min(targetIndex, card.checklistItems.length), 0, item);
+  reindexChecklist(card);
+  return ok(undefined);
+}
+
+function updateChecklistItemRaw(
+  board: Board,
+  cardId: number,
+  itemId: number,
+  text: string,
+): Outcome<void> {
+  const found = findChecklistItem(board, cardId, itemId);
+  if (!found.ok) return found;
+  found.value.item.text = text;
+  found.value.item.updatedAt = now();
+  return ok(undefined);
+}
+
+function setChecklistItemCheckedRaw(
+  board: Board,
+  cardId: number,
+  itemId: number,
+  checked: boolean,
+): Outcome<void> {
+  const found = findChecklistItem(board, cardId, itemId);
+  if (!found.ok) return found;
+  found.value.item.checked = checked;
+  found.value.item.updatedAt = now();
+  return ok(undefined);
+}
+
+function removeTagRaw(board: Board, tagId: number): Outcome<void> {
+  const index = board.tags.findIndex((tag) => tag.id === tagId);
+  if (index === -1) return fail({ kind: "tagNotFound", tagId });
+  board.tags.splice(index, 1);
+  for (const card of [...allCards(board), ...board.archivedCards]) {
+    card.tagIds = card.tagIds.filter((id) => id !== tagId);
+  }
+  return ok(undefined);
+}
+
+function restoreCardTags(board: Board, assignments: [number, number[]][]): void {
+  for (const [cardId, tagIds] of assignments) {
+    const card =
+      findActiveCard(board, cardId) ?? board.archivedCards.find((card) => card.id === cardId) ?? null;
+    if (card !== null) card.tagIds = [...tagIds];
+  }
+}
+
+function renameTagRaw(board: Board, tagId: number, name: string): Outcome<void> {
+  const tag = board.tags.find((tag) => tag.id === tagId);
+  if (tag === undefined) return fail({ kind: "tagNotFound", tagId });
+  tag.name = name;
+  tag.updatedAt = now();
+  return ok(undefined);
+}
+
+function setTagColorRaw(board: Board, tagId: number, color: string): Outcome<void> {
+  const tag = board.tags.find((tag) => tag.id === tagId);
+  if (tag === undefined) return fail({ kind: "tagNotFound", tagId });
+  tag.color = color;
+  tag.updatedAt = now();
+  return ok(undefined);
+}
+
+function renameColumnRaw(board: Board, columnId: number, name: string): Outcome<void> {
+  const column = findColumn(board, columnId);
+  if (column === null) return fail({ kind: "columnNotFound", columnId });
+  column.name = name;
+  column.updatedAt = now();
+  return ok(undefined);
+}
+
+function setColumnDoneRaw(board: Board, columnId: number, done: boolean): Outcome<void> {
+  const column = findColumn(board, columnId);
+  if (column === null) return fail({ kind: "columnNotFound", columnId });
+  column.done = done;
+  column.updatedAt = now();
+  return ok(undefined);
+}
+
+function removeColumnRaw(board: Board, columnId: number): Outcome<void> {
+  const index = board.columns.findIndex((column) => column.id === columnId);
+  if (index === -1) return fail({ kind: "columnNotFound", columnId });
+  board.columns.splice(index, 1);
+  reindex(board);
+  return ok(undefined);
+}
