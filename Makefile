@@ -31,8 +31,8 @@ web-check: web-install ## 画面側の型検査・lint・単体テスト
 e2e: web-install ## Playwright を走らせる (Chromium と WebKit)
 	npm --prefix web run e2e
 
-web-demo: web-install ## ブラウザ版を組み立てる (web/dist-demo/、ADR 0035)
-	script/build-web-demo
+web-demo: web-install ## ブラウザ版を組み立てる (web/dist-demo/、ADR 0042)
+	npm --prefix web run build:demo
 
 web-demo-dev: web-demo ## ブラウザ版を手元で開く
 	npm --prefix web run dev:demo

@@ -164,13 +164,12 @@ fn board_detail(error: &BoardError) -> String {
 /// エラーコードごとに「次に何をすればよいか」を書くのが要点で、`rusqlite` の
 /// 文言をそのまま出さない。
 ///
-/// **SQLite の枝は SQLite を積んでいるときだけ**あります（[ADR 0036]）。
+/// **SQLite の枝は SQLite を積んでいるときだけ**あります（[ADR 0042]）。
 /// ブラウザ版の置き場所は JSON なので、ディスクや権限の話が出てきません。
 ///
-/// [ADR 0036]: ../../../docs/adr/0036-one-model-two-places-to-put-it.md
+/// [ADR 0042]: ../../../docs/adr/0042-the-browser-build-is-the-same-typescript.md
 fn db_detail(error: &StoreError) -> String {
     match error {
-        #[cfg(feature = "shell")]
         StoreError::Sqlite(error) => match error {
             rusqlite::Error::SqliteFailure(sqlite_error, message) => {
                 let reason = message.as_deref().unwrap_or("詳細情報なし");

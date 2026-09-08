@@ -100,7 +100,10 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(state)
         .manage(crate::capture::Registration::default())
-        .menu(menu::build)
+        // 起動の最初は最小限のメニュー。本物は webview が `set_menu` で渡します
+        // （ADR 0043）。
+        .menu(|app| menu::build(app, &menu::placeholder()))
+        .manage(menu::CurrentMenu::default())
         .on_menu_event(|app, event| handle_menu_event(app, event.id().as_ref()))
         .on_window_event(move |window, event| {
             if window.label() != BOARD_WINDOW {
@@ -159,6 +162,7 @@ pub fn run() {
             ipc::capture_target,
             ipc::set_capture_target,
             ipc::quick_capture_status,
+            ipc::set_menu,
             ipc::set_menu_accelerators_active,
             ipc::set_quick_capture_shortcut,
             ipc::close_capture_window,

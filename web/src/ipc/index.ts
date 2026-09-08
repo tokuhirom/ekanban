@@ -5,6 +5,7 @@
 // core を HTTP へ出すもの、`docs/DESIGN.md`「テスト」）を挟めなくなり、
 // 画面の振る舞いを Playwright から確かめる道が閉じます。
 
+import type { Section } from "../shell/menu";
 import type { AppAction } from "./types/AppAction";
 import type { BoardDocument } from "./types/BoardDocument";
 import type { CardEvent } from "./types/CardEvent";
@@ -41,6 +42,11 @@ export interface Ipc {
   setThemePreference(theme: ThemePreference): Promise<void>;
   /** 文言は画面が組む（`state/board.ts`）。ここは窓に渡すだけ。 */
   setWindowTitle(title: string): Promise<void>;
+  /** メニューバーを掛ける。**構成を決めるのは画面**（`shell/menu.ts`、ADR 0043）。
+   *
+   * 起動の最初に 1 回呼びます。ブラウザだけで動く組み立てには掛ける相手が
+   * いないので、そちらでは何も起きません——メニューはページが描きます。 */
+  setMenu(sections: Section[]): Promise<void>;
   /** メニューが押されたことを受ける（`docs/DESIGN.md`「メニューとキー割り当て」）。返るのは購読をやめる関数。 */
   onAppAction(handler: (action: AppAction) => void): () => void;
   /** OS の保存ダイアログ。閉じられたら `null`——**そのときは何も言わない**

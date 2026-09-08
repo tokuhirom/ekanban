@@ -18,10 +18,9 @@ README が使う人向けの入口、[マニュアル](MANUAL.md) が使い方�
 - **書き出しは 2 つに分ける。** 人が読む Markdown は webview（`web/src/model/export.ts`）、置いてある形の写しである JSON は置き場所（`crates/core/src/export.rs`）。分かれ目は形式ではなく、**材料が置き場所にしか無いかどうか**——JSON にはカードの履歴（`card_events`）まで入り、履歴は置き場所にしか無い。ファイルに書くコマンド（`write_text_file`）は中身を見ない（[ADR 0045](adr/0045-two-kinds-of-export.md)）
 - **置き場所は、受け取ったものを検めてから書く。** 盤面の判断をやり直すのではなく、整合だけを見る——空のタイトル、知らないカラムを指すカード、日付として成り立たない期限。どこに落とすかを決めるのは webview で、それが行として成り立つかを見るのが置き場所（[ADR 0040](adr/0040-the-shape-and-the-store-stay-in-rust.md)）
 - **`crates/core`（`ekanban-core`）に UI ツールキットを依存させない。** `model.rs` / `db/mod.rs` / `backup.rs` / `paths.rs` / `instance.rs` / `diagnostics.rs` は画面の作りを知らない。これが、テストを GUI のランタイム無しで走らせ続ける条件である。依存の依存から入り込むほうがありがちなので、解決した依存グラフを `script/check-core-independence` が CI で見る
-- **`crates/app/src/commands.rs` に `tauri` を出さない。** `ipc.rs` の `#[tauri::command]` は、その関数を呼ぶだけの包み。判断を包みの側に置かないことは設計そのもので、ブラウザだけで動く組み立て（`crates/web`）が同じ関数を使えるのはこれによる
-- **盤面の置き場所は差し替えられる。モデルは差し替えない。** 配るアプリは SQLite（`crates/core/src/db/`）、ブラウザで動くときは `web/src/store/`。**分かれているのは「どう置くか」だけ**で、採番も並べ替えも Undo も `web/src/model/board.ts` の 1 つのまま。置き場所に盤面の判断を書かない（[ADR 0036](adr/0036-one-model-two-places-to-put-it.md)、[ADR 0039](adr/0039-the-board-model-moves-to-typescript.md)）
-- **`crates/app` の `shell` feature の外に、Tauri を出さない。** 窓・ネイティブのメニュー・OS のダイアログ・グローバルホットキーがその内側で、外に残るのは `commands` / `dispatch` / `state` / `snapshot` / `error` と、メニューの「データとしての構成」。ブラウザだけで動く版（`crates/web`）が、殻を外したこの層をそのまま使う（[ADR 0035](adr/0035-a-browser-build-of-the-real-core.md)）
-- **コマンド名で振り分ける表を 2 つ持たない。** `crates/app/src/dispatch.rs` の 1 つを、Tauri の外の呼び手が通る。環境で答えが変わるもの（保存先を選ぶ、場所を開く、URL を開く）だけが呼ぶ側に残る
+- **`crates/app/src/commands.rs` に `tauri` を出さない。** `ipc.rs` の `#[tauri::command]` は、その関数を呼ぶだけの包み。判断が包みに入りはじめたら、それは `commands` に置き場所が無かったということ
+- **盤面の置き場所は差し替えられる。モデルは差し替えない。** 配るアプリは SQLite（`crates/core/src/db/`）、ブラウザで動くときは `web/src/store/`。**分かれているのは「どう置くか」だけ**で、採番も並べ替えも Undo も `web/src/model/board.ts` の 1 つのまま。置き場所に盤面の判断を書かない（[ADR 0039](adr/0039-the-board-model-moves-to-typescript.md)、[ADR 0042](adr/0042-the-browser-build-is-the-same-typescript.md)）
+- **Rust は 2 クレートだけ。** `crates/core`（盤面の形・SQLite・控え）と `crates/app`（Tauri の殻とコマンド）。ブラウザ版は同じ TypeScript がそのまま動くので、そのための組み立ては要らない（[ADR 0042](adr/0042-the-browser-build-is-the-same-typescript.md)）
 - **SQL は `crates/core/src/db/` に閉じる。** `tauri-plugin-sql` は使わない。スキーマ移行も差分保存もここにあり、それを捨てる理由がない。`tauri-plugin-store` も使わない——表示の状態は `app_state` テーブルにあり、データの置き場所を 2 つに割る理由がない
 
 ### 状態の持ち主
@@ -217,9 +216,9 @@ README が「いちばん大事にしています」と書いているところ�
 - **大文字と小文字だけが違うファイル名を作らない。** macOS と Windows のファイルシステムは大文字小文字を区別しないので、`Foo.tsx` と `foo.ts` が同じ名前に潰れ、Linux では通ったビルドがそこだけ落ちる
 - **配るものは Tauri のバンドラが作る。** macOS は `.app`（`.zip`）と `.dmg`、Linux は `.deb` と `.AppImage` に加えて `.tar.gz`（root を要求しない導線）、Windows は `.zip` と NSIS のインストーラ。ad-hoc 署名の指定は `tauri.conf.json` にあり、手元で組んだものと CI が組んだものが同じ署名になる（[ADR 0014](adr/0014-unsigned-apple-silicon-only-macos-builds.md)）
 - **`cargo run` はアプリを起動する。** ワークスペースの `default-members` を `crates/app` にしてある。**代わりに `--workspace` を省いた `cargo` のコマンドはそこだけを見る**ので、Makefile と CI は必ず `--workspace` を付ける
-- **ブラウザに SQLite を積まない。** `wasm32-unknown-unknown` に組んだ SQLite だけで 2.1 MB あり、こちらのコード全部より 5 倍大きい。ブラウザ版の置き場所は JSON で、盤面は文字列 1 つとして `localStorage` に入る（[ADR 0036](adr/0036-one-model-two-places-to-put-it.md)）
-- **ブラウザ版に、盤面の判断を書かない。** `crates/web` に入るのは環境の差だけ（保存先、ファイルの持ち出し方、URL の開き方）。メニューの構成も Rust が返し（`menu::web_sections`）、ページはそれを描く。ブラウザにできないことは**消さずに灰色にして、理由を文言に入れる**（[ADR 0035](adr/0035-a-browser-build-of-the-real-core.md)）
-- **ブラウザ版だけが、どの OS かをページから受け取る。** `wasm32-unknown-unknown` はどの OS でもないので、コンパイル時に決められない。配るアプリの経路は変えない（[ADR 0009](adr/0009-per-platform-key-bindings.md)）
+- **ブラウザ版は、アプリと同じ TypeScript がそのまま動く。** 差し替わるのは置き場所（`web/src/store/`、`localStorage`）と環境の口（`web/src/ipc/browser.ts`）だけ。**盤面のコードは 1 文字も違わない**（[ADR 0042](adr/0042-the-browser-build-is-the-same-typescript.md)）
+- **ブラウザ版に、盤面の判断を書かない。** 入るのは環境の差だけ（保存先、ファイルの持ち出し方、URL の開き方）。メニューの構成は配るアプリと同じ `web/src/shell/menu.ts` で、ページはそれを描く。ブラウザにできないことは**消さずに灰色にして、理由を文言に入れる**
+- **ブラウザ版だけが、どの OS かをページ自身で見る。** 配るアプリでは Rust がコンパイル時に知っていて `StartupState.platform` で渡す。ブラウザには訊く相手がそこしかない（[ADR 0009](adr/0009-per-platform-key-bindings.md)）
 - **Node の依存を増やさない。** `cargo` だけで完結していたところに増やしたものなので、版はロックファイルで固定し、入れるのは `npm ci` だけにする
 
 ### 根拠の書き方

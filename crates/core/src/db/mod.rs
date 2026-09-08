@@ -40,7 +40,7 @@ impl Database {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, StoreError> {
         let connection = Connection::open(path)?;
         connection.pragma_update(None, "foreign_keys", "ON")?;
-        connection.pragma_update(None, "journal_mode", journal_mode())?;
+        connection.pragma_update(None, "journal_mode", "WAL")?;
 
         let mut database = Self { connection };
         database.migrate()?;
@@ -1382,26 +1382,7 @@ impl Database {
     }
 }
 
-/// この環境で使うジャーナルの持ち方。
-///
-/// ネイティブは WAL です。**ブラウザ（`wasm32-unknown-unknown`）では WAL を
-/// 使いません**——そこでのデータベースはメモリ上の VFS に載っており、WAL は
-/// 別ファイルの共有メモリを要求するので、その VFS には作れません
-/// （[ADR 0035]）。持ち出すのは 1 つのファイルだけになるので、`-wal` に書かれた
-/// ぶんが `localStorage` に写らない、という取りこぼしもここで消えます。
-///
-/// [ADR 0035]: ../../../docs/adr/0035-a-browser-build-of-the-real-core.md
-fn journal_mode() -> &'static str {
-    if cfg!(target_family = "wasm") {
-        "MEMORY"
-    } else {
-        "WAL"
-    }
-}
-
-/// いまの時刻をミリ秒で。理由は `model::timestamp` と同じ（[ADR 0035]）。
-///
-/// [ADR 0035]: ../../../docs/adr/0035-a-browser-build-of-the-real-core.md
+/// いまの時刻をミリ秒で。
 fn now() -> i64 {
     Utc::now().timestamp_millis()
 }

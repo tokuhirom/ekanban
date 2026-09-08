@@ -21,12 +21,9 @@ ts-rs.workspace = true
 default = ["sqlite"]
 # SQLite の置き場所 (`db/mod.rs`)。**配るアプリはこれです。**
 #
-# 外せるようにしてあるのは、ブラウザ版が JSON の置き場所を使うためです
-# (`store::JsonStore`、ADR 0036)。`wasm32-unknown-unknown` に組んだ SQLite は
-# それだけで 2.1 MB あり、こちらのコード全部より 5 倍大きい。
-#
-# **モデルはこの feature の外にあります。** 分かれているのは「どう置くか」だけ
-# で、盤面の判断は `model.rs` の 1 つのままです。
+# 外せるようにしてあるのは、**盤面の形と SQL が分かれていることを確かめ続ける
+# ため**です (`cargo build -p ekanban-core --no-default-features`)。盤面の判断は
+# `web/src/model/board.ts` にあり (ADR 0039)、ここに残るのは形と検めだけです。
 sqlite = ["dep:rusqlite"]
 # テスト用のボード (`Board::fixture`)。ほかのクレートからも使うので、
 # crate をまたいで見えるようにこの feature で出す。実行ファイルには入らない。

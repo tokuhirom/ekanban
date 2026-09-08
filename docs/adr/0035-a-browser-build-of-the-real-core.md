@@ -1,7 +1,7 @@
 # 0035. ブラウザで試せる版は、中核を wasm に組み直して作る
 
 - 日付: 2026-09-07
-- 状態: 有効
+- 状態: 置き換えられた（→ [0042](0042-the-browser-build-is-the-same-typescript.md)）
 - 関連: [0018](0018-rust-owns-the-board-state.md)、[0021](0021-two-layer-testing-for-the-webview.md)、[0036](0036-one-model-two-places-to-put-it.md)
 
 ## 状況

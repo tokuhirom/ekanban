@@ -1,60 +1,36 @@
-// ブラウザ版の入口（[ADR 0035]）。
+// ブラウザ版の入口（[ADR 0042]）。
 //
-// 配るアプリの入口は `src/main.tsx` です。違うのは 3 つだけで、**盤面は同じ
-// `Board` がそのまま描きます**。
+// 配るアプリの入口は `src/main.tsx` です。**盤面のコードは 1 文字も違いません**
+// ——違うのは 3 つだけです。
 //
-// 1. Rust を呼ぶ口が wasm（`src/ipc/wasm.ts`）。動いているのは本物の
-//    `ekanban-core` で、SQLite のファイルは `localStorage` にあります
+// 1. 置き場所が `localStorage`（`src/store/`）。配るアプリでは SQLite です
 // 2. メニューバーをページが描く（`src/shell/MenuBar.tsx`）。ブラウザに OS の
-//    メニューバーが無いためで、構成は Rust から受け取ります
-// 3. どの OS かをページが名乗る。`wasm32-unknown-unknown` はどの OS でもない
-//    ので、Rust がコンパイル時に知る手が使えません
+//    メニューバーが無いためで、構成は配るアプリと同じ `shell/menu.ts` です
+// 3. どの OS かをページが名乗る。訊く相手の Rust がいないので、入口で 1 度
+//    だけ見て配ります（`src/ipc/local.ts` の `detectPlatform`）
 //
-// [ADR 0035]: ../../docs/adr/0035-a-browser-build-of-the-real-core.md
+// [ADR 0042]: ../../docs/adr/0042-the-browser-build-is-the-same-typescript.md
 
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
 import { Board } from "../src/board/Board";
-import { setIpc } from "../src/ipc";
 import type { Platform } from "../src/ipc/types/Platform";
-import type { WebSection } from "../src/ipc/types/WebSection";
-import { fireAppAction, startWasmIpc, wasmIpc, wasmMenuSections } from "../src/ipc/wasm";
+import { setIpc } from "../src/ipc";
+import { fireAppAction } from "../src/ipc/browser";
+import { detectPlatform, localIpc } from "../src/ipc/local";
 import { MenuBar, useMenuAccelerators } from "../src/shell/MenuBar";
+import type { Section } from "../src/shell/menu";
+import { webSections } from "../src/shell/menu";
 import { hardenBoard } from "../src/shell/harden";
 import "../src/styles.css";
 import "./demo.css";
-
-/// どの OS で開かれているか。
-///
-/// **ここだけはブラウザに訊きます。** 配るアプリでは Rust がコンパイル時に
-/// 知っていて `StartupState.platform` で渡します（[ADR 0009]）が、
-/// `wasm32-unknown-unknown` は macOS でも Windows でもないので、その手が
-/// ありません。取り違えると `secondary` が Cmd か Ctrl かを間違え、割り当てが
-/// 丸ごと効かなくなります。
-///
-/// `userAgentData.platform` を先に見るのは、そこだけが「OS を訊く」ための
-/// API だからです。無いブラウザでは `userAgent` に落ちます。**当たらなかった
-/// ときは Linux 扱い**——キーの割り当てが Ctrl 側になるだけで、押せなくなる
-/// 項目はありません。
-///
-/// [ADR 0009]: ../../docs/adr/0009-per-platform-key-bindings.md
-function detectPlatform(): Platform {
-  const data: unknown = (navigator as { userAgentData?: unknown }).userAgentData;
-  const reported =
-    typeof data === "object" && data !== null && "platform" in data
-      ? String(data.platform)
-      : navigator.userAgent;
-  if (/mac/i.test(reported)) return "macos";
-  if (/win/i.test(reported)) return "windows";
-  return "linux";
-}
 
 function Demo({
   sections,
   platform,
 }: {
-  sections: WebSection[];
+  sections: Section[];
   platform: Platform;
 }): React.JSX.Element {
   useMenuAccelerators(sections, platform, fireAppAction);
@@ -83,24 +59,17 @@ async function main(): Promise<void> {
   if (root === null) throw new Error("#root がない");
 
   const platform = detectPlatform();
-  setIpc(wasmIpc);
+  const ipc = localIpc(platform);
+  setIpc(ipc);
   hardenBoard();
 
-  try {
-    await startWasmIpc(platform);
-  } catch (error: unknown) {
-    // 起動に失敗したら、白い画面で終わらせない。ここで出せる先はここだけです
-    // （`crates/core` の `diagnostics` には、ブラウザで書ける記録先がありません）。
-    root.textContent = `起動できませんでした: ${String(error)}`;
-    return;
-  }
-
-  const sections = wasmMenuSections(platform);
+  const status = await ipc.quickCaptureStatus();
+  const sections = webSections(platform, status.unavailable);
 
   // 未捕捉の例外は Rust 側と同じ経路に流す（`docs/DESIGN.md`「アプリが伝えること」）。
   // ブラウザではログファイルに書けないので、コンソールに出て終わります。
   const report = (what: string, detail: unknown): void => {
-    void wasmIpc.logFrontendError(`${what}: ${String(detail)}`).catch(() => {
+    void ipc.logFrontendError(`${what}: ${String(detail)}`).catch(() => {
       // 記録すら通らないなら、これ以上できることはない。
     });
   };

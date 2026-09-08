@@ -7,12 +7,12 @@
 //!
 //! [ADR 0045]: ../../../docs/adr/0045-two-kinds-of-export.md
 //!
-//! **JSON の組み立てが置き場所の側にありません**（[ADR 0036]）。置き場所は
+//! **JSON の組み立てが置き場所の側にありません**（[ADR 0042]）。置き場所は
 //! 2 つあり（SQLite と JSON、`store.rs`）、組み立てをそれぞれが持つと、同じ
 //! ボードから違うファイルが出ます。置き場所から受け取るのはカードの履歴だけで、
 //! 残りは `Board` から出します。
 //!
-//! [ADR 0036]: ../../../docs/adr/0036-one-model-two-places-to-put-it.md
+//! [ADR 0042]: ../../../docs/adr/0042-the-browser-build-is-the-same-typescript.md
 
 use serde_json::json;
 

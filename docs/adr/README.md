@@ -114,14 +114,14 @@
 | [0032](0032-committing-a-card-field-by-field.md) | 編集パネルは欄ごとに確定する | 2026-09-07 | 有効 |
 | [0033](0033-a-markdown-editor-for-the-description.md) | 説明は Markdown のエディタで書く | 2026-09-07 | 有効 |
 | [0034](0034-dropping-the-wip-limit.md) | WIP 上限をやめる | 2026-09-07 | 有効 |
-| [0035](0035-a-browser-build-of-the-real-core.md) | ブラウザで試せる版は、中核を wasm に組み直して作る | 2026-09-07 | 有効 |
-| [0036](0036-one-model-two-places-to-put-it.md) | モデルは 1 つ、置き場所は 2 つ | 2026-09-07 | 有効 |
+| [0035](0035-a-browser-build-of-the-real-core.md) | ブラウザで試せる版は、中核を wasm に組み直して作る | 2026-09-07 | 置き換えられた（→ 0042） |
+| [0036](0036-one-model-two-places-to-put-it.md) | モデルは 1 つ、置き場所は 2 つ | 2026-09-07 | 置き換えられた（→ 0042） |
 | [0037](0037-a-list-that-ends-where-you-stop-typing.md) | 箇条書きは打ち止めたところで終わる | 2026-09-07 | 有効 |
 | [0038](0038-a-column-that-means-done.md) | 「終わったもの」の置き場であることを、カラムの属性にする | 2026-09-08 | 有効 |
 | [0039](0039-the-board-model-moves-to-typescript.md) | 盤面のモデルを TypeScript に移し、Rust は殻と置き場所に絞る | 2026-09-08 | 有効 |
 | [0040](0040-the-shape-and-the-store-stay-in-rust.md) | 盤面の形と置き場所は Rust に残す | 2026-09-08 | 有効 |
 | [0041](0041-one-layer-of-screen-tests.md) | 画面のテストを 1 層にし、ハーネスを畳む | 2026-09-08 | 有効 |
-| [0042](0042-the-browser-build-is-the-same-typescript.md) | ブラウザ版を、アプリと同じ TypeScript で作る | 2026-09-08 | 草案（未確定。通れば 0035 と 0036 を置き換える） |
-| [0043](0043-the-menu-is-described-by-the-webview.md) | メニューの構成を webview が持ち、Rust は組み立てだけを引き受ける | 2026-09-08 | 草案（未確定） |
+| [0042](0042-the-browser-build-is-the-same-typescript.md) | ブラウザ版を、アプリと同じ TypeScript で作る | 2026-09-08 | 有効 |
+| [0043](0043-the-menu-is-described-by-the-webview.md) | メニューの構成を webview が持ち、Rust は組み立てだけを引き受ける | 2026-09-08 | 有効 |
 | [0044](0044-tags-get-their-colour-automatically.md) | タグの色を自動で割り振り、既定色をやめる | 2026-09-08 | 有効 |
 | [0045](0045-two-kinds-of-export.md) | 書き出しは 2 つに分ける——Markdown は画面、JSON は置き場所 | 2026-09-08 | 有効 |

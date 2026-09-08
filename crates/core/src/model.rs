@@ -46,6 +46,8 @@ pub enum CardEventKind {
 }
 
 impl CardEventKind {
+    // 置き場所が SQL に書くときの綴り。`--no-default-features` では誰も呼ばない。
+    #[cfg_attr(not(feature = "sqlite"), allow(dead_code))]
     pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Created => "created",
@@ -251,6 +253,8 @@ pub fn parse_stored_due_date(value: &str) -> Result<Option<NaiveDate>, BoardErro
 }
 
 impl Board {
+    // 新しいボードを作るのは置き場所。`--no-default-features` では誰も呼ばない。
+    #[cfg_attr(not(feature = "sqlite"), allow(dead_code))]
     pub(crate) fn new_empty(
         id: BoardId,
         name: impl Into<String>,
@@ -670,13 +674,6 @@ fn reposition(cards: &mut [Card]) {
 }
 
 /// いまの時刻をミリ秒で。
-///
-/// `std::time::SystemTime` ではなく chrono を通します。**`wasm32-unknown-unknown`
-/// には `SystemTime` の実装が無く、呼ぶとパニックする**ためです（ブラウザ向けの
-/// 組み立て、[ADR 0035]）。chrono は同じ target でブラウザの `Date` に落ちます。
-/// ネイティブでは値も精度も変わりません。
-///
-/// [ADR 0035]: ../../../docs/adr/0035-a-browser-build-of-the-real-core.md
 fn timestamp() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }

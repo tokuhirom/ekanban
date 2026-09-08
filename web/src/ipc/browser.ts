@@ -164,6 +164,9 @@ export function browserIpc(store: MemoryStore, options: BrowserIpcOptions): Ipc 
       document.title = title;
       return Promise.resolve();
     },
+    // 掛ける相手（OS のメニューバー）がいません。メニューを描くのはページで、
+    // 同じ構成を `MenuBar` が読みます（`shell/menu.ts`）。
+    setMenu: () => Promise.resolve(),
     onAppAction: (handler) => {
       menuHandler = handler;
       window.ekanbanMenu = handler;

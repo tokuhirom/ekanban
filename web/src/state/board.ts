@@ -33,6 +33,7 @@ import type { CaptureTarget } from "../ipc/types/CaptureTarget";
 import type { Platform } from "../ipc/types/Platform";
 import type { Tag } from "../ipc/types/Tag";
 import type { ThemePreference } from "../ipc/types/ThemePreference";
+import { sectionsFor } from "../shell/menu";
 import { applyTheme } from "../shell/theme";
 import { dayHasTurned, localDay } from "./day";
 import { describeBoardError } from "./errors";
@@ -346,9 +347,10 @@ export function useBoardState(): BoardState {
 
   useEffect(() => {
     let cancelled = false;
-    ipc
-      .startupState()
-      .then((startup) => {
+    // 環境の答え（グローバルホットキーを使えるか）も一緒に聞きます。メニューの
+    // 文言に入るので、掛ける前に要ります（ADR 0030）。
+    Promise.all([ipc.startupState(), ipc.quickCaptureStatus()])
+      .then(([startup, status]) => {
         if (cancelled) return;
         readDocuments(startup.openBoardId);
         setStoredCaptureTarget(startup.captureTarget);
@@ -360,6 +362,10 @@ export function useBoardState(): BoardState {
         applyTheme(startup.theme);
         setQuickCaptureShortcut(startup.quickCaptureShortcut);
         setAbout({ version: startup.version, databasePath: startup.databasePath });
+
+        // メニューバーを掛ける（ADR 0043）。**構成を持っているのはこちら**
+        // （`shell/menu.ts`）で、殻はそれを OS のメニューに変換するだけです。
+        void ipc.setMenu(sectionsFor(startup.platform, status.unavailable));
       })
       .catch((error: unknown) => {
         if (!cancelled) report("ボードを読み込めませんでした", error);

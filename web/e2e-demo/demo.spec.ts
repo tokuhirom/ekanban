@@ -1,16 +1,15 @@
-// ブラウザ版が、ブラウザの中だけで動いていること（[ADR 0035]）。
+// ブラウザ版が、ブラウザの中だけで動いていること（[ADR 0035]、[ADR 0042]）。
 //
-// ここで動いているのは **`wasm32-unknown-unknown` に組み直した本物の
-// `ekanban-core`** で、SQLite のファイルは `localStorage` にあります。ハーネス
-// 越しの e2e（`e2e/`）と違って、確かめる相手は HTTP の向こうではなく、この
-// ページの中です——だから**読み込み直しても残っていること**が、ここでしか
-// 見られない受け入れ条件になります。
+// **動いているのはアプリと同じ TypeScript**で、置き場所だけが `localStorage`
+// に差し替わっています。だから盤面の振る舞いをここで数え直しません——`e2e/`
+// が見ているものがそのまま効きます。
 //
-// 盤面の振る舞いそのものは、ここで数え直しません。同じ `Board` と同じ
-// `ekanban-core` が動いているので、`e2e/` が見ているものがそのまま効きます。
-// ここで見るのは、**組み立ての違いから来るところだけ**です。
+// ここで見るのは、**組み立ての違いから来るところだけ**です。組み立てたものを
+// `vite preview` で出して叩くので、`e2e/` が見ていない「配る形になったときに
+// 壊れていないか」も一緒に通ります。
 //
 // [ADR 0035]: ../../docs/adr/0035-a-browser-build-of-the-real-core.md
+// [ADR 0042]: ../../docs/adr/0042-the-browser-build-is-the-same-typescript.md
 
 import { expect, test, type Page } from "@playwright/test";
 
@@ -21,7 +20,7 @@ async function storedSize(page: Page): Promise<number> {
 
 async function openDemo(page: Page): Promise<void> {
   await page.goto("/");
-  // wasm を読み込んで種を蒔くまで。既定の盤面が出たら起動できている。
+  // 種を蒔くまで。既定の盤面が出たら起動できている。
   await expect(page.getByRole("heading", { name: "個人 Kanban" })).toBeVisible({ timeout: 30_000 });
 }
 
@@ -42,7 +41,7 @@ test("足したカードは、読み込み直しても残っている", async ({
   await expect(page.getByText("ブラウザ版で足したカード")).toBeVisible({ timeout: 30_000 });
 });
 
-test("メニューバーは Rust が決めた構成のまま出る", async ({ page }) => {
+test("メニューバーは、配るアプリと同じ構成のまま出る", async ({ page }) => {
   await openDemo(page);
   await page.getByRole("menuitem", { name: "表示" }).click();
 

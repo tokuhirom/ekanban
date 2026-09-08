@@ -3,8 +3,8 @@
 //! **中身はありません。** `commands` の関数をそのまま呼び、`AppState` を
 //! `tauri::State` から取り出すだけです。判断がここに入りはじめたら、それは
 //! `commands` に置き場所がなかったということなので、向こうに移してください。
-//! `docs/DESIGN.md`「テスト」の開発用ハーネスは `commands` の側を HTTP に出すので、ここに書いたものは
-//! ブラウザからは通りません。
+//! `crates/app/tests/commands.rs` が試すのは `commands` の側なので、ここに書いた
+//! ものはテストに映りません。
 
 use std::path::{Path, PathBuf};
 
@@ -261,14 +261,46 @@ pub fn set_quick_capture_shortcut(
     crate::capture::set(&app, &state, &registration, shortcut)
 }
 
+/// メニューバーを掛ける。**構成を決めるのは webview**（[ADR 0043]）。
+///
+/// 起動の最初に 1 回呼びます。そこまでは最小限のメニューが掛かっています
+/// （`menu::placeholder`）。
+///
+/// [ADR 0043]: ../../../docs/adr/0043-the-menu-is-described-by-the-webview.md
+#[tauri::command]
+pub fn set_menu(
+    app: AppHandle,
+    current: State<'_, crate::menu::CurrentMenu>,
+    sections: Vec<crate::menu::Section>,
+) {
+    match crate::menu::build(&app, &sections) {
+        Ok(menu) => {
+            if let Err(error) = app.set_menu(menu) {
+                ekanban_core::diagnostics::log(&format!("failed to set the menu: {error}"));
+                return;
+            }
+            current.set(sections);
+        }
+        // メニューが出ないだけで盤面は動きます。使う人に打てる手も無いので、
+        // 記録だけ残します。
+        Err(error) => {
+            ekanban_core::diagnostics::log(&format!("failed to build the menu: {error}"));
+        }
+    }
+}
+
 /// メニューに付いているキーの割り当てを、付け外しする。
 ///
 /// **割り当てを捕まえている間だけ外します**（`docs/DESIGN.md`「クイックキャプチャ」）。
 /// 付いたままだと、メニューのアクセラレータが webview より先に押されたキーを
 /// 取ってしまい、`keydown` がダイアログまで届きません。
 #[tauri::command]
-pub fn set_menu_accelerators_active(app: AppHandle, active: bool) {
-    if let Err(error) = crate::menu::set_accelerators_active(&app, active) {
+pub fn set_menu_accelerators_active(
+    app: AppHandle,
+    current: State<'_, crate::menu::CurrentMenu>,
+    active: bool,
+) {
+    if let Err(error) = crate::menu::set_accelerators_active(&app, &current.get(), active) {
         ekanban_core::diagnostics::log(&format!("failed to change the menu accelerators: {error}"));
     }
 }

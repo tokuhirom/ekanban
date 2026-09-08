@@ -1,8 +1,8 @@
 # 0042. ブラウザ版を、アプリと同じ TypeScript で作る
 
 - 日付: 2026-09-08
-- 状態: 草案（未確定）
-- 関連: [0035](0035-a-browser-build-of-the-real-core.md)（これを置き換える）、[0036](0036-one-model-two-places-to-put-it.md)、[0039](0039-the-board-model-moves-to-typescript.md)
+- 状態: 有効
+- 関連: [0035](0035-a-browser-build-of-the-real-core.md) と [0036](0036-one-model-two-places-to-put-it.md)（どちらも置き換える）、[0039](0039-the-board-model-moves-to-typescript.md)
 
 ## 状況
 
@@ -12,11 +12,11 @@
 
 ## 決定
 
-**`crates/web` を畳む。** ブラウザ版は `web/demo/` が置き場所に `store/local`（`localStorage` の JSON）を差して起動するだけにする。
+**`crates/web` を畳む。** ブラウザ版は `web/demo/` が置き場所に `web/src/store/`（`localStorage` の JSON）を差して起動するだけにする。
 
 - 盤面のコードはアプリと 1 文字も違わない。違うのは差した置き場所と、環境の口の実装だけ
 - ブラウザにできないこと（グローバルホットキー、ファイル管理で場所を開く、データベースのコピー）は、[0035](0035-a-browser-build-of-the-real-core.md) のまま**消さずに灰色にして、理由を文言に入れる**
-- どの OS かをページが名乗る扱いも [0035](0035-a-browser-build-of-the-real-core.md) のまま（`web/demo/main.tsx` が `start()` に渡す）。この例外を `web/src/` に広げない
+- どの OS かをページが名乗る扱いも [0035](0035-a-browser-build-of-the-real-core.md) のまま。訊く相手の Rust がいないので、入口（`web/src/ipc/local.ts` の `detectPlatform`）が 1 度だけ見て、以降は同じものを配る。**画面のどこからも読み直さない**
 - `web/e2e-demo/` の役目も変えない——**ブラウザ版だけが持つ差**（再読み込みで盤面が残ること）を見る。盤面の振る舞いは `web/e2e/` が既に見ている
 
 ## 理由
@@ -37,9 +37,10 @@
 
 ## 結果
 
-得るもの。ブラウザ版とアプリの差が、**置き場所と環境の口だけ**になる。`crates/web` と `store.rs` の `JsonStore` が消え（SQLite の口だけが残る）、`wasm-pack` がビルドの前提から外れる。ページが軽くなる。
+得るもの。ブラウザ版とアプリの差が、**置き場所と環境の口だけ**になる。`crates/web`（351 行）と `store.rs` の `JsonStore`（785 → 370 行）と `crates/app/src/dispatch.rs`（167 行）が消え、`wasm-pack` と `wasm32-unknown-unknown` がビルドの前提から外れる。`.github/workflows/pages.yml` から Rust が消える。ページが軽くなる（wasm の 2 MB が無くなる）。
 
 引き受ける不都合。
 
 - **「本物の Rust が動いている」という説明が使えなくなる。** README と ADR の該当箇所を書き換える。代わりに言えるのは「アプリと同じコードが動いている」で、[0035](0035-a-browser-build-of-the-real-core.md) が本当に欲しかったのはこちらである
 - **`localStorage` の上限（おおむね 5MB）に、盤面が文字列 1 つとして当たる。** [0036](0036-one-model-two-places-to-put-it.md) の JSON 置き場と同じ性質で、新しい制約ではない
+- **置き場所の移行が 2 か所になる。** SQLite の移行は `db/mod.rs`、ブラウザの置き場所は `web/src/store/`。置き方が 2 つある以上ここは分かれる（[0036](0036-one-model-two-places-to-put-it.md)）が、**移行を書く言語が変わった**ので、過去に SQLite 側と揃えて書いた移行（かつての既定色を戻すもの）はブラウザ版には引き継がれない。前の版の文字列は、そのまま読める形にしてある

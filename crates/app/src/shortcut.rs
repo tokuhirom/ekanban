@@ -14,15 +14,12 @@
 // 保存の形と `KeyboardEvent.code` の間の変換は、殻を外しても要ります
 // （`KeyPress` は webview から届く形です）。**登録できる形（[`Shortcut`]）だけが
 // 殻の側**——グローバルホットキーはブラウザに無いので、`shell` を外すと
-// まるごと消えます（[ADR 0035]）。
+// まるごと消えます（[ADR 0042]）。
 //
-// [ADR 0035]: ../../../docs/adr/0035-a-browser-build-of-the-real-core.md
-#[cfg(feature = "shell")]
+// [ADR 0042]: ../../../docs/adr/0042-the-browser-build-is-the-same-typescript.md
 use std::fmt;
-#[cfg(feature = "shell")]
 use std::str::FromStr;
 
-#[cfg(feature = "shell")]
 use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut as GlobalShortcut};
 
 /// 割り当てを受け付けられない理由。
@@ -36,7 +33,6 @@ pub enum ShortcutError {
     UnsupportedKey(String),
 }
 
-#[cfg(feature = "shell")]
 /// クイックキャプチャに割り当てられたキーの組み合わせ。
 ///
 /// 作れた時点で、グローバルホットキーとして登録できる形だと分かっています。
@@ -51,7 +47,6 @@ pub struct Shortcut {
     code: Code,
 }
 
-#[cfg(feature = "shell")]
 impl Shortcut {
     /// 保存してある文字列から復元する。
     pub fn parse(source: &str) -> Result<Self, ShortcutError> {
@@ -112,7 +107,6 @@ impl Shortcut {
     }
 }
 
-#[cfg(feature = "shell")]
 impl fmt::Display for Shortcut {
     /// 保存と表示に使う正規形。修飾キーの順序を固定するので、`cmd-shift-n` と
     /// `shift-cmd-n` は同じ文字列になる。
@@ -133,7 +127,6 @@ impl fmt::Display for Shortcut {
     }
 }
 
-#[cfg(feature = "shell")]
 /// 保存する側のキー名を W3C の `code` に直す。
 ///
 /// **逆向きの表は画面側にあります**（`web/src/shell/shortcut.ts` の `keyName`）。
@@ -210,14 +203,7 @@ pub fn platform_support() -> Result<(), String> {
         )
     }
 
-    // ブラウザ。**アプリの外まで届くキーの割り当ては、ページには作れません。**
-    #[cfg(target_family = "wasm")]
-    {
-        Err("ブラウザでは使えません".to_string())
-    }
-
     #[cfg(not(any(
-        target_family = "wasm",
         target_os = "macos",
         target_os = "linux",
         target_os = "dragonfly",
@@ -235,9 +221,9 @@ pub fn platform_support() -> Result<(), String> {
 /// Wayland にはアプリから使えるグローバルホットキーの共通の仕組みが無い。
 /// XWayland 越しに登録しても、Wayland のクライアントが前面にいる間はイベントが
 /// 来ないので、使えるとは言えない。
-// macOS とブラウザでは `platform_support` が環境変数を見ないので、ここは
-// テストからしか呼ばれない。
-#[cfg_attr(any(target_os = "macos", target_family = "wasm"), allow(dead_code))]
+// macOS では `platform_support` が環境変数を見ないので、ここはテストからしか
+// 呼ばれない。
+#[cfg_attr(target_os = "macos", allow(dead_code))]
 fn x11_support(
     wayland_display: Option<&str>,
     session_type: Option<&str>,
@@ -257,7 +243,7 @@ fn x11_support(
     Ok(())
 }
 
-#[cfg(all(test, feature = "shell"))]
+#[cfg(test)]
 mod shortcut_tests {
     use super::*;
 

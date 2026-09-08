@@ -6,7 +6,7 @@
 //!
 //! ```sh
 //! EKANBAN_DATABASE=/tmp/manual.sqlite3 \
-//!   cargo run -p ekanban-harness --example manual_screenshot_seed -- board-dark
+//!   cargo run -p ekanban-app --example manual_screenshot_seed -- board-dark
 //! ```
 //!
 //! 盤面は SQL ではなく `Board` を組み立てて保存する。撮った画面が、アプリが本当に

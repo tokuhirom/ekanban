@@ -27,7 +27,7 @@
 
 **インストールせずに試せます。** → **<https://tokuhirom.github.io/ekanban/>**
 
-ブラウザの中だけで動く版です。盤面はそのブラウザの `localStorage` にだけ残ります——どこにも送りません。動いているのはアプリと同じ Rust の中核を WebAssembly に組み直したもので、**盤面の振る舞いはアプリとまったく同じ**です（[ADR 0035](docs/adr/0035-a-browser-build-of-the-real-core.md)）。
+ブラウザの中だけで動く版です。盤面はそのブラウザの `localStorage` にだけ残ります——どこにも送りません。動いているのはアプリとまったく同じ TypeScript で、置き場所が SQLite ではなく `localStorage` になっているだけなので、**盤面の振る舞いはアプリとまったく同じ**です（[ADR 0042](docs/adr/0042-the-browser-build-is-the-same-typescript.md)）。
 
 アプリと違うのはこれだけです。
 
