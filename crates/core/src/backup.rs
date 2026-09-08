@@ -245,9 +245,7 @@ mod tests {
             let mut database = Database::open(&path).expect("the database opens");
             let mut board = database.load_board().expect("the seeded board loads");
             let column_id = board.columns[0].id;
-            board
-                .add_card(column_id, "控えに入るカード", "")
-                .expect("the column takes a card");
+            board.push_card(column_id, "控えに入るカード", "");
             database.save_board(&mut board).expect("the card is stored");
             board
         };

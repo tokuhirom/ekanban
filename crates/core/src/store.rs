@@ -204,8 +204,6 @@ impl StoredBoard {
             archived_cards: self.archived_cards.clone(),
             columns: self.columns.clone(),
             pending_events: Vec::new(),
-            undo_stack: Vec::new(),
-            redo_stack: Vec::new(),
         }
     }
 
