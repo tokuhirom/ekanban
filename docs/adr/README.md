@@ -117,3 +117,4 @@
 | [0035](0035-a-browser-build-of-the-real-core.md) | ブラウザで試せる版は、中核を wasm に組み直して作る | 2026-09-07 | 有効 |
 | [0036](0036-one-model-two-places-to-put-it.md) | モデルは 1 つ、置き場所は 2 つ | 2026-09-07 | 有効 |
 | [0037](0037-a-list-that-ends-where-you-stop-typing.md) | 箇条書きは打ち止めたところで終わる | 2026-09-07 | 有効 |
+| [0038](0038-a-column-that-means-done.md) | 「終わったもの」の置き場であることを、カラムの属性にする | 2026-09-08 | 有効 |

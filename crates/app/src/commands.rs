@@ -308,6 +308,22 @@ pub fn rename_column(
         .map(|(_, snapshot)| snapshot)
 }
 
+/// 終わったものの置き場かどうかを切り替える（[ADR 0038]）。
+///
+/// **何本立てても構いません。** 「完了」と「キャンセル済み」を並べて両方立てるのが、
+/// ボードではなくカラムの属性にした理由です。
+///
+/// [ADR 0038]: ../../../../docs/adr/0038-a-column-that-means-done.md
+pub fn set_column_done(
+    state: &AppState,
+    column_id: ColumnId,
+    done: bool,
+) -> Result<Snapshot, AppError> {
+    state
+        .mutate(COLUMN, |board| board.set_column_done(column_id, done))
+        .map(|(_, snapshot)| snapshot)
+}
+
 pub fn remove_column(state: &AppState, column_id: ColumnId) -> Result<Snapshot, AppError> {
     state
         .mutate(COLUMN, |board| board.remove_column(column_id))

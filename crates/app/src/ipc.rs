@@ -168,6 +168,15 @@ pub fn rename_column(
 }
 
 #[tauri::command]
+pub fn set_column_done(
+    state: State<'_, AppState>,
+    column_id: ColumnId,
+    done: bool,
+) -> Reply<Snapshot> {
+    commands::set_column_done(&state, column_id, done)
+}
+
+#[tauri::command]
 pub fn remove_column(state: State<'_, AppState>, column_id: ColumnId) -> Reply<Snapshot> {
     commands::remove_column(&state, column_id)
 }

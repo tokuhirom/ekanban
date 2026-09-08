@@ -153,6 +153,7 @@ pub fn run() {
             ipc::set_card_tags,
             ipc::add_column,
             ipc::rename_column,
+            ipc::set_column_done,
             ipc::remove_column,
             ipc::move_column,
             ipc::archive_column,

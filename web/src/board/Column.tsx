@@ -119,6 +119,18 @@ export function Column({
               出ていないと `…` を 1 本ずつ開くまで分かりません。文言を常時
               置く代わりに、意味は読み上げ名と説明に持たせます——運んでいるのは
               色ではなく形なので、「色だけに意味を持たせない」にも触れません。 */}
+          {/* 終わったものの置き場（ADR 0038）。色だけに意味を持たせないので、
+              印と読み上げ名で出します（`docs/DESIGN.md`「画面の作り」）。 */}
+          {column.done && (
+            <span
+              className="column-done"
+              role="img"
+              aria-label="完了扱い"
+              title="終わったものの置き場。ここのカードは期限を数えず、薄く出る"
+            >
+              ✓
+            </span>
+          )}
           {captureTarget && (
             <span
               className="column-capture"
@@ -161,6 +173,18 @@ export function Column({
             }}
           >
             アーカイブ
+          </button>
+          {/* 何本でも立てられます（ADR 0038）。「完了」と「キャンセル済み」を
+              並べて両方立てるのが、ボードではなくカラムの属性にした理由です。 */}
+          <button
+            type="button"
+            className="ghost set-column-done"
+            onClick={() => {
+              setMenuOpen(false);
+              void run(() => ipc.setColumnDone(column.id, !column.done));
+            }}
+          >
+            {column.done ? "完了扱いをやめる" : "完了扱いにする"}
           </button>
           <button
             type="button"
@@ -215,6 +239,9 @@ export function Column({
               today={today}
               activeTag={activeTag}
               onToggleTagFilter={onToggleTagFilter}
+              // 終わったものはトーンダウンして描く（ADR 0038）。減光とは
+              // 別の表現にする——**濃さ**は絞り込みが使っている。
+              done={column.done}
               // 隠さず減光する。隠すと挿入位置が動いてしまう（条件 4）。
               dimmed={matched !== null && !matched.has(card.id)}
               selected={selectedCard === card.id}

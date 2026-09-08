@@ -35,6 +35,7 @@ function column(id: number, cardIds: number[]): Column {
     position: 0,
     createdAt: 0,
     updatedAt: 0,
+    done: false,
     cards: cardIds.map(card),
   };
 }

@@ -191,8 +191,17 @@ impl StoredBoard {
             overdue: 0,
             today: 0,
         };
-        // アーカイブ済みは数えません（SQLite 側の `archived_at IS NULL` と同じ）。
-        for card in self.columns.iter().flat_map(|column| column.cards.iter()) {
+        // アーカイブ済みと、終わったものの置き場（`columns.done`、[ADR 0038]）に
+        // あるカードは数えません（SQLite 側の `archived_at IS NULL` と
+        // `columns.done = 0` と同じ）。
+        //
+        // [ADR 0038]: ../../../docs/adr/0038-a-column-that-means-done.md
+        for card in self
+            .columns
+            .iter()
+            .filter(|column| !column.done)
+            .flat_map(|column| column.cards.iter())
+        {
             match due_status(card.due_date, today) {
                 DueStatus::Overdue(_) => due.overdue += 1,
                 DueStatus::Today => due.today += 1,

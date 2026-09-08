@@ -105,6 +105,10 @@ fn dispatch(command: &str, args: Value, state: &AppState) -> Result<Option<Value
             let a: ColumnName = read(args)?;
             json(commands::rename_column(state, a.column_id, &a.name)?)?
         }
+        "set_column_done" => {
+            let a: ColumnDone = read(args)?;
+            json(commands::set_column_done(state, a.column_id, a.done)?)?
+        }
         "remove_column" => json(commands::remove_column(
             state,
             read::<ColumnId>(args)?.column_id,
@@ -267,6 +271,12 @@ struct ColumnId {
 struct ColumnName {
     column_id: i64,
     name: String,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ColumnDone {
+    column_id: i64,
+    done: bool,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]

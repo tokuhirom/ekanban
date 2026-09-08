@@ -22,7 +22,7 @@ function card(id: number): Card {
   };
 }
 
-function column(id: number, cardIds: number[]): Column {
+function column(id: number, cardIds: number[], done = false): Column {
   return {
     id,
     boardId: 1,
@@ -30,6 +30,7 @@ function column(id: number, cardIds: number[]): Column {
     position: 0,
     createdAt: 0,
     updatedAt: 0,
+    done,
     cards: cardIds.map(card),
   };
 }
@@ -53,6 +54,21 @@ describe("firstDueCard", () => {
 
   it("期限のないカードは飛ばす", () => {
     expect(firstDueCard(b, new Map([[4, { kind: "overdue", days: 1 }]]), "overdue")).toBe(4);
+  });
+
+  /// 件数が数えていないカラムへは辿らない（ADR 0038）。
+  it("完了扱いのカラムは飛ばす", () => {
+    const withDone = board(column(10, [1, 2]), column(20, [3, 4], true), column(30, [5]));
+    const statuses = new Map<number, DueStatus>([
+      [3, { kind: "overdue", days: 2 }],
+      [5, { kind: "overdue", days: 1 }],
+    ]);
+    expect(firstDueCard(withDone, statuses, "overdue")).toBe(5);
+  });
+
+  it("完了扱いのカラムにしか無ければ、何も返さない", () => {
+    const withDone = board(column(20, [3], true));
+    expect(firstDueCard(withDone, new Map([[3, { kind: "today" }]]), "today")).toBeNull();
   });
 
   it("該当が無ければ何も返さない", () => {

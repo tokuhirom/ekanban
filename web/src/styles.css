@@ -373,6 +373,31 @@ textarea {
   opacity: 0.4;
 }
 
+/* 終わったものの置き場にあるカード（ADR 0038）。
+ *
+ * **`opacity` は使いません。** カード全体の `opacity` は絞り込みの減光が使って
+ * いるので（すぐ上）、同じ表現手段をもう 1 つの意味に使うと、暗いカードの理由が
+ * 2 つになって読めなくなります（`docs/DESIGN.md`「絞り込みと検索」）。終わった
+ * ものは**色**、絞り込みは**濃さ**。両方に当たったカードは、薄い色がさらに
+ * 減光された姿になります。 */
+.card[data-done] {
+  border-color: color-mix(in srgb, var(--color-border) 60%, transparent);
+  background: var(--color-accent);
+}
+
+.card[data-done] .card-title,
+.card[data-done] .card-due,
+.card[data-done] .card-checklist,
+.card[data-done] .card-description {
+  color: var(--color-muted-foreground);
+}
+
+/* タグの色はユーザーが決めたもので、こちらでは置き換えられない
+ * （`docs/DESIGN.md`「画面の作り」）。チップだけ彩度を落とす。 */
+.card[data-done] .card-tags {
+  opacity: 0.65;
+}
+
 /* 選んでいるカード。色だけに意味を持たせないので、枠の太さでも分かるようにする。 */
 .card[data-selected] {
   border-color: var(--color-info);
@@ -1358,4 +1383,11 @@ button.danger {
 .column-capture {
   font-size: 11px;
   line-height: 1;
+}
+
+/* 終わったものの置き場であること（ADR 0038）。`⚡` と同じ形の印で出す。 */
+.column-done {
+  font-size: 11px;
+  line-height: 1;
+  color: var(--color-muted-foreground);
 }

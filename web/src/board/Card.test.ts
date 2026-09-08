@@ -47,6 +47,25 @@ describe("dueBadge", () => {
     expect(dueBadge({ kind: "none" }, due, today)).toBeNull();
   });
 
+  /// 終わったものの置き場では急かさない（ADR 0038）。
+  it("完了扱いのカラムでは、どの状態も日付だけの muted になる", () => {
+    for (const status of [
+      { kind: "overdue", days: 2 },
+      { kind: "today" },
+      { kind: "soon", days: 1 },
+      { kind: "upcoming", days: 8 },
+    ] as const) {
+      expect(dueBadge(status, due, today, true)).toEqual({
+        tone: "muted",
+        text: "9/4",
+      });
+    }
+  });
+
+  it("完了扱いでも、期限が無ければ何も出さない", () => {
+    expect(dueBadge({ kind: "none" }, due, today, true)).toBeNull();
+  });
+
   /// 色だけに意味を持たせない（`docs/DESIGN.md`）。記号でも語でも読めること。
   it("どの状態も、色を見なくても文言だけで区別できる", () => {
     const texts = [
