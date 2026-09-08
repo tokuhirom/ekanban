@@ -10,6 +10,7 @@
 // [ADR 0016]: ../../../docs/adr/0016-where-the-app-says-things.md
 
 import type { AppError } from "./types/AppError";
+import type { Field } from "./types/Field";
 
 export function asAppError(error: unknown): AppError | null {
   if (error === null || typeof error !== "object") return null;
@@ -27,4 +28,20 @@ export function describeFailure(error: unknown): { title: string; detail: string
   return failure === null
     ? { title: "操作できませんでした", detail: String(error) }
     : { title: failure.title, detail: failure.detail };
+}
+
+/// 送る前にこちらで断った入力を、入力欄の脇に出す形にする。
+///
+/// コマンドを呼ばずに済ませた分も、返る形は Rust の `Validation` と同じに
+/// します。**受ける側（`state/board.ts` の `run()` と `FieldFailure`）が
+/// 出どころで分岐しない**ようにするためです（[ADR 0016]）。
+///
+/// [ADR 0016]: ../../../docs/adr/0016-where-the-app-says-things.md
+export function fieldFailure(
+  title: string,
+  field: Field,
+  detail: string,
+  value: string | null,
+): AppError {
+  return { kind: "validation", title, detail, field, value };
 }

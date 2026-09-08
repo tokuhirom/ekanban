@@ -4,9 +4,10 @@
 // いない表示の状態（検索語、サイドバーの開閉）だけです。**盤面の論理をこちらに
 // 書かないこと。** 書いた時点で真実が 2 つになります。
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { moveCardArgs, moveColumnArgs, parseHandle, previewMove } from "../board/dnd";
+import { filterCards } from "../model/search";
 import { useIpc } from "../ipc";
 import { asAppError, describeFailure } from "../ipc/error";
 import type { AppError } from "../ipc/types/AppError";
@@ -117,9 +118,6 @@ export function useBoardState(): BoardState {
   const [tagId, setTagIdValue] = useState<number | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [theme, setThemeValue] = useState<ThemePreference>("system");
-  // どの検索語に対する答えかを一緒に持つ。前の検索語の結果で減光すると、
-  // 打っている間だけ違うカードが暗くなる。
-  const [result, setResult] = useState<{ query: string; ids: ReadonlySet<number> } | null>(null);
   // ドラッグ中だけの盤面。**Rust には渡しません**——離した瞬間に 1 回だけ
   // `move_card` / `move_column` を呼び、返ったスナップショットで置き換えます
   // （`docs/DESIGN.md`「ドラッグ＆ドロップ」、ADR 0018）。
@@ -238,33 +236,20 @@ export function useBoardState(): BoardState {
     };
   }, [ipc, today]);
 
-  // 検索語が変わるたびに一致する ID を Rust に聞く。**同じ判定を
-  // TypeScript にもう 1 つ持たない**（`docs/DESIGN.md`「絞り込みと検索」）。返るのは ID の配列だけなので、
-  // 打鍵ごとに呼んでも往復するのはそれだけ。
+  // 一致するカードを、盤面が手元にあるうちに数える（`web/src/model/search.ts`）。
   //
-  // 順番の入れ替わりに備えて、いちばん新しい問い合わせの答えだけを採る。
-  const pending = useRef(0);
+  // **打鍵のたびに往復しません。** 判定そのもの——全角半角と大文字小文字の
+  // 均し、`#12` のカード番号——は 1 か所（`model/search.ts`）にあり、
+  // 盤面もここにあるので、聞きに行く相手がいません。答えを待つ間の
+  // 「まだ絞り込めていない」状態も無くなります。
   const filtering = search.trim() !== "" || tagId !== null;
-  useEffect(() => {
-    if (snapshot === null || !filtering) return;
-    const ticket = ++pending.current;
-    ipc
-      .filterCards(search, tagId)
-      .then((ids) => {
-        if (pending.current === ticket) setResult({ query: key(search, tagId), ids: new Set(ids) });
-      })
-      .catch((error: unknown) => {
-        report("絞り込めませんでした", error);
-      });
-  }, [filtering, ipc, report, search, snapshot, tagId]);
-
-  // 答えがまだ返っていない間は絞り込まない。古い答えで減光するより、
-  // 一瞬なにも暗くならないほうがよい。
-  const matched = !filtering
-    ? null
-    : result?.query === key(search, tagId)
-      ? result.ids
-      : null;
+  const matched = useMemo(
+    () =>
+      snapshot === null || !filtering
+        ? null
+        : new Set(filterCards(snapshot.board, search, tagId)),
+    [filtering, search, snapshot, tagId],
+  );
 
   // いま絞り込んでいるタグ。**盤面から引き直します**——タグを消したり名前を
   // 変えたりしても、ヘッダの表示が古いままにならないように。
@@ -522,14 +507,6 @@ export function useBoardState(): BoardState {
     toggleSidebar,
     switchBoard,
   };
-}
-
-/// 「どの絞り込みに対する答えか」を表す鍵。
-///
-/// 検索語だけでは足りません。語をそのままにタグだけ替えたとき、前の答えで
-/// 減光したままになります。
-function key(search: string, tagId: number | null): string {
-  return `${String(tagId)}\u0000${search}`;
 }
 
 /// コマンドが返した `AppError` から、人が読む一行を取り出す。

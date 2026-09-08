@@ -12,10 +12,12 @@
 #[cfg(feature = "shell")]
 use std::path::{Path, PathBuf};
 
-use chrono::{Datelike, Local};
+// `shell` の外では使いません（日次バックアップだけが今日を要る）。素の
+// `use` にすると、ブラウザ向けの組み立てで未使用の警告が出ます。
+#[cfg(feature = "shell")]
+use chrono::Local;
 use ekanban_core::model::{
-    card_matches_search, parse_due_date, Board, BoardError, BoardId, CardId, ChecklistItemDraft,
-    ColumnId, TagId,
+    parse_stored_due_date, Board, BoardError, BoardId, CardId, ChecklistItemDraft, ColumnId, TagId,
 };
 use ekanban_core::store::{FilterState, Store, StoreError, WindowBoundsState};
 use ekanban_core::{diagnostics, export};
@@ -193,7 +195,7 @@ pub fn add_card(
             if title.trim().is_empty() {
                 return Err(BoardError::EmptyCardTitle);
             }
-            let due_date = parse_due_date(due_date, Local::now().date_naive())?;
+            let due_date = parse_stored_due_date(due_date)?;
             board.add_card_with_details(column_id, title, description, due_date, tag_ids, checklist)
         })
         .map(|(_, snapshot)| snapshot)
@@ -215,7 +217,7 @@ pub fn update_card(
 ) -> Result<Snapshot, AppError> {
     state
         .mutate(CARD, |board| {
-            let due_date = parse_due_date(due_date, Local::now().date_naive())?;
+            let due_date = parse_stored_due_date(due_date)?;
             board.update_card_details_with_checklist(
                 card_id,
                 title,
@@ -272,10 +274,7 @@ pub fn set_card_due_date(
 ) -> Result<Snapshot, AppError> {
     state
         .mutate(CARD, |board| {
-            board.set_card_due_date(
-                card_id,
-                parse_due_date(due_date, Local::now().date_naive())?,
-            )
+            board.set_card_due_date(card_id, parse_stored_due_date(due_date)?)
         })
         .map(|(_, snapshot)| snapshot)
 }
@@ -386,34 +385,6 @@ pub fn redo(state: &AppState) -> Result<Snapshot, AppError> {
     state
         .mutate("操作をやり直せませんでした", Board::redo)
         .map(|(_, snapshot)| snapshot)
-}
-
-// ---------------------------------------------------------------- 絞り込み
-
-/// 検索語とタグに一致するカードの ID を返す（`docs/DESIGN.md`「絞り込みと検索」）。
-///
-/// **判定は Rust に残します。** 全角半角と大文字小文字の正規化を TypeScript で
-/// もう一度書くと、2 つの正規化がずれた日にカードが見つからなくなります。
-/// 打鍵ごとに呼ばれますが、返るのは ID の配列だけです。
-///
-/// `#12` はカード番号として読みます（[ADR 0008]）。アーカイブしたカードも
-/// 含めて返すので、隠す・減光するの使い分けは呼ぶ側が決めます（[ADR 0010]）。
-///
-/// [ADR 0008]: ../../../docs/adr/0008-reaching-a-card-by-its-number.md
-/// [ADR 0010]: ../../../docs/adr/0010-hiding-instead-of-dimming-in-the-archive.md
-pub fn filter_cards(state: &AppState, query: &str, tag_id: Option<TagId>) -> Vec<CardId> {
-    let board = state.lock();
-    board
-        .columns
-        .iter()
-        .flat_map(|column| column.cards.iter())
-        .chain(board.archived_cards.iter())
-        // `#12` の読み替えも、全角半角と大文字小文字の正規化も
-        // `card_matches_search` の中にある。空の検索語はすべてに一致する。
-        .filter(|card| card_matches_search(card, query))
-        .filter(|card| tag_id.is_none_or(|tag_id| card.tag_ids.contains(&tag_id)))
-        .map(|card| card.id)
-        .collect()
 }
 
 // ---------------------------------------------------------------- 表示の状態
@@ -606,37 +577,6 @@ pub fn reveal_backups(state: &AppState) -> Option<PathBuf> {
 }
 
 // ---------------------------------------------------------------- 期限の下読み
-
-/// 打った文字を期限としてどう読んだか（#134、[ADR 0031]）。
-///
-/// **読み方を TypeScript にもう 1 つ持ちません**（`openable_url` と同じ
-/// 考え方）。往復するのは打った文字列と、読めた 1 日付だけです。読めない間は
-/// `None` を返し、断りは保存のときに `Validation` で欄の脇へ出ます——打っている
-/// 途中の文字はまだ間違いではありません。
-///
-/// [ADR 0031]: ../../../docs/adr/0031-typing-a-due-date.md
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, ts_rs::TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct DueDatePreview {
-    /// 保存する形（`"YYYY-MM-DD"`）。
-    pub date: String,
-    /// 画面に出す形（`"2026-09-12（土）"`）。
-    pub label: String,
-}
-
-pub fn due_date_preview(value: &str) -> Option<DueDatePreview> {
-    let today = Local::now().date_naive();
-    let date = parse_due_date(value, today).ok().flatten()?;
-    // 曜日は Rust が付けます。`toLocaleDateString` に任せると、webview の
-    // ロケール次第で言葉が変わります。
-    let weekday =
-        ["月", "火", "水", "木", "金", "土", "日"][date.weekday().num_days_from_monday() as usize];
-    Some(DueDatePreview {
-        date: date.format("%Y-%m-%d").to_string(),
-        label: format!("{}（{weekday}）", date.format("%Y-%m-%d")),
-    })
-}
 
 // ---------------------------------------------------------------- 説明のリンク
 
@@ -849,33 +789,6 @@ pub fn run_daily_backup(database_path: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// 打った文字がどう読まれたかは、確定する前に見せる（#134、ADR 0031）。
-    ///
-    /// 今日そのものは時計から来るので、ここでは「今日との差」と形だけを見る。
-    #[test]
-    fn reads_back_what_a_typed_due_date_means() {
-        let today = Local::now().date_naive();
-        let read = due_date_preview("明日").expect("「明日」は読める");
-        assert_eq!(
-            read.date,
-            (today + chrono::TimeDelta::days(1))
-                .format("%Y-%m-%d")
-                .to_string()
-        );
-        assert!(
-            read.label.starts_with(&read.date) && read.label.ends_with('）'),
-            "曜日を添えて出す: {}",
-            read.label
-        );
-    }
-
-    /// 読めない文字は断らずに黙る。打っている途中の文字はまだ間違いではない。
-    #[test]
-    fn says_nothing_about_a_due_date_it_cannot_read_yet() {
-        assert_eq!(due_date_preview(""), None);
-        assert_eq!(due_date_preview("き"), None);
-    }
 
     /// 拡張子を落として保存されたファイルは、次に開くときに何か分からない。
     #[test]

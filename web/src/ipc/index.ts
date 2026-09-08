@@ -15,7 +15,6 @@ import type { QuickCaptureStatus } from "./types/QuickCaptureStatus";
 import type { Snapshot } from "./types/Snapshot";
 import type { StartupState } from "./types/StartupState";
 import type { ThemePreference } from "./types/ThemePreference";
-import type { DueDatePreview } from "./types/DueDatePreview";
 
 /// 画面が呼べるコマンド。Rust の `crates/app/src/commands.rs` に 1 対 1。
 ///
@@ -83,8 +82,6 @@ export interface Ipc {
     toIndex: number,
   ): Promise<Snapshot>;
   moveColumn(columnId: number, toIndex: number): Promise<Snapshot>;
-  /** 検索語とタグに一致するカードの ID。打鍵ごとに呼ぶ（`docs/DESIGN.md`「絞り込みと検索」）。 */
-  filterCards(query: string, tagId: number | null): Promise<number[]>;
   /** 取り消し・やり直し。**キーは webview が振り分けます**（`shell/keys.ts`）。 */
   undo(): Promise<Snapshot>;
   redo(): Promise<Snapshot>;
@@ -121,8 +118,6 @@ export interface Ipc {
   revealDatabase(): Promise<void>;
   /** 控えがまだ 1 つも無ければ、何も起きない。 */
   revealBackups(): Promise<void>;
-  /** 期限として打った文字を、Rust がどう読んだか。読めなければ `null`（ADR 0031）。 */
-  dueDatePreview(value: string): Promise<DueDatePreview | null>;
   /** 説明の中のリンクをブラウザで開く。 */
   openUrl(url: string): Promise<void>;
   /** クイックキャプチャの入れ先。設定が無ければ既定（先頭カラム）が返る。 */

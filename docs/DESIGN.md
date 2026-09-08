@@ -14,6 +14,8 @@ README が使う人向けの入口、[マニュアル](MANUAL.md) が使い方�
 
 ### 層の分け方
 
+- **どちらに書くかは、ウェブアプリとして作ったときにサーバ側へ書くだろうものかで決める。** そうでないものは webview に置く。Tauri の殻はこの見立てでは「ブラウザそのもの」で、ウェブアプリなら書かずに済んだはずのもの（窓、ネイティブのメニュー、OS のダイアログ、グローバルホットキー）だけが Rust に残る。打った文字の読み方も、一致の判定も、書き出す文字列の組み立ても、サーバには置かない（[ADR 0039](adr/0039-the-board-model-moves-to-typescript.md)）
+- **置き場所は、受け取ったものを検めてから書く。** 盤面の判断をやり直すのではなく、整合だけを見る——空のタイトル、知らないカラムを指すカード、日付として成り立たない期限。どこに落とすかを決めるのは webview で、それが行として成り立つかを見るのが置き場所（[ADR 0040](adr/0040-the-shape-and-the-store-stay-in-rust.md)）
 - **`crates/core`（`ekanban-core`）に UI ツールキットを依存させない。** `model.rs` / `db/mod.rs` / `backup.rs` / `paths.rs` / `instance.rs` / `diagnostics.rs` は画面の作りを知らない。これが、テストを GUI のランタイム無しで走らせ続ける条件であり、アプリと開発用のハーネスが同じコードを使える条件でもある。依存の依存から入り込むほうがありがちなので、解決した依存グラフを `script/check-core-independence` が CI で見る
 - **`crates/app/src/commands.rs` に `tauri` を出さない。** `ipc.rs` の `#[tauri::command]` は、その関数を呼ぶだけの包み。判断を包みの側に置かないことは設計そのもので、開発用のハーネス（`crates/harness`）が同じ関数を HTTP に出せるのはこれによる
 - **盤面の置き場所は差し替えられる。モデルは差し替えない。** `crates/core/src/store.rs` の `Store` が口で、配るアプリは SQLite（`db/mod.rs`、`sqlite` feature）、ブラウザ版は JSON（`store::JsonStore`）。**分かれているのは「どう置くか」だけ**で、採番も並べ替えも Undo も `model.rs` の 1 つのまま。`Store` に盤面の判断を書かない（[ADR 0036](adr/0036-one-model-two-places-to-put-it.md)）
@@ -60,7 +62,7 @@ README が使う人向けの入口、[マニュアル](MANUAL.md) が使い方�
 ### 盤面とカード
 
 - **期限は日付のみ**、`TEXT` の `'YYYY-MM-DD'` で持つ。時刻は持たない。必要になった時点で `due_time` を足す
-- **期限は文字で打ち、読み方は Rust に 1 つだけ置く。** 欄はテキスト欄で、`9/12` `明日` `金` `+3` `来週` `今週末` を受ける。基準日は引数で渡し、`parse_due_date` の中で時計を読まない。読めない文字列は `Validation` で欄の脇に返す。打った文字をどう読んだかは、確定する前に欄の下に出す（[ADR 0031](adr/0031-typing-a-due-date.md)）
+- **期限は文字で打ち、読み方は webview に 1 つだけ置く**（`web/src/model/due.ts`）。欄はテキスト欄で、`9/12` `明日` `金` `+3` `来週` `今週末` を受ける。基準日は引数で渡し、`parseDueDate` の中で時計を読まない。読めない文字列はコマンドを呼ばずに `Validation` で欄の脇に返す。打った文字をどう読んだかは、確定する前に欄の下に出す。**コマンドが受けるのは `"YYYY-MM-DD"` か空文字だけ**で、`parse_stored_due_date` はそれが日付として成り立つかだけを見る（[ADR 0031](adr/0031-typing-a-due-date.md)、[ADR 0039](adr/0039-the-board-model-moves-to-typescript.md)）
 - **並べ替えは一時的なビューではなく `position` の書き換え**として行う。見た目の位置と本来の位置が食い違わないようにする
 - **履歴に残すのはカードのライフサイクルだけ**（`created` / `moved` / `archived` / `restored` / `deleted`）。カラム内の並べ替えと属性変更は残さない。既存データを遡って生成しない
 - **Undo のスタックと `card_events` は共有しない。** 寿命（セッション / 永続）と目的（取り消し / フローの記録）が違う
@@ -78,7 +80,8 @@ README が使う人向けの入口、[マニュアル](MANUAL.md) が使い方�
 
 ### 絞り込みと検索
 
-- **判定は Rust に残し、結果だけを webview に渡す。** 全角半角と大文字小文字の正規化（`normalize_search_text`、`card_matches_search`、`parse_card_number_query`、`due_status`）を TypeScript でもう一度書くと、2 つの正規化がずれた日にカードが見つからなくなる。打鍵ごとに `filter_cards` を呼ぶが、返るのは一致したカードの ID の配列だけ
+- **判定は webview に 1 つだけ置く**（`web/src/model/search.ts`）。全角半角と大文字小文字の正規化（`normalizeSearchText`、`cardMatchesSearch`、`parseCardNumberQuery`）と `filterCards` はここにあり、盤面も手元にあるので**打鍵のたびに往復しない**。2 つ持てば、ずれた日にカードが見つからなくなる——**どちらに置くかではなく、1 つであることが規則**（[ADR 0039](adr/0039-the-board-model-moves-to-typescript.md)）
+- **期限の状態（`due_status`）は Rust に残っている。** ボード一覧の件数を数えるのが SQL と `Board::due_counts` なので、判定はそちらと同じ場所にある（[ADR 0011](adr/0011-due-counts-in-the-board-list.md)、[ADR 0038](adr/0038-a-column-that-means-done.md)）
 - **ボードでは絞り込みはカードを隠さず減光する。** 隠すとドロップの挿入位置が曖昧になり、D&D の意味が変わるため
 - **アーカイブ表示だけは、絞り込みから外れたカードを隠す。** ここには D&D が無いので減光の理由が効かず、溜まる場所なので薄く並んでいても探せない。見出しに「一致した件数 / 全件数」を出し、並びはアーカイブした日の新しい順で日ごとに見出しを付ける（[ADR 0010](adr/0010-hiding-instead-of-dimming-in-the-archive.md)）
 - **カード番号へは検索欄から辿る。** 検索欄に `#` と数字だけを打ったときは、その番号のカードだけを残す。`#イベント` のような数字でない語は番号として読まず、文字列検索に落ちる。番号を指定して開く別のコマンドは持たない（[ADR 0008](adr/0008-reaching-a-card-by-its-number.md)）

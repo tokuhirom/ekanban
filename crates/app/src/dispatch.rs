@@ -143,10 +143,6 @@ fn dispatch(command: &str, args: Value, state: &AppState) -> Result<Option<Value
             let a: MoveColumn = read(args)?;
             json(commands::move_column(state, a.column_id, a.to_index)?)?
         }
-        "filter_cards" => {
-            let a: Filter = read(args)?;
-            json(commands::filter_cards(state, &a.query, a.tag_id))?
-        }
         "set_filter_state" => json(commands::set_filter_state(
             state,
             &read::<Filtering>(args)?.filter,
@@ -165,7 +161,6 @@ fn dispatch(command: &str, args: Value, state: &AppState) -> Result<Option<Value
             state,
             read::<Format>(args)?.format,
         ))?,
-        "due_date_preview" => json(commands::due_date_preview(&read::<DueText>(args)?.value))?,
         "capture_target" => json(commands::capture_target(state)?)?,
         "set_capture_column" => json(commands::set_capture_column(
             state,
@@ -316,12 +311,6 @@ struct MoveColumn {
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct Filter {
-    query: String,
-    tag_id: Option<i64>,
-}
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct Filtering {
     filter: ekanban_core::store::FilterState,
 }
@@ -344,11 +333,6 @@ struct Theme {
 #[serde(rename_all = "camelCase")]
 struct Format {
     format: ExportFormat,
-}
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct DueText {
-    value: String,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]

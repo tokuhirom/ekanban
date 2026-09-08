@@ -25,18 +25,19 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useIpc } from "../ipc";
+import { fieldFailure } from "../ipc/error";
 import type { AppError } from "../ipc/types/AppError";
 import type { Board } from "../ipc/types/Board";
 import type { Card } from "../ipc/types/Card";
-import type { DueDatePreview } from "../ipc/types/DueDatePreview";
 import type { Field } from "../ipc/types/Field";
 import type { Platform } from "../ipc/types/Platform";
 import type { Snapshot } from "../ipc/types/Snapshot";
 import type { Tag } from "../ipc/types/Tag";
 import { useAppActions } from "../shell/actions";
+import { DUE_DATE_HELP, dueDatePreview, parseDueDate } from "../model/due";
 import { isComposing } from "../shell/ime";
 import { Description } from "./Description";
 import type { Editing } from "../state/board";
@@ -59,9 +60,15 @@ import {
 } from "./draft";
 import { DEFAULT_TAG_COLOR, findTagByName, suggestTags } from "./tags";
 
+/// 断りの見出し。**カードのコマンドが返すものと同じ文言**にします——送る前に
+/// 断ったか、送って断られたかで、出る言葉が変わらないように。
+const CARD_FAILED = "カードを操作できませんでした";
+
 interface Props {
   board: Board;
   editing: Editing;
+  /** 期限を読むときの基準日（`"YYYY-MM-DD"`）。手元の時計をここで読まない。 */
+  today: string;
   /** 説明の中のリンクを開く修飾キーを決めるのに使う（ADR 0002）。 */
   platform: Platform;
   run: (call: () => Promise<Snapshot>) => Promise<AppError | null>;
@@ -74,6 +81,7 @@ interface Props {
 export function CardPanel({
   board,
   editing,
+  today,
   platform,
   run,
   onClose,
@@ -90,9 +98,6 @@ export function CardPanel({
     card === null ? emptyDraft() : draftOf(card),
   );
   const [failed, setFailed] = useState<AppError | null>(null);
-  // 打った文字を Rust がどう読んだか（#134）。読み方は向こうに 1 つだけなので、
-  // 往復するのは文字列と、読めた 1 日付だけです（`Description` と同じ考え方）。
-  const [duePreview, setDuePreview] = useState<DueDatePreview | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   // 次にフォーカスを移すチェックリストの行（#138）。**添字ではなく鍵で指します**
   // ——並べ替えや削除で添字は別の行を指すようになります。当てたら、その行の
@@ -113,21 +118,20 @@ export function CardPanel({
 
   const savable = draftIsSavable(draft);
 
-  useEffect(() => {
-    let cancelled = false;
-    ipc
-      .dueDatePreview(draft.dueDate)
-      .then((read) => {
-        if (!cancelled) setDuePreview(read);
-      })
-      .catch(() => {
-        // 読めた日付が出ないだけなので、打つ手を止めない。
-        if (!cancelled) setDuePreview(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [ipc, draft.dueDate]);
+  // 打った文字をどう読んだか（#134、ADR 0031）。読み方は `model/due.ts` に
+  // 1 つだけあり、盤面と同じところにあるので、打鍵のたびに往復しません。
+  const duePreview = useMemo(() => dueDatePreview(draft.dueDate, today), [draft.dueDate, today]);
+
+  /// 打たれた期限を、保存する形（`"YYYY-MM-DD"` か空文字）にする。
+  ///
+  /// **読めなければコマンドを呼びません。** 断りは入力欄の脇に出すもので、
+  /// 呼んだところで同じ答えが返るだけです（ADR 0031）。
+  function readDueDate(value: string): { date: string } | { failure: AppError } {
+    const read = parseDueDate(value, today);
+    return read.ok
+      ? { date: read.date ?? "" }
+      : { failure: fieldFailure(CARD_FAILED, "dueDate", DUE_DATE_HELP, read.typed) };
+  }
 
   // メニューの「保存」「編集をキャンセル」は、開いているパネルのものです。
   // **下書きを持っているのはここ**なので、受けるのもここ（`shell/actions.ts`）。
@@ -166,6 +170,11 @@ export function CardPanel({
   /// ままにするためで、欄の中の空文字はそのあと元に戻します。
   async function commitNow(next: CardDraft): Promise<AppError | null> {
     if (editing.kind !== "card" || card === null) return null;
+    const due = readDueDate(next.dueDate);
+    if ("failure" in due) {
+      setFailed(due.failure);
+      return due.failure;
+    }
     const title = next.title.trim() === "" ? card.title : next.title;
     const saved: { items: { id: number }[] } = { items: [] };
     const failure = await run(async () => {
@@ -173,7 +182,7 @@ export function CardPanel({
         editing.cardId,
         title,
         next.description,
-        next.dueDate,
+        due.date,
         next.tagIds,
         checklistToSend(next.checklist),
       );
@@ -232,13 +241,18 @@ export function CardPanel({
 
   async function save() {
     if (!savable) return;
+    const due = readDueDate(draft.dueDate);
+    if ("failure" in due) {
+      setFailed(due.failure);
+      return;
+    }
     const failure = await run(() =>
       editing.kind === "new"
         ? ipc.addCard(
             editing.columnId,
             draft.title,
             draft.description,
-            draft.dueDate,
+            due.date,
             draft.tagIds,
             checklistToSend(draft.checklist),
           )
@@ -246,7 +260,7 @@ export function CardPanel({
             editing.cardId,
             draft.title,
             draft.description,
-            draft.dueDate,
+            due.date,
             draft.tagIds,
             checklistToSend(draft.checklist),
           ),

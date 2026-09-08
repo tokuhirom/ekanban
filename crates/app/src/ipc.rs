@@ -231,15 +231,6 @@ pub fn redo(state: State<'_, AppState>) -> Reply<Snapshot> {
 
 // ---------------------------------------------------------------- 絞り込み
 
-#[tauri::command]
-pub fn filter_cards(
-    state: State<'_, AppState>,
-    query: String,
-    tag_id: Option<TagId>,
-) -> Vec<CardId> {
-    commands::filter_cards(&state, &query, tag_id)
-}
-
 // ---------------------------------------------------------------- 表示の状態
 
 #[tauri::command]
@@ -366,12 +357,6 @@ fn reveal(app: &AppHandle, path: &Path) {
 }
 
 // ---------------------------------------------------------------- 期限の下読み
-
-/// 打った文字を期限としてどう読んだかを返す（#134）。盤面は変えません。
-#[tauri::command]
-pub fn due_date_preview(value: String) -> Option<commands::DueDatePreview> {
-    commands::due_date_preview(&value)
-}
 
 // ---------------------------------------------------------------- 説明のリンク
 

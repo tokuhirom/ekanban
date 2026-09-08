@@ -15,7 +15,6 @@ import type { CaptureTarget } from "./types/CaptureTarget";
 import type { QuickCaptureStatus } from "./types/QuickCaptureStatus";
 import type { Snapshot } from "./types/Snapshot";
 import type { StartupState } from "./types/StartupState";
-import type { DueDatePreview } from "./types/DueDatePreview";
 
 /// ハーネスの居場所。`?harness=http://127.0.0.1:1421` で差し替えられます。
 export function harnessUrl(): string | null {
@@ -106,8 +105,6 @@ export function harnessIpc(base: string): Ipc {
       call<Snapshot>(base, "move_column", { columnId, toIndex }),
     undo: () => call<Snapshot>(base, "undo"),
     redo: () => call<Snapshot>(base, "redo"),
-    filterCards: (query, tagId) =>
-      call<number[]>(base, "filter_cards", { query, tagId }),
     setFilterState: async (filter) => {
       await call(base, "set_filter_state", { filter });
     },
@@ -156,8 +153,6 @@ export function harnessIpc(base: string): Ipc {
     revealBackups: async () => {
       await call(base, "reveal_backups");
     },
-    dueDatePreview: (value) =>
-      call<DueDatePreview | null>(base, "due_date_preview", { value }),
     openUrl: async (url) => {
       await call(base, "open_url", { url });
     },

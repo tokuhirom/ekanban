@@ -14,7 +14,6 @@ import type { CaptureTarget } from "./types/CaptureTarget";
 import type { QuickCaptureStatus } from "./types/QuickCaptureStatus";
 import type { Snapshot } from "./types/Snapshot";
 import type { StartupState } from "./types/StartupState";
-import type { DueDatePreview } from "./types/DueDatePreview";
 
 export const tauriIpc: Ipc = {
   startupState: () => invoke<StartupState>("startup_state"),
@@ -67,8 +66,6 @@ export const tauriIpc: Ipc = {
     invoke<Snapshot>("move_column", { columnId, toIndex }),
   undo: () => invoke<Snapshot>("undo"),
   redo: () => invoke<Snapshot>("redo"),
-  filterCards: (query, tagId) =>
-    invoke<number[]>("filter_cards", { query, tagId }),
   setFilterState: async (filter) => {
     await invoke("set_filter_state", { filter });
   },
@@ -116,8 +113,6 @@ export const tauriIpc: Ipc = {
   revealBackups: async () => {
     await invoke("reveal_backups");
   },
-  dueDatePreview: (value) =>
-    invoke<DueDatePreview | null>("due_date_preview", { value }),
   openUrl: async (url) => {
     await invoke("open_url", { url });
   },
