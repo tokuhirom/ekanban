@@ -1,5 +1,14 @@
 # Changelog
 
+## [v0.3.1](https://github.com/tokuhirom/ekanban/compare/v0.3.0...v0.3.1) - 2026-09-09
+
+### 変更
+- Rust をサーバ側に絞りきる——モデル・ハーネス・wasm・メニューの構成を webview へ by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/192
+- 期限をカレンダーからも選べるようにする by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/195
+- 設定画面を作り、散っていた設定を集約する by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/199
+- Let the day turn at a chosen hour, four in the morning by default by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/200
+- Put out recurring cards from a definition kept apart from the board by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/201
+
 ## [v0.3.0](https://github.com/tokuhirom/ekanban/compare/v0.2.4...v0.3.0) - 2026-09-08
 
 ### 変更
