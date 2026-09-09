@@ -25,8 +25,8 @@ test("日付をまたぐと、コマンドを呼ばなくても期限の表示�
     .slice(0, 10);
 
   // 明日が期限のカードを 1 枚用意する。
-  const cardId = firstCard(await storedBoard());
-  await editStoredBoard((document) => setCardDueDate(document, cardId, tomorrow));
+  const cardId = firstCard(await storedBoard(page));
+  await editStoredBoard(page, (document) => setCardDueDate(document, cardId, tomorrow));
 
   // 画面を開く前に時計を握る。開いたあとでは、起動のときに読んだ日付が
   // すでに差し替えたものになってしまう。

@@ -5,18 +5,20 @@
 //! （`docs/DESIGN.md`「層の分け方」）。
 
 // 日ごとの控えは SQLite のファイルを写すもの。置き場所が JSON のときは
-// 相手がいません（ブラウザ版、[ADR 0036]）。
+// 相手がいません（ブラウザ版、[ADR 0042]）。
 //
-// [ADR 0036]: ../../docs/adr/0036-one-model-two-places-to-put-it.md
+// [ADR 0042]: ../../docs/adr/0042-the-browser-build-is-the-same-typescript.md
 #[cfg(feature = "sqlite")]
 pub mod backup;
 #[cfg(feature = "sqlite")]
 pub mod db;
 pub mod diagnostics;
+#[cfg(feature = "sqlite")]
 pub mod export;
 pub mod instance;
 pub mod model;
 pub mod paths;
+#[cfg(feature = "sqlite")]
 pub mod store;
 
 use std::path::PathBuf;

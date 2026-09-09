@@ -39,6 +39,9 @@ export const tauriIpc: Ipc = {
   setWindowTitle: async (title) => {
     await invoke("set_window_title", { title });
   },
+  setMenu: async (sections) => {
+    await invoke("set_menu", { sections });
+  },
   onAppAction: (handler) => {
     // 購読が張れるまでは往復が 1 回あります。張り終える前に外されたときに
     // 取りこぼさないよう、外したことを覚えておいて張った直後に外します。
@@ -88,8 +91,8 @@ export const tauriIpc: Ipc = {
   setMenuAcceleratorsActive: async (active) => {
     await invoke("set_menu_accelerators_active", { active });
   },
-  setQuickCaptureShortcut: (press) =>
-    invoke<string | null>("set_quick_capture_shortcut_from_key", { press }),
+  setQuickCaptureShortcut: (shortcut) =>
+    invoke<string | null>("set_quick_capture_shortcut", { shortcut }),
   closeCaptureWindow: async (focusBoard) => {
     await invoke("close_capture_window", { focusBoard });
   },

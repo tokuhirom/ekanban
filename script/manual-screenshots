@@ -56,7 +56,7 @@ for _ in $(seq 40); do
 done
 
 cd "$repository"
-cargo build -p ekanban-harness --example manual_screenshot_seed
+cargo build -p ekanban-app --example manual_screenshot_seed
 # デバッグの実行ファイルには Vite の開発サーバの URL が焼き込まれるので、
 # `cargo build` だけでは白い画面になる。`tauri build --debug` は画面を
 # 実行ファイルに埋め込むので、開発サーバなしで撮れる。

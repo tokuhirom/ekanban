@@ -50,12 +50,12 @@ impl ThemePreference {
 /// 文字列で、実際 Playwright の Safari 模擬は Linux 上で `Macintosh` を名乗り
 /// ます。ここは Rust がコンパイル時に知っていることなので、そちらから渡します。
 ///
-/// **例外はブラウザだけで動く組み立てです**（`crates/web`、[ADR 0035]）。
-/// `wasm32-unknown-unknown` は macOS でも Linux でもないので、そこだけは
-/// ページが名乗ったものを受け取ります。配るアプリの経路は変わりません。
+/// **例外はブラウザ版です**（[ADR 0042]）。あちらには訊く相手の Rust が
+/// いないので、入口（`web/src/ipc/local.ts`）が 1 度だけ見て、以降は同じ
+/// ものを配ります。配るアプリの経路は変わりません。
 ///
 /// [ADR 0009]: ../../../docs/adr/0009-per-platform-key-bindings.md
-/// [ADR 0035]: ../../../docs/adr/0035-a-browser-build-of-the-real-core.md
+/// [ADR 0042]: ../../../docs/adr/0042-the-browser-build-is-the-same-typescript.md
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -79,11 +79,11 @@ impl Platform {
 
 /// 割り当てのダイアログが開くときに読むもの。
 ///
-/// 型がここにあるのは、**殻を外した組み立てでも返す必要がある**ためです
-/// （`crates/web`、[ADR 0035]）。中身を埋めるのは殻を持っている側
-/// （`capture::status`）で、ブラウザでは「使えない理由」だけが入ります。
+/// 型がここにあるのは、**ブラウザ版も同じものを返す必要がある**ためです
+/// （[ADR 0042]）。中身を埋めるのは殻を持っている側（`capture::status`）で、
+/// ブラウザでは「使えない理由」だけが入ります。
 ///
-/// [ADR 0035]: ../../../docs/adr/0035-a-browser-build-of-the-real-core.md
+/// [ADR 0042]: ../../../docs/adr/0042-the-browser-build-is-the-same-typescript.md
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]

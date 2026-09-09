@@ -1,9 +1,11 @@
-# ブラウザ版（ADR 0035）を組み立てて、GitHub Pages に置く。
+# ブラウザ版（ADR 0042）を組み立てて、GitHub Pages に置く。
 #
 # **pull request でも組み立てて e2e まで走らせます。** 置くのは `main` に
-# 入ったときだけですが、組み立てが壊れたことを merge のあとに知るのでは遅い
-# ——ここが落ちる形の変更は、`ci.yml` の「Check and test」には映りません
-# （あちらは wasm を組みません）。
+# 入ったときだけですが、組み立てが壊れたことを merge のあとに知るのでは
+# 遅いためです。
+#
+# **Rust は出てきません**（ADR 0042）。ブラウザ版はアプリと同じ TypeScript が
+# そのまま動き、置き場所だけが `localStorage` に差し替わります。
 #
 # 初回だけ、リポジトリの設定で Pages の Source を「GitHub Actions」にする
 # 必要があります。
@@ -17,11 +19,6 @@ on:
 
 permissions:
   contents: read
-
-env:
-  CARGO_TERM_COLOR: always
-  # 落としてくる wasm-pack。上げるときは README の記述も一緒に動かします。
-  WASM_PACK_VERSION: v0.13.1
 
 # 置くのは 1 度に 1 つ。走っているものは止めません——途中で切ると、公開
 # されているページが古い版のまま残ることがあります。
@@ -38,15 +35,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
-
-      # cargo を 1 度も呼ぶ前に置きます（`ci.yml` と同じ理由）。
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-
       - name: Install Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -54,23 +42,14 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
 
-      # 配っているものをそのまま使います。`cargo install` だと毎回 3 分ほど
-      # かかり、キャッシュが外れた日にだけ遅くなる形になります。
-      - name: Install wasm-pack
-        run: |
-          mkdir -p "$HOME/.local/bin"
-          curl -sSfL "https://github.com/rustwasm/wasm-pack/releases/download/${WASM_PACK_VERSION}/wasm-pack-${WASM_PACK_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
-            | tar -xz --strip-components=1 -C "$HOME/.local/bin" --wildcards '*/wasm-pack'
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-
       - name: Install the webview dependencies
         run: npm --prefix web ci
 
       - name: Build
-        run: script/build-web-demo
+        run: npm --prefix web run build:demo
 
-      # ここで動いているのは wasm に組み直した本物の core です（ADR 0035）。
-      # 置く前に、ブラウザの中だけで盤面が残ることを確かめます。
+      # 動いているのはアプリと同じ TypeScript です（ADR 0042）。置く前に、
+      # ブラウザの中だけで盤面が残ることを確かめます。
       - name: Install the browser engine
         run: npm --prefix web exec -- playwright install --with-deps chromium
 

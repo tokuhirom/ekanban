@@ -4,23 +4,23 @@
 // （[ADR 0015]）。ブラウザには OS のメニューバーが無いので、同じ構成をページが
 // 描きます。
 //
-// **構成を決めるのは Rust**（`crates/app/src/menu.rs` の `web_sections`）です。
-// ここは受け取った並びを描き、押されたことを配るだけ——項目をここで足したら、
-// 殻のメニューに無いものがデモにだけ出ます。
+// **構成は `shell/menu.ts` の 1 つだけ**です（[ADR 0043]）。ここは受け取った
+// 並びを描き、押されたことを配るだけ——項目をここで足したら、殻のメニューに
+// 無いものがブラウザ版にだけ出ます。
 //
 // [ADR 0015]: ../../docs/adr/0015-a-menu-bar-on-every-platform.md
 // [ADR 0035]: ../../docs/adr/0035-a-browser-build-of-the-real-core.md
+// [ADR 0043]: ../../docs/adr/0043-the-menu-is-described-by-the-webview.md
 
 import { useEffect, useRef, useState } from "react";
 
 import type { AppAction } from "../ipc/types/AppAction";
 import type { Platform } from "../ipc/types/Platform";
-import type { WebItem } from "../ipc/types/WebItem";
-import type { WebSection } from "../ipc/types/WebSection";
 import { formatAccelerator, matchesAccelerator } from "./accelerator";
+import type { Item, Section } from "./menu";
 
 interface Props {
-  sections: WebSection[];
+  sections: Section[];
   platform: Platform;
   onAction: (action: AppAction) => void;
   /** メニューバーの右端に置く一言。ここがどこなのかを伝えるのに使います。 */
@@ -93,18 +93,20 @@ export function MenuBar({ sections, platform, onAction, note }: Props): React.JS
   );
 }
 
-function itemKey(item: WebItem, index: number): string {
-  return item.kind === "action" ? item.action : `separator-${index}`;
+function itemKey(item: Item, index: number): string {
+  return item.kind === "app" ? item.action : `separator-${String(index)}`;
 }
 
 interface ItemProps {
-  item: WebItem;
+  item: Item;
   platform: Platform;
   onPick: (action: AppAction) => void;
 }
 
 function MenuBarItem({ item, platform, onPick }: ItemProps): React.JSX.Element {
-  if (item.kind === "separator") return <div className="menu-bar-separator" role="separator" />;
+  // ページが描くのは `webSections` が通した項目だけ（`shell/menu.ts`）。
+  // OS の項目とウィンドウの操作は、そこで落ちています。
+  if (item.kind !== "app") return <div className="menu-bar-separator" role="separator" />;
   return (
     <button
       type="button"
@@ -132,7 +134,7 @@ function MenuBarItem({ item, platform, onPick }: ItemProps): React.JSX.Element {
 /// 届きません**——`Ctrl+N`・`Ctrl+T`・`Ctrl+W` あたりがそうで、止める手立ては
 /// ありません。その項目はメニューから押します。
 export function useMenuAccelerators(
-  sections: WebSection[],
+  sections: Section[],
   platform: Platform,
   onAction: (action: AppAction) => void,
 ): void {
@@ -147,7 +149,7 @@ export function useMenuAccelerators(
       const { sections: current, platform: os, onAction: act } = latest.current;
       for (const section of current) {
         for (const item of section.items) {
-          if (item.kind !== "action" || !item.enabled || item.accelerator === null) continue;
+          if (item.kind !== "app" || !item.enabled || item.accelerator === null) continue;
           if (!matchesAccelerator(event, item.accelerator, os)) continue;
           // ブラウザの既定（`Cmd+S` の保存、`Cmd+F` の検索）を止める。
           event.preventDefault();

@@ -1,7 +1,7 @@
 # 0036. モデルは 1 つ、置き場所は 2 つ
 
 - 日付: 2026-09-07
-- 状態: 有効
+- 状態: 置き換えられた（→ [0042](0042-the-browser-build-is-the-same-typescript.md)）
 - 関連: [0018](0018-rust-owns-the-board-state.md)、[0021](0021-two-layer-testing-for-the-webview.md)、[0035](0035-a-browser-build-of-the-real-core.md)
 
 ## 状況

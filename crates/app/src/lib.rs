@@ -5,14 +5,13 @@
 //! （[ADR 0040]）、覚えておく設定、OS に頼むこと——だけです。
 //!
 //! `commands` は `tauri` を知りません。`ipc` の `#[tauri::command]` は、その関数を
-//! 呼ぶだけの包みです。`docs/DESIGN.md`「テスト」の開発用ハーネスが同じ関数を HTTP に出すので、
-//! **判断を包みの側に置かないことは設計そのもの**です。
+//! 呼ぶだけの包みです。**判断を包みの側に置かない**ので、窓を開けずに全部の
+//! コマンドを試せます（`crates/app/tests/commands.rs`）。
 //!
 //! [ADR 0039]: ../../../docs/adr/0039-the-board-model-moves-to-typescript.md
 //! [ADR 0040]: ../../../docs/adr/0040-the-shape-and-the-store-stay-in-rust.md
 
 pub mod commands;
-pub mod dispatch;
 pub mod error;
 pub mod events;
 pub mod menu;
@@ -20,22 +19,14 @@ pub mod shortcut;
 pub mod snapshot;
 pub mod state;
 
-// Tauri の殻。`shell` を外すと、コマンドの層だけが残ります（`crates/web`、
-// [ADR 0035]）。**ここに並ぶものだけが Tauri を知っています。**
-//
-// [ADR 0035]: ../../../docs/adr/0035-a-browser-build-of-the-real-core.md
-#[cfg(feature = "shell")]
+// Tauri の殻。**ここに並ぶものだけが Tauri を知っています。**
 pub mod capture;
-#[cfg(feature = "shell")]
 pub mod ipc;
-#[cfg(feature = "shell")]
 pub mod run;
-#[cfg(feature = "shell")]
 pub mod window;
 
 pub use error::{AppError, ErrorKind, Field};
 pub use menu::{Action, AppAction, WindowAction};
-#[cfg(feature = "shell")]
 pub use run::run;
 pub use snapshot::{CaptureTarget, Platform, QuickCaptureStatus, StartupState, ThemePreference};
 pub use state::AppState;

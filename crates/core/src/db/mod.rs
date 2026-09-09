@@ -40,7 +40,7 @@ impl Database {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, StoreError> {
         let connection = Connection::open(path)?;
         connection.pragma_update(None, "foreign_keys", "ON")?;
-        connection.pragma_update(None, "journal_mode", journal_mode())?;
+        connection.pragma_update(None, "journal_mode", "WAL")?;
 
         let mut database = Self { connection };
         database.migrate()?;
@@ -497,8 +497,6 @@ impl Database {
             archived_cards,
             columns,
             pending_events: Vec::new(),
-            undo_stack: Vec::new(),
-            redo_stack: Vec::new(),
         })
     }
 
@@ -1384,26 +1382,7 @@ impl Database {
     }
 }
 
-/// この環境で使うジャーナルの持ち方。
-///
-/// ネイティブは WAL です。**ブラウザ（`wasm32-unknown-unknown`）では WAL を
-/// 使いません**——そこでのデータベースはメモリ上の VFS に載っており、WAL は
-/// 別ファイルの共有メモリを要求するので、その VFS には作れません
-/// （[ADR 0035]）。持ち出すのは 1 つのファイルだけになるので、`-wal` に書かれた
-/// ぶんが `localStorage` に写らない、という取りこぼしもここで消えます。
-///
-/// [ADR 0035]: ../../../docs/adr/0035-a-browser-build-of-the-real-core.md
-fn journal_mode() -> &'static str {
-    if cfg!(target_family = "wasm") {
-        "MEMORY"
-    } else {
-        "WAL"
-    }
-}
-
-/// いまの時刻をミリ秒で。理由は `model::timestamp` と同じ（[ADR 0035]）。
-///
-/// [ADR 0035]: ../../../docs/adr/0035-a-browser-build-of-the-real-core.md
+/// いまの時刻をミリ秒で。
 fn now() -> i64 {
     Utc::now().timestamp_millis()
 }
@@ -1421,7 +1400,7 @@ mod tests {
         board_scoped_id, save_board_snapshot, Database, FilterState, WindowBoundsState,
         CURRENT_SCHEMA_VERSION,
     };
-    use crate::model::{Board, ChecklistItemDraft, TagId};
+    use crate::model::{Board, CardEvent, CardEventKind, CardId, ChecklistItem, ColumnId, TagId};
     use crate::MAX_SAFE_JS_INTEGER;
 
     /// カードの入ったボードを持つデータベースを開く。
@@ -1430,6 +1409,26 @@ mod tests {
     /// テストはここを通してテスト用の盤面を載せる。載せるのはファイルが新しい
     /// ときだけ。保存したデータベースを開き直して中身を確かめるテストが多く、
     /// 開くたびに載せ直すと、そのテストが自分で保存した内容を潰す。
+    /// webview が積んだことにする履歴 1 件。
+    ///
+    /// 置き場所は受け取って追記するだけで、中身を見直しません（[ADR 0039]）。
+    ///
+    /// [ADR 0039]: ../../../../docs/adr/0039-the-board-model-moves-to-typescript.md
+    fn event(
+        card_id: CardId,
+        kind: CardEventKind,
+        from_column_id: Option<ColumnId>,
+        to_column_id: Option<ColumnId>,
+    ) -> CardEvent {
+        CardEvent {
+            card_id,
+            kind,
+            from_column_id,
+            to_column_id,
+            at: 1_700_000_000_000,
+        }
+    }
+
     fn open_with_cards(path: &std::path::Path) -> Database {
         let is_new = !path.exists();
         let mut database = Database::open(path).expect("the database opens");
@@ -1480,7 +1479,8 @@ mod tests {
 
         let card_id = original.columns[0].cards[0].id;
         let mut changed = original.clone();
-        changed.move_card(card_id, 3, 0).unwrap();
+        let card = changed.take_card(card_id);
+        changed.place_card(card, 3, 0);
         database.save_board(&mut changed).unwrap();
 
         assert_eq!(database.load_board().unwrap(), changed);
@@ -1492,7 +1492,7 @@ mod tests {
         let path = directory.path().join("board.sqlite3");
         let database = open_with_cards(&path);
         let mut board = database.load_board().unwrap();
-        let card_id = board.add_card(1, "バックグラウンド保存", "").unwrap();
+        let card_id = board.push_card(1, "バックグラウンド保存", "");
         let expected_title = board.columns[0]
             .cards
             .iter()
@@ -1550,42 +1550,27 @@ mod tests {
         assert_eq!(database.load_board().unwrap().id, second.id);
     }
 
-    /// 受け入れ条件「ボードを開かなくても、どのボードに期限切れ / 本日期限の
-    /// カードがあるか分かる」（#62）。件数は SQL 側で数える。
+    /// ボードの一覧は、名前と並びだけを返す（[ADR 0039]）。
+    ///
+    /// **件数は数えません。** 数えるのに要る材料（盤面）は webview にあり、
+    /// SQL と webview の 2 か所で数えると、答えが食い違う日が来ます。
+    ///
+    /// [ADR 0039]: ../../../../docs/adr/0039-the-board-model-moves-to-typescript.md
     #[test]
-    fn counts_overdue_and_due_today_cards_for_every_board_in_one_query() {
+    fn lists_every_board_by_name_and_order() {
         let directory = tempdir().unwrap();
         let path = directory.path().join("board.sqlite3");
         let mut database = open_with_cards(&path);
-        let today = NaiveDate::from_ymd_opt(2026, 9, 5).unwrap();
 
-        let mut first = database.load_board().unwrap();
-        let column_id = first.columns[0].id;
-        let overdue = first.add_card(column_id, "過ぎている", "").unwrap();
-        let due_today = first.add_card(column_id, "今日まで", "").unwrap();
-        let later = first.add_card(column_id, "まだ先", "").unwrap();
-        let archived = first.add_card(column_id, "終わったもの", "").unwrap();
-        first
-            .set_card_due_date(overdue, NaiveDate::from_ymd_opt(2026, 9, 4))
-            .unwrap();
-        first.set_card_due_date(due_today, Some(today)).unwrap();
-        first
-            .set_card_due_date(later, NaiveDate::from_ymd_opt(2026, 9, 6))
-            .unwrap();
-        first
-            .set_card_due_date(archived, NaiveDate::from_ymd_opt(2026, 9, 1))
-            .unwrap();
-        first.archive_card(archived).unwrap();
-        database.save_board(&mut first).unwrap();
-
+        let first = database.load_board().unwrap();
         let second = database.create_board("仕事").unwrap();
 
-        // 名前と並びだけを返す。件数は webview が数える（ADR 0039）。
         let summaries = database.load_boards().unwrap();
         assert_eq!(summaries.len(), 2);
         assert_eq!(summaries[0].id, first.id);
         assert_eq!(summaries[0].name, first.name);
         assert_eq!(summaries[1].id, second.id);
+        assert_eq!(summaries[1].name, "仕事");
     }
 
     #[test]
@@ -1685,23 +1670,27 @@ mod tests {
         let mut database = open_with_cards(&path);
         let mut board = database.load_board().unwrap();
         let card_id = board.columns[0].cards[0].id;
-        let tag_id = board.add_tag("書き出し", "#ef4444").unwrap();
+        let tag_id = board.push_tag("書き出し", "#ef4444");
+        let item_id = board.next_checklist_item_id;
+        board.next_checklist_item_id += 1;
 
-        board
-            .update_card_details_with_checklist(
-                card_id,
-                "書き出し対象",
-                "日本語の説明",
-                Some(NaiveDate::from_ymd_opt(2026, 12, 24).unwrap()),
-                vec![tag_id],
-                vec![ChecklistItemDraft {
-                    id: None,
-                    text: "確認する".to_string(),
-                    checked: true,
-                }],
-            )
-            .unwrap();
-        board.archive_card(card_id).unwrap();
+        let card = board.card_mut(card_id);
+        card.title = "書き出し対象".to_string();
+        card.description = "日本語の説明".to_string();
+        card.due_date = NaiveDate::from_ymd_opt(2026, 12, 24);
+        card.tag_ids = vec![tag_id];
+        card.checklist_items = vec![ChecklistItem {
+            id: item_id,
+            card_id,
+            text: "確認する".to_string(),
+            checked: true,
+            position: 0,
+            created_at: 1_700_000_000_000,
+            updated_at: 1_700_000_000_000,
+        }];
+        board.stash_card(card_id, 1_700_000_000_000);
+        // 履歴は webview が積む（ADR 0039）。書き出しに出るのはこれ。
+        board.adopt_pending_events(vec![event(card_id, CardEventKind::Archived, Some(1), None)]);
         database.save_board(&mut board).unwrap();
 
         let document: Value =
@@ -1742,8 +1731,9 @@ mod tests {
         let mut first = database.load_board().unwrap();
         let mut second = database.create_board("別のボード").unwrap();
 
-        let first_card = first.add_card(1, "一枚目", "").unwrap();
-        let second_card = second.add_card(second.columns[0].id, "二枚目", "").unwrap();
+        let first_card = first.push_card(1, "一枚目", "");
+        let second_column = second.columns[0].id;
+        let second_card = second.push_card(second_column, "二枚目", "");
         assert_ne!(first_card, second_card);
 
         database.save_board(&mut first).unwrap();
@@ -1830,10 +1820,10 @@ mod tests {
         let edited_id = board.columns[0].cards[0].id;
         let deleted_id = board.columns[0].cards[1].id;
 
-        board
-            .update_card(edited_id, "編集済み", "新しい説明")
-            .unwrap();
-        board.remove_card(deleted_id).unwrap();
+        let card = board.card_mut(edited_id);
+        card.title = "編集済み".to_string();
+        card.description = "新しい説明".to_string();
+        board.take_card(deleted_id);
         database.save_board(&mut board).unwrap();
 
         let reloaded = database.load_board().unwrap();
@@ -1852,7 +1842,8 @@ mod tests {
         let card_id = board.columns[0].cards[0].id;
         let created_at = board.columns[0].cards[0].created_at;
 
-        board.move_card(card_id, 3, 0).unwrap();
+        let card = board.take_card(card_id);
+        board.place_card(card, 3, 0);
         database.save_board(&mut board).unwrap();
 
         let reloaded = database.load_board().unwrap();
@@ -1865,42 +1856,21 @@ mod tests {
     }
 
     #[test]
-    fn saves_undo_and_redo_without_repeating_lifecycle_events() {
-        let directory = tempdir().unwrap();
-        let path = directory.path().join("board.sqlite3");
-        let mut database = open_with_cards(&path);
-        let mut board = database.load_board().unwrap();
-        let card_id = board.columns[0].cards[0].id;
-        let initial_event_count = lifecycle_event_count(&database, card_id);
-
-        board.move_card(card_id, 2, 0).unwrap();
-        database.save_board(&mut board).unwrap();
-        board.undo().unwrap();
-        database.save_board(&mut board).unwrap();
-        assert_eq!(board.columns[0].cards[0].id, card_id);
-        assert_eq!(
-            lifecycle_event_count(&database, card_id),
-            initial_event_count + 1
-        );
-
-        board.redo().unwrap();
-        database.save_board(&mut board).unwrap();
-        assert_eq!(board.columns[1].cards[0].id, card_id);
-        assert_eq!(
-            lifecycle_event_count(&database, card_id),
-            initial_event_count + 1
-        );
-    }
-
-    #[test]
     fn saves_card_lifecycle_events_and_clears_pending_events() {
         let directory = tempdir().unwrap();
         let path = directory.path().join("board.sqlite3");
         let mut database = open_with_cards(&path);
         let mut board = database.load_board().unwrap();
-        let card_id = board.add_card(1, "履歴を記録", "").unwrap();
-        board.move_card(card_id, 2, 0).unwrap();
-        board.archive_card(card_id).unwrap();
+        let card_id = board.push_card(1, "履歴を記録", "");
+        let card = board.take_card(card_id);
+        board.place_card(card, 2, 0);
+        board.stash_card(card_id, 1_700_000_000_000);
+        // 履歴を積むのは webview（ADR 0039）。置き場所は受け取って追記するだけ。
+        board.adopt_pending_events(vec![
+            event(card_id, CardEventKind::Created, None, Some(1)),
+            event(card_id, CardEventKind::Moved, Some(1), Some(2)),
+            event(card_id, CardEventKind::Archived, Some(2), None),
+        ]);
 
         database.save_board(&mut board).unwrap();
         assert!(board.pending_events.is_empty());
@@ -1939,8 +1909,12 @@ mod tests {
         let path = directory.path().join("board.sqlite3");
         let mut database = open_with_cards(&path);
         let mut board = database.load_board().unwrap();
-        let card_id = board.add_card(1, "削除するカード", "").unwrap();
-        board.delete_card(card_id).unwrap();
+        let card_id = board.push_card(1, "削除するカード", "");
+        board.take_card(card_id);
+        board.adopt_pending_events(vec![
+            event(card_id, CardEventKind::Created, None, Some(1)),
+            event(card_id, CardEventKind::Deleted, Some(1), None),
+        ]);
 
         database.save_board(&mut board).unwrap();
 
@@ -1978,7 +1952,15 @@ mod tests {
             .map(|card| card.id)
             .collect::<Vec<_>>();
 
-        assert_eq!(board.archive_column(1).unwrap(), card_ids.len());
+        for card_id in &card_ids {
+            board.stash_card(*card_id, 1_700_000_000_000);
+        }
+        board.adopt_pending_events(
+            card_ids
+                .iter()
+                .map(|card_id| event(*card_id, CardEventKind::Archived, Some(1), None))
+                .collect(),
+        );
         database.save_board(&mut board).unwrap();
 
         let event_count = database
@@ -1999,7 +1981,8 @@ mod tests {
         let path = directory.path().join("board.sqlite3");
         let mut database = open_with_cards(&path);
         let mut board = database.load_board().unwrap();
-        let card_id = board.add_card(1, "保存に失敗するカード", "").unwrap();
+        let card_id = board.push_card(1, "保存に失敗するカード", "");
+        board.adopt_pending_events(vec![event(card_id, CardEventKind::Created, None, Some(1))]);
         board.columns[0]
             .cards
             .iter_mut()
@@ -2164,8 +2147,8 @@ mod tests {
             // v12 まで進んだ DB に、当時の既定色のタグと、選んだ色のタグを置く。
             let mut database = open_with_cards(&path);
             let mut board = database.load_board().unwrap();
-            let defaulted = board.add_tag("既定色のまま", "#94a3b8").unwrap();
-            let chosen = board.add_tag("自分で選んだ", "#ef4444").unwrap();
+            let defaulted = board.push_tag("既定色のまま", "#94a3b8");
+            let chosen = board.push_tag("自分で選んだ", "#ef4444");
             database.save_board(&mut board).unwrap();
             database
                 .connection
@@ -2205,14 +2188,14 @@ mod tests {
         let mut board = database.load_board().unwrap();
         let column_id = board.columns[2].id;
 
-        board.set_column_done(column_id, true).unwrap();
+        board.column_mut(column_id).done = true;
         database.save_board(&mut board).unwrap();
         let reloaded = database.load_board().unwrap();
         assert!(reloaded.columns[2].done);
         assert!(!reloaded.columns[0].done);
 
         let mut reloaded = reloaded;
-        reloaded.set_column_done(column_id, false).unwrap();
+        reloaded.column_mut(column_id).done = false;
         database.save_board(&mut reloaded).unwrap();
         assert!(!database.load_board().unwrap().columns[2].done);
     }
@@ -2321,21 +2304,15 @@ mod tests {
         let card_without_due_date = board.columns[0].cards[1].id;
         let due_date = NaiveDate::from_ymd_opt(2026, 10, 5).unwrap();
 
-        board
-            .set_card_due_date(card_with_due_date, Some(due_date))
-            .unwrap();
+        board.card_mut(card_with_due_date).due_date = Some(due_date);
         database.save_board(&mut board).unwrap();
         let reloaded = database.load_board().unwrap();
         assert_eq!(reloaded.columns[0].cards[0].due_date, Some(due_date));
         assert_eq!(reloaded.columns[0].cards[1].due_date, None);
 
         let mut reloaded = reloaded;
-        reloaded
-            .set_card_due_date(card_with_due_date, None)
-            .unwrap();
-        reloaded
-            .set_card_due_date(card_without_due_date, Some(due_date))
-            .unwrap();
+        reloaded.card_mut(card_with_due_date).due_date = None;
+        reloaded.card_mut(card_without_due_date).due_date = Some(due_date);
         database.save_board(&mut reloaded).unwrap();
         let final_board = database.load_board().unwrap();
         assert_eq!(final_board.columns[0].cards[0].due_date, None);
@@ -2403,9 +2380,9 @@ mod tests {
         let path = directory.path().join("board.sqlite3");
         let mut database = open_with_cards(&path);
         let mut board = database.load_board().unwrap();
-        let tag_id = board.add_tag("重要", "#ef4444").unwrap();
+        let tag_id = board.push_tag("重要", "#ef4444");
         let card_id = board.columns[0].cards[0].id;
-        board.set_card_tags(card_id, vec![tag_id]).unwrap();
+        board.card_mut(card_id).tag_ids = vec![tag_id];
         database.save_board(&mut board).unwrap();
 
         let reloaded = database.load_board().unwrap();
@@ -2420,27 +2397,15 @@ mod tests {
         let mut database = open_with_cards(&path);
         let mut board = database.load_board().unwrap();
         let card_id = board.columns[0].cards[0].id;
-        board
-            .update_card_details_with_checklist(
-                card_id,
-                "チェックリスト付き",
-                "説明",
-                None,
-                Vec::new(),
-                vec![
-                    ChecklistItemDraft {
-                        id: None,
-                        text: "一つ目".to_string(),
-                        checked: false,
-                    },
-                    ChecklistItemDraft {
-                        id: None,
-                        text: "二つ目".to_string(),
-                        checked: true,
-                    },
-                ],
-            )
-            .unwrap();
+        let first_item = board.next_checklist_item_id;
+        board.next_checklist_item_id += 2;
+        let card = board.card_mut(card_id);
+        card.title = "チェックリスト付き".to_string();
+        card.description = "説明".to_string();
+        card.checklist_items = vec![
+            item(first_item, card_id, "一つ目", false, 0),
+            item(first_item + 1, card_id, "二つ目", true, 1),
+        ];
         database.save_board(&mut board).unwrap();
 
         let reloaded = database.load_board().unwrap();
@@ -2450,7 +2415,7 @@ mod tests {
         assert!(card.checklist_items[1].checked);
 
         let mut reloaded = reloaded;
-        reloaded.delete_card(card_id).unwrap();
+        reloaded.take_card(card_id);
         database.save_board(&mut reloaded).unwrap();
         assert_eq!(
             database
@@ -2472,10 +2437,10 @@ mod tests {
         let mut database = open_with_cards(&path);
         let mut board = database.load_board().unwrap();
         let card_id = board.columns[0].cards[0].id;
-        let tag_id = board.add_tag("保管", "#64748b").unwrap();
-        board.set_card_tags(card_id, vec![tag_id]).unwrap();
+        let tag_id = board.push_tag("保管", "#64748b");
+        board.card_mut(card_id).tag_ids = vec![tag_id];
 
-        board.archive_card(card_id).unwrap();
+        board.stash_card(card_id, 1_700_000_000_000);
         database.save_board(&mut board).unwrap();
 
         let mut reloaded = database.load_board().unwrap();
@@ -2484,12 +2449,13 @@ mod tests {
         assert!(reloaded.archived_cards[0].archived_at.is_some());
         assert_eq!(reloaded.archived_cards[0].tag_ids, vec![tag_id]);
 
-        reloaded.remove_tag(tag_id).unwrap();
+        reloaded.tags.retain(|tag| tag.id != tag_id);
+        reloaded.card_mut(card_id).tag_ids.clear();
         database.save_board(&mut reloaded).unwrap();
         reloaded = database.load_board().unwrap();
         assert!(reloaded.archived_cards[0].tag_ids.is_empty());
 
-        reloaded.restore_card(card_id).unwrap();
+        reloaded.unstash_card(card_id);
         database.save_board(&mut reloaded).unwrap();
         let restored = database.load_board().unwrap();
         assert!(restored.archived_cards.is_empty());
@@ -2499,16 +2465,19 @@ mod tests {
             .any(|card| card.id == card_id));
     }
 
-    fn lifecycle_event_count(database: &Database, card_id: i64) -> i64 {
-        database
-            .connection
-            .query_row(
-                "SELECT COUNT(*) FROM card_events WHERE card_id = ?1",
-                [card_id],
-                |row| row.get(0),
-            )
-            .unwrap()
+    /// チェック項目 1 つ。土台を組み立てるためだけのもの。
+    fn item(id: i64, card_id: CardId, text: &str, checked: bool, position: i64) -> ChecklistItem {
+        ChecklistItem {
+            id,
+            card_id,
+            text: text.to_string(),
+            checked,
+            position,
+            created_at: 1_700_000_000_000,
+            updated_at: 1_700_000_000_000,
+        }
     }
+
     /// ID は JSON の数値として webview に渡る（`docs/DESIGN.md`「境界を越える値」）。
     ///
     /// ボードごとに `board_id << 32` で ID の名前空間を切っているので、ボードの
@@ -2572,9 +2541,7 @@ mod tests {
     fn the_board_crosses_the_boundary_in_the_shape_the_webview_expects() {
         let mut board = Board::fixture();
         let card_id = board.columns[0].cards[0].id;
-        board
-            .set_card_due_date(card_id, Some(NaiveDate::from_ymd_opt(2026, 3, 4).unwrap()))
-            .expect("the due date is set");
+        board.card_mut(card_id).due_date = NaiveDate::from_ymd_opt(2026, 3, 4);
 
         let value: Value = serde_json::to_value(&board).expect("the board serializes");
         let card = &value["columns"][0]["cards"][0];

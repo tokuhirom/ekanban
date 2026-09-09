@@ -14,17 +14,19 @@
 import { expect, test, type Page } from "@playwright/test";
 
 import {
-  HARNESS_PORT,
   editStoredBoard,
   openBoard,
+  openCapture,
+  seededBoard,
   startHarness,
   stopHarness,
   storedBoard,
-  storedStartup,
+  storedSetting,
 } from "./harness";
 
-import type {} from "../src/ipc/harness";
+import type {} from "../src/ipc/browser";
 import { addCard } from "../src/model/board";
+import { QUICK_CAPTURE_SHORTCUT } from "../src/store/keys";
 import type { AppAction } from "../src/ipc/types/AppAction";
 
 test.beforeEach(startHarness);
@@ -36,13 +38,8 @@ async function chooseMenu(page: Page, action: AppAction): Promise<void> {
   }, action);
 }
 
-async function openCapture(page: Page): Promise<void> {
-  await page.goto(`/capture.html?harness=http://127.0.0.1:${HARNESS_PORT}`);
-  await expect(page.locator(".capture-input")).toBeVisible();
-}
-
 test("1 行を打って Enter で、入れ先のカラムの末尾に足される", async ({ page }) => {
-  const before = await storedBoard();
+  const before = seededBoard();
   const target = before.columns[0];
 
   await openCapture(page);
@@ -55,7 +52,7 @@ test("1 行を打って Enter で、入れ先のカラムの末尾に足され�
   await page.locator(".capture-input").press("Enter");
 
   await expect
-    .poll(async () => (await storedBoard()).columns[0]?.cards.at(-1)?.title)
+    .poll(async () => (await storedBoard(page)).columns[0]?.cards.at(-1)?.title)
     .toBe("思いついたこと");
 });
 
@@ -70,17 +67,17 @@ test("窓が開いたら入力欄に焦点があり、そのまま打って Ente
   await page.keyboard.press("Enter");
 
   await expect
-    .poll(async () => (await storedBoard()).columns[0]?.cards.at(-1)?.title)
+    .poll(async () => (await storedBoard(page)).columns[0]?.cards.at(-1)?.title)
     .toBe("クリックせずに打ったこと");
 });
 
 test("空のまま Enter を押しても、何も足さない", async ({ page }) => {
-  const before = (await storedBoard()).columns[0]?.cards.length ?? 0;
+  const before = seededBoard().columns[0]?.cards.length ?? 0;
   await openCapture(page);
   await page.locator(".capture-input").press("Enter");
   // 何も言わずに何も起きない（拒否は黙る、`docs/DESIGN.md`）。
   await expect(page.locator(".capture-hint")).toHaveText("Enter で追加、Escape で閉じる");
-  expect((await storedBoard()).columns[0]?.cards.length ?? 0).toBe(before);
+  expect((await storedBoard(page)).columns[0]?.cards.length ?? 0).toBe(before);
 });
 
 test("入れ先を選ぶと、そのカラムに印が出て、キャプチャもそこへ入る", async ({ page }) => {
@@ -98,65 +95,44 @@ test("入れ先を選ぶと、そのカラムに印が出て、キャプチャ�
   await page.locator(".capture-input").press("Enter");
 
   await expect
-    .poll(async () => (await storedBoard()).columns[1]?.cards.at(-1)?.title)
+    .poll(async () => (await storedBoard(page)).columns[1]?.cards.at(-1)?.title)
     .toBe("2 つめのカラムへ");
 });
 
-test("ほかの窓が盤面を変えたら、開いているボードにも出る", async ({ page }) => {
+test("ほかの窓が盤面を変えたら、開いているボードにも出る", async ({ page, context }) => {
   await openBoard(page);
-  // キャプチャの窓が書いたことにする。届く経路（`board:changed`）は本物では
-  // Rust が投げるので、ここでは届いたあとの読み直しだけを見る。
-  const columnId = (await storedBoard()).columns[0]?.id ?? 0;
-  await editStoredBoard((document) => addCard(document, columnId, "別の窓から足したカード", ""));
-  await page.evaluate(() => {
-    window.ekanbanBoardChanged?.();
-  });
+  // **本当にもう 1 つの窓から書きます。** 同じ生まれのページが置き場所を
+  // 書き換えると、ブラウザが `storage` で教えてくれます——配るアプリで Rust が
+  // `board:changed` を投げるのと同じ役目です。
+  const columnId = (await storedBoard(page)).columns[0]?.id ?? 0;
+  const other = await context.newPage();
+  await openCapture(other);
+  await editStoredBoard(other, (document) =>
+    addCard(document, columnId, "別の窓から足したカード", ""),
+  );
 
   await expect(page.locator(".card", { hasText: "別の窓から足したカード" })).toBeVisible();
 });
 
-test("押しているキーがその場に出て、割り当てを記録して、解除できる", async ({ page }) => {
+/// ページの外まで届く割り当ては、この組み立てでは作れない（ADR 0035）。
+///
+/// **消さずに、理由を出します。** 何ができないのかを画面で読めることが
+/// 決めごとで、押せるのに何も起きない状態を作らないためです。
+///
+/// 割り当てそのもの——押しているキーがその場に出る、記録される、解除できる
+/// ——は OS への登録が要るので、**手で確かめます**（ADR 0041 が殻の側に残した
+/// 4 つのうちの 1 つ）。押されたキーを文字列にするところは
+/// `src/shell/shortcut.test.ts` が見ています。
+test("ブラウザでは、割り当てを作れない理由がその場に出る", async ({ page }) => {
   await openBoard(page);
   await chooseMenu(page, "setQuickCaptureShortcut");
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
 
-  // 押している途中のキーがそのまま出る（ADR 0030）。出さないと、押したのに
-  // 何も起きないとき、キーが届いていないのか断られたのかが分からない。
-  const pressed = dialog.locator(".pressed-keys");
-  await expect(pressed).toContainText("キーが押されていません");
-  await page.keyboard.down("Control");
-  await page.keyboard.down("Alt");
-  await expect(pressed).toContainText("Ctrl");
-  await expect(pressed).toContainText("Alt");
+  await expect(dialog.locator(".dialog-detail").first()).toContainText("ブラウザ版");
 
-  // 押された組み合わせが、そのままの形で `app_state` に入る。
-  await page.keyboard.down("KeyK");
-  await expect(pressed).toContainText("K");
-  await expect.poll(async () => (await storedStartup()).quickCaptureShortcut).toBe("ctrl-alt-k");
-
-  await page.keyboard.up("KeyK");
-  await page.keyboard.up("Alt");
-  await page.keyboard.up("Control");
-  await expect(pressed).toContainText("キーが押されていません");
-
-  // 何が登録されたのかを読めるように、割り当てても閉じない。
-  await expect(dialog).toBeVisible();
-  await expect(dialog.locator(".shortcut-current")).toContainText("ctrl-alt-k");
-
-  await dialog.locator(".clear-shortcut").click();
-  await expect.poll(async () => (await storedStartup()).quickCaptureShortcut).toBeNull();
-});
-
-test("修飾キーの無い割り当ては断られ、ダイアログはそのまま", async ({ page }) => {
-  await openBoard(page);
-  await chooseMenu(page, "setQuickCaptureShortcut");
-  await expect(page.getByRole("dialog")).toBeVisible();
-
+  // 押しても割り当てにはならない。閉じもしない——読む相手はこの理由なので。
   await page.keyboard.press("KeyK");
-
-  // 打ち直せるように、閉じずにその場で理由を出す。
-  await expect(page.getByRole("dialog")).toBeVisible();
-  await expect(page.locator(".field-error")).toContainText("修飾キー");
-  expect((await storedStartup()).quickCaptureShortcut).toBeNull();
+  await expect(dialog).toBeVisible();
+  expect(await storedSetting(page, QUICK_CAPTURE_SHORTCUT)).toBeNull();
 });

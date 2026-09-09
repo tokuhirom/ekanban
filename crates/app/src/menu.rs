@@ -1,9 +1,14 @@
 //! メニューバーと、そこに付くキーの割り当て（`docs/DESIGN.md`「メニューとキー割り当て」）。
 //!
-//! **メニューは先に「データ」として組み、あとで Tauri のメニューに変換します。**
-//! `tauri::menu::Menu` を作るにはアプリのハンドルが要り、そこだけで組むと構成を
-//! 確かめるのに窓を開ける羽目になります。[`sections`] は値を返すだけなので、
-//! テストが 3 つの OS 分の構成をそのまま読めます。
+//! **構成はここにありません**（[ADR 0043]）。何がどう並ぶかを決めるのは
+//! `web/src/shell/menu.ts` で、webview が起動の最初に `set_menu` で渡します。
+//! ここに残っているのは、受け取った構成を Tauri のメニューに変換するところと、
+//! 押された id の引き当てです——ウェブアプリなら画面の中に描いていたものを、
+//! ここでは OS に描かせているだけなので、構成をサーバ側に置く理由がありません
+//! （[ADR 0039]）。
+//!
+//! [ADR 0039]: ../../../docs/adr/0039-the-board-model-moves-to-typescript.md
+//! [ADR 0043]: ../../../docs/adr/0043-the-menu-is-described-by-the-webview.md
 //!
 //! 押されたときの行き先は 2 つあります。
 //!
@@ -16,26 +21,21 @@
 //! テキスト編集（カット・コピー・ペースト・すべてを選択）と macOS のシステム
 //! 項目は [`Predefined`] に任せます。OS が持っている操作を自分で書き直しません。
 
-#[cfg(any(feature = "shell", test))]
 use std::collections::HashMap;
 
-use serde::Serialize;
-#[cfg(feature = "shell")]
+use serde::{Deserialize, Serialize};
 use tauri::menu::{
     AboutMetadata, Menu, MenuItemBuilder, MenuItemKind, PredefinedMenuItem, Submenu, SubmenuBuilder,
 };
-#[cfg(feature = "shell")]
 use tauri::{AppHandle, Runtime};
 use ts_rs::TS;
-
-use crate::snapshot::Platform;
 
 /// webview が受け取るメニューの操作。`app:action` の積荷です。
 ///
 /// 名前は TypeScript 側と 1 対 1 で、`ts-rs` が書き出します。**手で 2 か所に
 /// 書きません**（`docs/DESIGN.md`「コマンドとイベント」）。dispatcher が網羅しているかどうかは、この型から作った
 /// `Record` を TypeScript の型検査が見ます。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub enum AppAction {
@@ -70,7 +70,9 @@ pub enum AppAction {
 ///
 /// macOS では同じことを [`Predefined`] が持っているので、こちらに出てくるのは
 /// macOS 以外だけです（`Alt+F4` や `Ctrl+Q` を OS 側の項目が持っていない）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub enum WindowAction {
     CloseWindow,
     ToggleFullscreen,
@@ -172,9 +174,12 @@ const ACTIONS: &[Action] = &[
     Action::Window(WindowAction::ToggleFullscreen),
     Action::Window(WindowAction::Quit),
 ];
-
 /// OS が持っている項目。ここに並ぶものを自分で書き直しません。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// 名前は `web/src/shell/menu.ts` の `Predefined` と 1 対 1 です。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub enum Predefined {
     Cut,
     Copy,
@@ -193,475 +198,112 @@ pub enum Predefined {
     Quit,
 }
 
-/// メニュー 1 項目。
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// メニュー 1 項目。**webview から届く形**（[ADR 0043]）。
+///
+/// [ADR 0043]: ../../../docs/adr/0043-the-menu-is-described-by-the-webview.md
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+#[ts(export)]
 pub enum Item {
-    /// 自分で持つ項目。`accelerator` は muda の書き方（`"CmdOrCtrl+N"`）。
-    Action {
-        action: Action,
+    /// webview へ流す項目。押されたら `app:action` で戻します。
+    #[serde(rename_all = "camelCase")]
+    App {
+        action: AppAction,
         /// 文言。**使えない項目では理由まで入ります**——灰色の項目は押せず、
         /// 理由を出す先が無いためです。
         label: String,
-        accelerator: Option<&'static str>,
+        /// muda の書き方（`"CmdOrCtrl+N"`）。
+        accelerator: Option<String>,
         /// 押せるか。使えない環境の項目は灰色にして、消しはしません。
-        /// 消すと「この機能はこのアプリに無い」に見えます。
         enabled: bool,
     },
-    Predefined(Predefined),
+    /// 殻が自分で行う項目。ウィンドウそのものの操作で、webview に手が届きません。
+    #[serde(rename_all = "camelCase")]
+    Window {
+        action: WindowAction,
+        label: String,
+        accelerator: Option<String>,
+    },
+    /// OS が持っている項目。
+    #[serde(rename_all = "camelCase")]
+    Predefined {
+        item: Predefined,
+    },
     Separator,
-}
-
-fn action(action: Action, label: &str, accelerator: Option<&'static str>) -> Item {
-    Item::Action {
-        action,
-        label: label.to_string(),
-        accelerator,
-        enabled: true,
-    }
-}
-
-fn app(kind: AppAction, label: &str, accelerator: Option<&'static str>) -> Item {
-    action(Action::App(kind), label, accelerator)
-}
-
-/// 「クイックキャプチャのショートカット…」。
-///
-/// 使えない環境では灰色にし、**理由を文言に入れます**。灰色の項目は押せないので、
-/// 押したときに理由を出す道がありません。判定は起動中に変わりません。
-fn quick_capture_item() -> Item {
-    match crate::shortcut::platform_support() {
-        Ok(()) => app(
-            AppAction::SetQuickCaptureShortcut,
-            "クイックキャプチャのショートカット…",
-            None,
-        ),
-        Err(reason) => Item::Action {
-            action: Action::App(AppAction::SetQuickCaptureShortcut),
-            label: format!("クイックキャプチャのショートカット…（{reason}）"),
-            accelerator: None,
-            enabled: false,
-        },
-    }
 }
 
 /// メニューバーの 1 つぶん。
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub struct Section {
-    pub name: &'static str,
+    pub name: String,
     pub items: Vec<Item>,
 }
 
-/// この OS のメニューバー。
-///
-/// macOS には OS が描くアプリメニューとウインドウメニューがあり、ほかの環境には
-/// ありません。そのぶん「終了」と「ekanbanについて」の置き場所が変わります
-/// （[ADR 0015]）。どちらも `cfg` を付けずに定義して、テストがどの OS でも
-/// 両方を突き合わせられるようにしてあります。
-///
-/// [ADR 0015]: ../../../docs/adr/0015-a-menu-bar-on-every-platform.md
-pub fn sections() -> Vec<Section> {
-    sections_for(Platform::current())
-}
-
-/// 指定した OS のメニューバー。
-///
-/// `sections` が `cfg!` を読んでいたところを引数にしてあります。**ブラウザ向けの
-/// 組み立てには、コンパイル時に分かる OS がありません**——`wasm32-unknown-unknown`
-/// は macOS でもなければ Linux でもないので、どちらのメニューバーを出すかは
-/// ページが名乗った OS で決めます（[ADR 0035]）。
-///
-/// [ADR 0035]: ../../../docs/adr/0035-a-browser-build-of-the-real-core.md
-pub fn sections_for(platform: Platform) -> Vec<Section> {
-    if platform == Platform::Macos {
-        macos_sections()
-    } else {
-        drawn_sections()
-    }
-}
-
-fn macos_sections() -> Vec<Section> {
-    vec![
-        Section {
-            name: "ekanban",
-            items: vec![
-                Item::Predefined(Predefined::About),
-                Item::Separator,
-                quick_capture_item(),
-                Item::Separator,
-                Item::Predefined(Predefined::Services),
-                Item::Separator,
-                Item::Predefined(Predefined::Hide),
-                Item::Predefined(Predefined::HideOthers),
-                Item::Predefined(Predefined::ShowAll),
-                Item::Separator,
-                Item::Predefined(Predefined::Quit),
-            ],
-        },
-        Section {
-            name: "ファイル",
-            items: vec![
-                app(
-                    AppAction::AddBoard,
-                    "ボードを追加",
-                    Some("CmdOrCtrl+Shift+B"),
-                ),
-                app(AppAction::AddCard, "カードを追加", Some("CmdOrCtrl+N")),
-                app(
-                    AppAction::AddColumn,
-                    "カラムを追加",
-                    Some("CmdOrCtrl+Shift+N"),
-                ),
-                app(AppAction::AddTag, "タグを追加", Some("CmdOrCtrl+Shift+T")),
-                Item::Separator,
-                app(AppAction::ExportBoardJson, "ボードを書き出す（JSON）", None),
-                app(
-                    AppAction::ExportBoardMarkdown,
-                    "ボードを書き出す（Markdown）",
-                    None,
-                ),
-                Item::Separator,
-                app(AppAction::SaveEdit, "保存", Some("CmdOrCtrl+S")),
-                Item::Predefined(Predefined::CloseWindow),
-            ],
-        },
-        Section {
-            name: "編集",
-            items: edit_items(),
-        },
-        Section {
-            name: "ボード",
-            items: board_items(),
-        },
-        Section {
-            name: "表示",
-            items: view_items(Some("Cmd+Ctrl+S"), Item::Predefined(Predefined::Fullscreen)),
-        },
-        // macOS の標準の「ウインドウ」メニュー。`Cmd+M` はメニュー項目が
-        // あってはじめて効く。
-        Section {
-            name: "ウインドウ",
-            items: vec![
-                Item::Predefined(Predefined::Minimize),
-                Item::Predefined(Predefined::Zoom),
-                Item::Separator,
-                Item::Predefined(Predefined::CloseWindow),
-            ],
-        },
-        Section {
-            name: "ヘルプ",
-            items: vec![
-                app(AppAction::BackupDatabase, "データベースをコピー…", None),
-                app(
-                    AppAction::RevealDatabase,
-                    "データベースの場所をFinderで開く",
-                    None,
-                ),
-                app(
-                    AppAction::RevealBackups,
-                    "バックアップの場所をFinderで開く",
-                    None,
-                ),
-                Item::Separator,
-                Item::Predefined(Predefined::About),
-            ],
-        },
-    ]
-}
-
-/// macOS 以外のメニューバー。
-fn drawn_sections() -> Vec<Section> {
-    vec![
-        Section {
-            name: "ファイル",
-            items: vec![
-                app(
-                    AppAction::AddBoard,
-                    "ボードを追加",
-                    Some("CmdOrCtrl+Shift+B"),
-                ),
-                app(AppAction::AddCard, "カードを追加", Some("CmdOrCtrl+N")),
-                app(
-                    AppAction::AddColumn,
-                    "カラムを追加",
-                    Some("CmdOrCtrl+Shift+N"),
-                ),
-                app(AppAction::AddTag, "タグを追加", Some("CmdOrCtrl+Shift+T")),
-                Item::Separator,
-                app(AppAction::ExportBoardJson, "ボードを書き出す（JSON）", None),
-                app(
-                    AppAction::ExportBoardMarkdown,
-                    "ボードを書き出す（Markdown）",
-                    None,
-                ),
-                Item::Separator,
-                app(AppAction::SaveEdit, "保存", Some("CmdOrCtrl+S")),
-                action(
-                    Action::Window(WindowAction::CloseWindow),
-                    "ウインドウを閉じる",
-                    Some("CmdOrCtrl+W"),
-                ),
-                action(
-                    Action::Window(WindowAction::Quit),
-                    "終了",
-                    Some("CmdOrCtrl+Q"),
-                ),
-            ],
-        },
-        Section {
-            name: "編集",
-            items: edit_items(),
-        },
-        Section {
-            name: "ボード",
-            items: board_items(),
-        },
-        Section {
-            name: "表示",
-            items: view_items(
-                Some("CmdOrCtrl+B"),
-                action(
-                    Action::Window(WindowAction::ToggleFullscreen),
-                    "フルスクリーンにする",
-                    Some("F11"),
-                ),
-            ),
-        },
-        Section {
-            name: "ヘルプ",
-            items: vec![
-                quick_capture_item(),
-                Item::Separator,
-                app(AppAction::BackupDatabase, "データベースをコピー…", None),
-                app(
-                    AppAction::RevealDatabase,
-                    "データベースの場所をフォルダで開く",
-                    None,
-                ),
-                app(
-                    AppAction::RevealBackups,
-                    "バックアップの場所をフォルダで開く",
-                    None,
-                ),
-                Item::Separator,
-                app(AppAction::About, "ekanban について", None),
-            ],
-        },
-    ]
-}
-
-/// どの OS でも同じ「編集」メニュー。
-///
-/// **元に戻す・やり直すにアクセラレータを付けません**（`docs/DESIGN.md`「メニューとキー割り当て」）。付けると、説明欄を
-/// 打っている最中の `Cmd+Z` が盤面を巻き戻します。キーは webview が受け、
-/// 入力欄にフォーカスがあれば webview 自身の取り消しへ、無ければ盤面の Undo へ
-/// 振り分けます。**ここで OS の Undo（[`Predefined::Cut`] などと同じ既定の項目）を
-/// 使わないのも同じ理由**で、あれは webview のテキスト編集にしか届きません。
-fn edit_items() -> Vec<Item> {
-    vec![
-        app(AppAction::Undo, "元に戻す", None),
-        app(AppAction::Redo, "やり直す", None),
-        Item::Separator,
-        Item::Predefined(Predefined::Cut),
-        Item::Predefined(Predefined::Copy),
-        Item::Predefined(Predefined::Paste),
-        Item::Predefined(Predefined::SelectAll),
-        Item::Separator,
-        app(AppAction::CancelEdit, "編集をキャンセル", None),
-        app(
-            AppAction::ClearSearch,
-            "検索をクリア",
-            Some("CmdOrCtrl+Shift+F"),
-        ),
-    ]
-}
-
-fn board_items() -> Vec<Item> {
-    vec![
-        app(AppAction::RenameBoard, "ボード名を変更", None),
-        app(AppAction::DeleteBoard, "現在のボードを削除", None),
-        Item::Separator,
-        app(AppAction::ManageTags, "タグを整理…", None),
-    ]
-}
-
-/// どの OS でも同じ「表示」メニュー。
-///
-/// ボード一覧の割り当てだけ OS ごとに違います。macOS は `Cmd+Ctrl+S`、ほかは
-/// `Ctrl+B`。フルスクリーンは、macOS では OS の項目（`Cmd+Ctrl+F`）、ほかでは
-/// 自分の項目（`F11`）なので、呼ぶ側から渡します。**ここで `cfg!` を見ません**
-/// ——見ると、テストがどの OS でも両方のメニューバーを突き合わせられなくなります。
-fn view_items(board_list: Option<&'static str>, fullscreen: Item) -> Vec<Item> {
-    vec![
-        app(
-            AppAction::FocusSearch,
-            "検索にフォーカス",
-            Some("CmdOrCtrl+F"),
-        ),
-        Item::Separator,
-        app(
-            AppAction::ToggleBoardList,
-            "ボード一覧の表示を切り替え",
-            board_list,
-        ),
-        app(
-            AppAction::ToggleArchiveView,
-            "アーカイブ表示を切り替え",
-            Some("CmdOrCtrl+Shift+A"),
-        ),
-        Item::Separator,
-        app(AppAction::UseLightTheme, "ライトモード", None),
-        app(AppAction::UseDarkTheme, "ダークモード", None),
-        app(AppAction::UseSystemTheme, "システムに合わせる", None),
-        fullscreen,
-    ]
-}
-
-/// ページが描くメニューバーの 1 つぶん（[ADR 0035]）。
-///
-/// [ADR 0035]: ../../../docs/adr/0035-a-browser-build-of-the-real-core.md
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct WebSection {
-    pub name: String,
-    pub items: Vec<WebItem>,
-}
-
-/// ページが描くメニューの 1 項目。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
-#[serde(tag = "kind", rename_all = "camelCase")]
-#[ts(export)]
-pub enum WebItem {
-    #[serde(rename_all = "camelCase")]
-    Action {
-        action: AppAction,
-        label: String,
-        /// muda の書き方（`"CmdOrCtrl+N"`）のまま渡します。**押されたキーと
-        /// 突き合わせるのも、画面に出す形にするのもページの仕事**です——
-        /// ブラウザにはアクセラレータを引き受けるメニューバーが無いので、
-        /// `web/src/shell/accelerator.ts` が受けます。
-        accelerator: Option<String>,
-        enabled: bool,
-    },
-    Separator,
-}
-
-/// ブラウザで出すメニューバー（[ADR 0035]）。
-///
-/// [`sections_for`] から、**ブラウザに持っていけないものを落としただけ**の
-/// ものです。メニューの構成を 2 か所に書かないための形で、ここに項目を
-/// 足しません——足すと、殻のメニューに無いものがデモにだけ出ます。
-///
-/// 落とすのは 2 種類です。
-///
-/// - [`Item::Predefined`]。カット・コピー・ペーストも、隠す・終了も OS のもので、
-///   ブラウザの中に相手がいません。テキスト編集はブラウザ自身が持っています
-/// - [`WindowAction`]。閉じる・全画面・終了はウィンドウそのものの操作で、
-///   ページには手が届きません
-///
-/// 落とした結果として区切り線が続いたり、端に残ったりするので、そこも
-/// ならします。**ページ側で「前が区切り線だったか」を数えさせません。**
-///
-/// [ADR 0035]: ../../../docs/adr/0035-a-browser-build-of-the-real-core.md
-pub fn web_sections(platform: Platform) -> Vec<WebSection> {
-    sections_for(platform)
-        .into_iter()
-        .map(|section| WebSection {
-            name: section.name.to_string(),
-            items: tidy_separators(
-                section
-                    .items
-                    .into_iter()
-                    .filter_map(|item| match item {
-                        Item::Action {
-                            action: Action::App(action),
-                            label,
-                            accelerator,
-                            enabled,
-                        } => Some(browser_availability(WebItem::Action {
-                            action,
-                            label,
-                            accelerator: accelerator.map(str::to_string),
-                            enabled,
-                        })),
-                        Item::Separator => Some(WebItem::Separator),
-                        Item::Action {
-                            action: Action::Window(_),
-                            ..
-                        }
-                        | Item::Predefined(_) => None,
-                    })
-                    .collect(),
-            ),
-        })
-        .filter(|section| !section.items.is_empty())
-        .collect()
-}
-
-/// ブラウザに相手がいない項目を、**灰色にして理由を文言に入れる**。
-///
-/// 消しません。消すと「この機能はこのアプリに無い」に見えます（この規則は
-/// [`Item`] の `enabled` にも書いてあります）。灰色の項目は押せず、押せない以上
-/// 理由を出す先が無いので、`quick_capture_item` と同じように文言に入れます。
-///
-/// ファイル管理でフォルダを開くのと、データベースの控えがそれです。前者は
-/// ブラウザから OS のファイル管理を呼べないため、後者は**ブラウザ版に
-/// SQLite のファイルがそもそも無い**ためです（[ADR 0036]）。**盤面の持ち出しは
-/// 残ります**——「ボードを書き出す」の 2 つがダウンロードになります。
-///
-/// [ADR 0036]: ../../../docs/adr/0036-one-model-two-places-to-put-it.md
-fn browser_availability(item: WebItem) -> WebItem {
-    let WebItem::Action {
-        action,
-        label,
-        accelerator,
-        enabled,
-    } = item
-    else {
-        return item;
-    };
-    let unavailable = matches!(
-        action,
-        AppAction::RevealDatabase | AppAction::RevealBackups | AppAction::BackupDatabase
-    );
-    WebItem::Action {
-        action,
-        label: if unavailable {
-            format!("{label}（ブラウザでは使えません）")
-        } else {
-            label
-        },
-        accelerator,
-        enabled: enabled && !unavailable,
-    }
-}
-
-/// 端の区切り線と、続いた区切り線を落とす。
-fn tidy_separators(items: Vec<WebItem>) -> Vec<WebItem> {
-    let mut tidied: Vec<WebItem> = Vec::with_capacity(items.len());
-    for item in items {
-        if item == WebItem::Separator && matches!(tidied.last(), None | Some(WebItem::Separator)) {
-            continue;
-        }
-        tidied.push(item);
-    }
-    if tidied.last() == Some(&WebItem::Separator) {
-        tidied.pop();
-    }
-    tidied
-}
-
-#[cfg(feature = "shell")]
-/// [`sections`] を Tauri のメニューに変換する。
-pub fn build<R: Runtime>(app_handle: &AppHandle<R>) -> tauri::Result<Menu<R>> {
+/// webview が渡した構成を Tauri のメニューに変換する。
+pub fn build<R: Runtime>(
+    app_handle: &AppHandle<R>,
+    sections: &[Section],
+) -> tauri::Result<Menu<R>> {
     let menu = Menu::new(app_handle)?;
-    for section in sections() {
-        menu.append(&submenu(app_handle, &section)?)?;
+    for section in sections {
+        menu.append(&submenu(app_handle, section)?)?;
     }
     Ok(menu)
 }
 
-#[cfg(feature = "shell")]
+/// いま掛かっているメニューの構成。
+///
+/// **アクセラレータを付け直すのに要ります**（[ADR 0030]）。割り当てを捕まえて
+/// いる間は外し、終わったら戻す——戻す形を控えから作らず、掛けたときの構成から
+/// 組み直します。
+///
+/// [ADR 0030]: ../../../docs/adr/0030-capturing-a-shortcut-needs-the-menu-out-of-the-way.md
+#[derive(Default)]
+pub struct CurrentMenu(std::sync::Mutex<Vec<Section>>);
+
+impl CurrentMenu {
+    pub fn set(&self, sections: Vec<Section>) {
+        *self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = sections;
+    }
+
+    pub fn get(&self) -> Vec<Section> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+}
+
+/// webview が繋がるまで置いておくメニュー（[ADR 0043]）。
+///
+/// **macOS だけ中身があります。** アプリメニューは OS が要求するもので、無いと
+/// メニューバーそのものが出ません。ほかの環境は空のバーで、webview が
+/// `set_menu` を呼んだ時点で本物に差し替わります。
+///
+/// [ADR 0043]: ../../../docs/adr/0043-the-menu-is-described-by-the-webview.md
+pub fn placeholder() -> Vec<Section> {
+    if !cfg!(target_os = "macos") {
+        return Vec::new();
+    }
+    vec![Section {
+        name: "ekanban".to_string(),
+        items: vec![
+            Item::Predefined {
+                item: Predefined::About,
+            },
+            Item::Separator,
+            Item::Predefined {
+                item: Predefined::Quit,
+            },
+        ],
+    }]
+}
+
 /// メニューに付いているキーの割り当てを、付け外しする。
 ///
 /// **クイックキャプチャの割り当てを捕まえている間は外します**（`docs/DESIGN.md`
@@ -673,44 +315,57 @@ pub fn build<R: Runtime>(app_handle: &AppHandle<R>) -> tauri::Result<Menu<R>> {
 /// `Cmd+W`、`Cmd+C` など）は OS のもので、そこに割り当てるものでもありません。
 ///
 /// [ADR 0030]: ../../../docs/adr/0030-capturing-a-shortcut-needs-the-menu-out-of-the-way.md
-pub fn set_accelerators_active<R: Runtime>(app: &AppHandle<R>, active: bool) -> tauri::Result<()> {
+pub fn set_accelerators_active<R: Runtime>(
+    app: &AppHandle<R>,
+    sections: &[Section],
+    active: bool,
+) -> tauri::Result<()> {
     let Some(menu) = app.menu() else {
         // メニューを組んでいなければ、外すものも戻すものもない。
         return Ok(());
     };
-    let bindings = bindings();
+    let bindings = bindings(sections);
     apply_bindings(&menu.items()?, active.then_some(&bindings))
 }
 
 /// メニューの項目が、押されたキーをどう取るか。
-#[cfg(any(feature = "shell", test))]
 struct Binding {
-    accelerator: Option<&'static str>,
+    accelerator: Option<String>,
     enabled: bool,
 }
 
-/// [`sections`] が決めている、項目ごとの割り当てと押せるかどうか。
+/// 渡された構成が決めている、項目ごとの割り当てと押せるかどうか。
 ///
 /// 付け直す先をここから作るので、**外したあとに戻す形は組み立てたときと同じ**
 /// です。控えを持ち回すと、控えを取り損ねた経路が 1 つでもあれば割り当てが
 /// 消えたままになります。`enabled` も同じで、もともと灰色だった項目（使えない
 /// 環境のクイックキャプチャ）が戻すときに押せるようになりません。
-#[cfg(any(feature = "shell", test))]
-fn bindings() -> HashMap<&'static str, Binding> {
-    sections()
+fn bindings(sections: &[Section]) -> HashMap<String, Binding> {
+    sections
         .iter()
         .flat_map(|section| section.items.iter())
         .filter_map(|item| match item {
-            Item::Action {
+            Item::App {
                 action,
                 accelerator,
                 enabled,
                 ..
             } => Some((
-                action.id(),
+                action.id().to_string(),
                 Binding {
-                    accelerator: *accelerator,
+                    accelerator: accelerator.clone(),
                     enabled: *enabled,
+                },
+            )),
+            Item::Window {
+                action,
+                accelerator,
+                ..
+            } => Some((
+                action.id().to_string(),
+                Binding {
+                    accelerator: accelerator.clone(),
+                    enabled: true,
                 },
             )),
             _ => None,
@@ -718,7 +373,6 @@ fn bindings() -> HashMap<&'static str, Binding> {
         .collect()
 }
 
-#[cfg(feature = "shell")]
 /// `wanted` が `None` なら外し、`Some` ならその形に戻す。
 ///
 /// **外すのに 2 つ必要です。** muda はアクセラレータを外せる環境と外せない環境が
@@ -728,7 +382,7 @@ fn bindings() -> HashMap<&'static str, Binding> {
 /// キーがダイアログに届きません。
 fn apply_bindings<R: Runtime>(
     items: &[MenuItemKind<R>],
-    wanted: Option<&HashMap<&'static str, Binding>>,
+    wanted: Option<&HashMap<String, Binding>>,
 ) -> tauri::Result<()> {
     for item in items {
         match item {
@@ -737,8 +391,8 @@ fn apply_bindings<R: Runtime>(
                 Some(bindings) => {
                     // 知らない id は触りません。組み立てていない項目の押せる／
                     // 押せないを、ここが勝手に決める理由がありません。
-                    if let Some(binding) = bindings.get(entry.id().as_ref()) {
-                        entry.set_accelerator(binding.accelerator)?;
+                    if let Some(binding) = bindings.get(entry.id().as_ref() as &str) {
+                        entry.set_accelerator(binding.accelerator.as_deref())?;
                         entry.set_enabled(binding.enabled)?;
                     }
                 }
@@ -753,33 +407,48 @@ fn apply_bindings<R: Runtime>(
     Ok(())
 }
 
-#[cfg(feature = "shell")]
 fn submenu<R: Runtime>(app_handle: &AppHandle<R>, section: &Section) -> tauri::Result<Submenu<R>> {
-    let mut builder = SubmenuBuilder::new(app_handle, section.name);
+    let mut builder = SubmenuBuilder::new(app_handle, &section.name);
     for item in &section.items {
         builder = match item {
             Item::Separator => builder.separator(),
-            Item::Action {
+            Item::App {
                 action,
                 label,
                 accelerator,
                 enabled,
-            } => {
-                let mut item = MenuItemBuilder::with_id(action.id(), label).enabled(*enabled);
-                if let Some(accelerator) = accelerator {
-                    item = item.accelerator(*accelerator);
-                }
-                builder.item(&item.build(app_handle)?)
-            }
-            Item::Predefined(predefined) => {
-                builder.item(&predefined_item(app_handle, *predefined)?)
-            }
+            } => builder.item(&entry(
+                app_handle,
+                action.id(),
+                label,
+                accelerator,
+                *enabled,
+            )?),
+            Item::Window {
+                action,
+                label,
+                accelerator,
+            } => builder.item(&entry(app_handle, action.id(), label, accelerator, true)?),
+            Item::Predefined { item } => builder.item(&predefined_item(app_handle, *item)?),
         };
     }
     builder.build()
 }
 
-#[cfg(feature = "shell")]
+fn entry<R: Runtime>(
+    app_handle: &AppHandle<R>,
+    id: &str,
+    label: &str,
+    accelerator: &Option<String>,
+    enabled: bool,
+) -> tauri::Result<tauri::menu::MenuItem<R>> {
+    let mut item = MenuItemBuilder::with_id(id, label).enabled(enabled);
+    if let Some(accelerator) = accelerator {
+        item = item.accelerator(accelerator);
+    }
+    item.build(app_handle)
+}
+
 fn predefined_item<R: Runtime>(
     app_handle: &AppHandle<R>,
     predefined: Predefined,
@@ -819,439 +488,86 @@ fn predefined_item<R: Runtime>(
 mod tests {
     use super::*;
 
-    /// macOS のメニューバーにしか出さないもの。
-    ///
-    /// システムメニューの項目と、macOS のウィンドウ操作です。ほかの環境では
-    /// 最小化も最大化もウィンドウマネージャの仕事で、アプリのメニューに出す
-    /// 意味がありません。
-    const MACOS_ONLY: &[Predefined] = &[
-        Predefined::Services,
-        Predefined::Hide,
-        Predefined::HideOthers,
-        Predefined::ShowAll,
-        Predefined::Minimize,
-        Predefined::Zoom,
-    ];
-
-    /// 外した割り当てを、id から組み立てたときと同じものに戻せること。
-    ///
-    /// **ここが落ちるのは id が重なったとき**で、そうなると片方の項目が
-    /// 割り当ての無いまま、押せないまま残ります（`docs/DESIGN.md`
-    /// 「クイックキャプチャ」、ADR 0030）。
-    #[test]
-    fn every_menu_item_can_be_put_back_by_its_id() {
-        let built: Vec<(&str, Option<&str>, bool)> = sections()
-            .iter()
-            .flat_map(|section| section.items.iter())
-            .filter_map(|item| match item {
-                Item::Action {
-                    action,
-                    accelerator,
-                    enabled,
-                    ..
-                } => Some((action.id(), *accelerator, *enabled)),
-                _ => None,
-            })
-            .collect();
-        let back = bindings();
-        assert_eq!(back.len(), built.len(), "id が重なっている");
-        for (id, accelerator, enabled) in built {
-            let binding = back.get(id).expect("組み立てた項目は id から引ける");
-            assert_eq!(binding.accelerator, accelerator, "{id} の割り当て");
-            assert_eq!(binding.enabled, enabled, "{id} の押せるかどうか");
-        }
-    }
-
-    /// 割り当ての無い項目も、戻す先として数える。
-    ///
-    /// 外すときは全部の項目を押せなくするので、割り当ての有無にかかわらず
-    /// 戻す先が要ります。
-    #[test]
-    fn the_items_without_an_accelerator_are_still_put_back() {
-        let without: Vec<&str> = sections()
-            .iter()
-            .flat_map(|section| section.items.iter())
-            .filter_map(|item| match item {
-                Item::Action {
-                    action,
-                    accelerator: None,
-                    ..
-                } => Some(action.id()),
-                _ => None,
-            })
-            .collect();
-        let back = bindings();
-        assert!(!without.is_empty(), "割り当ての無い項目が 1 つも無い");
-        for id in without {
-            let binding = back.get(id).expect("{id} が戻す先に無い");
-            assert_eq!(binding.accelerator, None, "{id} に割り当てが生えている");
-        }
-    }
-
-    fn actions_of(sections: &[Section]) -> Vec<Action> {
-        sections
-            .iter()
-            .flat_map(|section| section.items.iter())
-            .filter_map(|item| match item {
-                Item::Action { action, .. } => Some(*action),
-                _ => None,
-            })
-            .collect()
-    }
-
-    fn predefined_of(sections: &[Section]) -> Vec<Predefined> {
-        sections
-            .iter()
-            .flat_map(|section| section.items.iter())
-            .filter_map(|item| match item {
-                Item::Predefined(predefined) => Some(*predefined),
-                _ => None,
-            })
-            .collect()
-    }
-
-    fn accelerators_of(sections: &[Section]) -> Vec<(&'static str, &'static str)> {
-        sections
-            .iter()
-            .flat_map(|section| section.items.iter())
-            .filter_map(|item| match item {
-                Item::Action {
-                    action,
-                    accelerator: Some(accelerator),
-                    ..
-                } => Some((action.id(), *accelerator)),
-                _ => None,
-            })
-            .collect()
-    }
-
-    /// **画面が引き受ける操作は、どちらのメニューバーにも出ていること。**
-    ///
-    /// 足したのに並べ忘れると、dispatcher にだけ手が入って、押す道がどこにも
-    /// 無い操作が残ります（実際に「アーカイブ表示を切り替え」でそうなりました）。
-    #[test]
-    fn puts_every_app_action_on_both_menu_bars() {
-        for (bar, sections) in [("macOS", macos_sections()), ("drawn", drawn_sections())] {
-            let on_the_bar = actions_of(&sections);
-            for action in ACTIONS {
-                let Action::App(app_action) = action else {
-                    continue;
-                };
-                // 「ekanbanについて」だけは macOS では OS の項目が出す。
-                if *app_action == AppAction::About && bar == "macOS" {
-                    continue;
-                }
-                assert!(
-                    on_the_bar.contains(action),
-                    "{} is not on the {bar} menu bar",
-                    app_action.id()
-                );
-            }
-        }
-    }
-
-    /// ウィンドウの操作は、どちらかのメニューバーから届くこと。
-    ///
-    /// macOS では OS の項目（閉じる・終了・フルスクリーン）が持つので、自前の
-    /// 項目は macOS 以外にだけ出ます。
-    #[test]
-    fn reaches_every_window_action_from_the_drawn_menu_bar() {
-        let drawn = actions_of(&drawn_sections());
-        for action in ACTIONS {
-            if let Action::Window(_) = action {
-                assert!(drawn.contains(action), "{} has no menu item", action.id());
-            }
-        }
-    }
-
     /// 押された id から引き当てられること。`from_id` が読む一覧に漏れがあると、
     /// メニューを押しても黙って何も起きない。
     #[test]
-    fn finds_every_action_the_menu_bars_carry() {
-        for sections in [macos_sections(), drawn_sections()] {
-            for action in actions_of(&sections) {
-                assert_eq!(
-                    Action::from_id(action.id()),
-                    Some(action),
-                    "{} is on a menu bar but not in ACTIONS",
-                    action.id()
-                );
-            }
+    fn finds_every_action_by_its_id() {
+        for action in ACTIONS {
+            assert_eq!(
+                Action::from_id(action.id()),
+                Some(*action),
+                "{} is in ACTIONS but cannot be looked up",
+                action.id()
+            );
         }
     }
 
-    /// id は `ts-rs` が書き出す名前と同じでなければならない。ずれると、webview の
-    /// dispatcher が受け取れない id が飛ぶ。
+    /// id は境界を越える名前と同じでなければならない。
+    ///
+    /// ずれると、**webview が組んだ構成の名前を殻が読めません**（`set_menu` は
+    /// この名前で受けます）し、押されたときに飛ぶ id も dispatcher に届きません。
     #[test]
     fn names_each_action_the_way_the_webview_sees_it() {
         for action in ACTIONS {
-            let Action::App(app_action) = action else {
-                continue;
+            let (id, serialized) = match action {
+                Action::App(app) => (
+                    app.id(),
+                    serde_json::to_string(app).expect("an action serializes"),
+                ),
+                Action::Window(window) => (
+                    window.id(),
+                    serde_json::to_string(window).expect("an action serializes"),
+                ),
             };
-            let serialized = serde_json::to_string(app_action).expect("an action serializes");
-            assert_eq!(
-                serialized,
-                format!("\"{}\"", app_action.id()),
-                "the id and the serialized name differ"
-            );
+            assert_eq!(serialized, format!("\"{id}\""));
         }
     }
 
-    /// 受け入れ条件「macOS でたどれる操作は Linux・Windows でもたどれる」（#79）。
+    /// webview が組んだ構成を、そのまま読めること。
+    ///
+    /// **形が食い違うとメニューが掛かりません。** 名前は
+    /// `web/src/shell/menu.ts` の `Item` と 1 対 1 です。
     #[test]
-    fn offers_every_macos_action_on_the_other_platforms_too() {
-        let drawn = actions_of(&drawn_sections());
-        let missing = actions_of(&macos_sections())
-            .into_iter()
-            .filter(|action| !drawn.contains(action))
-            .collect::<Vec<_>>();
-        assert!(
-            missing.is_empty(),
-            "these actions are on the macOS menu bar but nowhere on the drawn one: {missing:?}"
+    fn reads_the_shape_the_webview_sends() {
+        let sections: Vec<Section> = serde_json::from_str(
+            r#"[{
+                "name": "ファイル",
+                "items": [
+                    {"kind": "app", "action": "addCard", "label": "カードを追加",
+                     "accelerator": "CmdOrCtrl+N", "enabled": true},
+                    {"kind": "separator"},
+                    {"kind": "window", "action": "quit", "label": "終了",
+                     "accelerator": "CmdOrCtrl+Q"},
+                    {"kind": "predefined", "item": "closeWindow"}
+                ]
+            }]"#,
+        )
+        .expect("the webview's shape reads back");
+
+        assert_eq!(sections.len(), 1);
+        assert_eq!(
+            sections[0].items[0],
+            Item::App {
+                action: AppAction::AddCard,
+                label: "カードを追加".to_string(),
+                accelerator: Some("CmdOrCtrl+N".to_string()),
+                enabled: true,
+            }
         );
-
-        // 「ekanbanについて」は macOS では OS の項目、ほかでは自前の項目。
-        // どちらの経路でも届くことを見る。
-        assert!(
-            predefined_of(&macos_sections()).contains(&Predefined::About),
-            "macOS shows the About item the system draws"
+        assert_eq!(sections[0].items[1], Item::Separator);
+        assert_eq!(
+            sections[0].items[2],
+            Item::Window {
+                action: WindowAction::Quit,
+                label: "終了".to_string(),
+                accelerator: Some("CmdOrCtrl+Q".to_string()),
+            }
         );
-        assert!(
-            drawn.contains(&Action::App(AppAction::About)),
-            "the drawn menu bar has to draw About itself"
+        assert_eq!(
+            sections[0].items[3],
+            Item::Predefined {
+                item: Predefined::CloseWindow
+            }
         );
-    }
-
-    /// 受け入れ条件「Linux・Windows のメニューに macOS 専用の項目が入らない」（#79）。
-    #[test]
-    fn keeps_the_macos_system_commands_off_the_drawn_menu_bar() {
-        let on_macos = predefined_of(&macos_sections());
-        let drawn = predefined_of(&drawn_sections());
-        for predefined in MACOS_ONLY {
-            assert!(
-                on_macos.contains(predefined),
-                "{predefined:?} belongs on the macOS menu bar"
-            );
-            assert!(
-                !drawn.contains(predefined),
-                "{predefined:?} is a macOS-only command and does not belong on the drawn menu bar"
-            );
-        }
-    }
-
-    /// 終了・フルスクリーン・ボード一覧には、どの OS でも届く手段がある（#53）。
-    #[test]
-    fn reaches_quit_fullscreen_and_the_board_list_on_every_platform() {
-        let macos_predefined = predefined_of(&macos_sections());
-        assert!(macos_predefined.contains(&Predefined::Quit));
-        assert!(macos_predefined.contains(&Predefined::Fullscreen));
-
-        let drawn = actions_of(&drawn_sections());
-        assert!(drawn.contains(&Action::Window(WindowAction::Quit)));
-        assert!(drawn.contains(&Action::Window(WindowAction::ToggleFullscreen)));
-
-        for sections in [macos_sections(), drawn_sections()] {
-            assert!(
-                actions_of(&sections).contains(&Action::App(AppAction::ToggleBoardList)),
-                "the board list has no menu item on one of the menu bars"
-            );
-        }
-    }
-
-    /// 入力中の `Cmd+Z` が盤面を巻き戻さないこと（`docs/DESIGN.md`「メニューとキー割り当て」）。
-    ///
-    /// アクセラレータを付けた時点で、入力欄にフォーカスがあっても先に取られる。
-    /// キーを webview で受けて振り分けるという決めごとは、**ここに割り当てを
-    /// 書かないこと**で守られる。
-    #[test]
-    fn leaves_undo_and_redo_without_an_accelerator() {
-        for sections in [macos_sections(), drawn_sections()] {
-            for (id, accelerator) in accelerators_of(&sections) {
-                assert!(
-                    id != AppAction::Undo.id() && id != AppAction::Redo.id(),
-                    "{id} must not carry {accelerator}"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn assigns_each_combination_to_a_single_action() {
-        for sections in [macos_sections(), drawn_sections()] {
-            let mut combinations = accelerators_of(&sections)
-                .into_iter()
-                .map(|(_, accelerator)| accelerator)
-                .collect::<Vec<_>>();
-            let before = combinations.len();
-            combinations.sort_unstable();
-            combinations.dedup();
-            assert_eq!(
-                before,
-                combinations.len(),
-                "two actions share a combination"
-            );
-        }
-    }
-
-    /// 割り当ての書き方が muda の読める形であること。
-    ///
-    /// 読めない文字列はメニューを組む時点で `Err` になり、**窓が開かないまま
-    /// 終わります**。実際に組むにはアプリのハンドルが要るので、ここでは表の側を
-    /// 見ます。
-    #[test]
-    fn writes_every_accelerator_the_way_muda_reads_them() {
-        const MODIFIERS: &[&str] = &["CmdOrCtrl", "Cmd", "Ctrl", "Alt", "Shift"];
-        for sections in [macos_sections(), drawn_sections()] {
-            for (id, accelerator) in accelerators_of(&sections) {
-                let mut parts = accelerator.split('+').collect::<Vec<_>>();
-                let key = parts.pop().expect("split always yields one part");
-                for modifier in &parts {
-                    assert!(
-                        MODIFIERS.contains(modifier),
-                        "{id} carries an unknown modifier {modifier}"
-                    );
-                }
-                let known_key = key.len() == 1 && key.chars().all(|c| c.is_ascii_uppercase())
-                    || key.strip_prefix('F').is_some_and(|number| {
-                        number
-                            .parse::<u8>()
-                            .is_ok_and(|number| (1..=24).contains(&number))
-                    });
-                assert!(known_key, "{id} carries an unknown key {key}");
-            }
-        }
-    }
-
-    /// 1 つのメニューの中に同じ操作が二度出ていないか。
-    ///
-    /// メニューをまたぐ重なりは数えない。macOS では「ウインドウを閉じる」が
-    /// ファイル と ウインドウ に、「ekanbanについて」が ekanban と ヘルプ に
-    /// 出るのが作法どおり。
-    #[test]
-    fn keeps_each_menu_free_of_duplicates() {
-        for (bar, sections) in [("macOS", macos_sections()), ("drawn", drawn_sections())] {
-            for section in sections {
-                let name = section.name;
-                let one = vec![section];
-                let mut ids = actions_of(&one)
-                    .into_iter()
-                    .map(|action| action.id().to_string())
-                    .collect::<Vec<_>>();
-                ids.extend(
-                    predefined_of(&one)
-                        .into_iter()
-                        .map(|predefined| format!("{predefined:?}")),
-                );
-                let before = ids.len();
-                ids.sort_unstable();
-                ids.dedup();
-                assert_eq!(
-                    before,
-                    ids.len(),
-                    "the {name} menu on the {bar} menu bar lists an action twice"
-                );
-            }
-        }
-    }
-
-    /// ページが描くメニューに、OS のものが混ざらないこと（[ADR 0035]）。
-    ///
-    /// [`Predefined`] は OS が持っている項目で、ブラウザの中に相手がいません。
-    /// [`WindowAction`] はウィンドウそのものの操作で、ページには手が届きません。
-    /// **どちらも「押しても何も起きない項目」になる**ので、出しません。
-    ///
-    /// [ADR 0035]: ../../../docs/adr/0035-a-browser-build-of-the-real-core.md
-    #[test]
-    fn the_browser_menu_leaves_out_what_the_os_owns() {
-        for platform in [Platform::Macos, Platform::Windows, Platform::Linux] {
-            let actions: Vec<AppAction> = web_sections(platform)
-                .iter()
-                .flat_map(|section| section.items.iter())
-                .filter_map(|item| match item {
-                    WebItem::Action { action, .. } => Some(*action),
-                    WebItem::Separator => None,
-                })
-                .collect();
-            assert!(!actions.is_empty(), "{platform:?} のメニューが空");
-
-            // 殻のメニューにある AppAction だけが出ていること。
-            let shell: Vec<AppAction> = sections_for(platform)
-                .iter()
-                .flat_map(|section| section.items.iter())
-                .filter_map(|item| match item {
-                    Item::Action {
-                        action: Action::App(action),
-                        ..
-                    } => Some(*action),
-                    _ => None,
-                })
-                .collect();
-            for action in &actions {
-                assert!(
-                    shell.contains(action),
-                    "{action:?} は殻のメニューに無い。ページにだけ項目を足さない"
-                );
-            }
-        }
-    }
-
-    /// 区切り線が、端にも 2 つ続けても残らないこと。
-    ///
-    /// OS のものを落とすと、そのぶん区切り線が浮きます。**数えるのをページに
-    /// させません**——出す側で畳んでおけば、描くほうは並べるだけで済みます。
-    #[test]
-    fn the_browser_menu_has_no_stray_separators() {
-        for platform in [Platform::Macos, Platform::Windows, Platform::Linux] {
-            for section in web_sections(platform) {
-                assert_ne!(section.items.first(), Some(&WebItem::Separator));
-                assert_ne!(section.items.last(), Some(&WebItem::Separator));
-                for pair in section.items.windows(2) {
-                    assert!(
-                        pair != [WebItem::Separator, WebItem::Separator],
-                        "{}: 区切り線が続いている",
-                        section.name
-                    );
-                }
-            }
-        }
-    }
-
-    /// ブラウザに相手がいない項目は、消さずに灰色にして理由を出すこと。
-    ///
-    /// 消すと「この機能はこのアプリに無い」に見えます（`Item` の `enabled`）。
-    #[test]
-    fn the_browser_menu_greys_out_what_it_cannot_do() {
-        let items: Vec<WebItem> = web_sections(Platform::Linux)
-            .into_iter()
-            .flat_map(|section| section.items)
-            .collect();
-        let find = |wanted: AppAction| {
-            items
-                .iter()
-                .find_map(|item| match item {
-                    WebItem::Action {
-                        action,
-                        label,
-                        enabled,
-                        ..
-                    } if *action == wanted => Some((label.clone(), *enabled)),
-                    _ => None,
-                })
-                .expect("項目が出ている")
-        };
-
-        for action in [
-            AppAction::RevealDatabase,
-            AppAction::RevealBackups,
-            // ブラウザ版に SQLite のファイルが無い（ADR 0036）。
-            AppAction::BackupDatabase,
-        ] {
-            let (label, enabled) = find(action);
-            assert!(!enabled, "{action:?} は押せないはず");
-            assert!(label.contains("ブラウザでは使えません"), "{label}");
-        }
-        // 盤面の持ち出しは残る。ここまで灰色にしない。
-        assert!(find(AppAction::ExportBoardJson).1);
-        assert!(find(AppAction::ExportBoardMarkdown).1);
     }
 }

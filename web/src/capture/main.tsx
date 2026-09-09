@@ -8,13 +8,14 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
 import { setIpc } from "../ipc";
-import { harnessIpc, harnessUrl } from "../ipc/harness";
+import { detectPlatform, localIpc, usesLocalStore } from "../ipc/local";
 import { tauriIpc } from "../ipc/tauri";
 import "../styles.css";
 import { Capture } from "./Capture";
 
-const harness = harnessUrl();
-setIpc(harness === null ? tauriIpc : harnessIpc(harness));
+// ボードの窓と同じ見分け方（`src/main.tsx`）。同じ生まれのページなので、
+// `?store=local` のときは同じ `localStorage` の盤面を読みます。
+setIpc(usesLocalStore() ? localIpc(detectPlatform()) : tauriIpc);
 
 const root = document.getElementById("root");
 if (root === null) throw new Error("#root がない");

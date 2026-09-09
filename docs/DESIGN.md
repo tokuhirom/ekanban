@@ -17,11 +17,10 @@ README が使う人向けの入口、[マニュアル](MANUAL.md) が使い方�
 - **どちらに書くかは、ウェブアプリとして作ったときにサーバ側へ書くだろうものかで決める。** そうでないものは webview に置く。Tauri の殻はこの見立てでは「ブラウザそのもの」で、ウェブアプリなら書かずに済んだはずのもの（窓、ネイティブのメニュー、OS のダイアログ、グローバルホットキー）だけが Rust に残る。打った文字の読み方も、一致の判定も、書き出す文字列の組み立ても、サーバには置かない（[ADR 0039](adr/0039-the-board-model-moves-to-typescript.md)）
 - **書き出しは 2 つに分ける。** 人が読む Markdown は webview（`web/src/model/export.ts`）、置いてある形の写しである JSON は置き場所（`crates/core/src/export.rs`）。分かれ目は形式ではなく、**材料が置き場所にしか無いかどうか**——JSON にはカードの履歴（`card_events`）まで入り、履歴は置き場所にしか無い。ファイルに書くコマンド（`write_text_file`）は中身を見ない（[ADR 0045](adr/0045-two-kinds-of-export.md)）
 - **置き場所は、受け取ったものを検めてから書く。** 盤面の判断をやり直すのではなく、整合だけを見る——空のタイトル、知らないカラムを指すカード、日付として成り立たない期限。どこに落とすかを決めるのは webview で、それが行として成り立つかを見るのが置き場所（[ADR 0040](adr/0040-the-shape-and-the-store-stay-in-rust.md)）
-- **`crates/core`（`ekanban-core`）に UI ツールキットを依存させない。** `model.rs` / `db/mod.rs` / `backup.rs` / `paths.rs` / `instance.rs` / `diagnostics.rs` は画面の作りを知らない。これが、テストを GUI のランタイム無しで走らせ続ける条件であり、アプリと開発用のハーネスが同じコードを使える条件でもある。依存の依存から入り込むほうがありがちなので、解決した依存グラフを `script/check-core-independence` が CI で見る
-- **`crates/app/src/commands.rs` に `tauri` を出さない。** `ipc.rs` の `#[tauri::command]` は、その関数を呼ぶだけの包み。判断を包みの側に置かないことは設計そのもので、開発用のハーネス（`crates/harness`）が同じ関数を HTTP に出せるのはこれによる
-- **盤面の置き場所は差し替えられる。モデルは差し替えない。** `crates/core/src/store.rs` の `Store` が口で、配るアプリは SQLite（`db/mod.rs`、`sqlite` feature）、ブラウザ版は JSON（`store::JsonStore`）。**分かれているのは「どう置くか」だけ**で、採番も並べ替えも Undo も `model.rs` の 1 つのまま。`Store` に盤面の判断を書かない（[ADR 0036](adr/0036-one-model-two-places-to-put-it.md)）
-- **`crates/app` の `shell` feature の外に、Tauri を出さない。** 窓・ネイティブのメニュー・OS のダイアログ・グローバルホットキーがその内側で、外に残るのは `commands` / `dispatch` / `state` / `snapshot` / `error` と、メニューの「データとしての構成」。ブラウザだけで動く版（`crates/web`）が、殻を外したこの層をそのまま使う（[ADR 0035](adr/0035-a-browser-build-of-the-real-core.md)）
-- **コマンド名で振り分ける表を 2 つ持たない。** `crates/app/src/dispatch.rs` の 1 つを、開発用のハーネスとブラウザ版が通る。環境で答えが変わるもの（保存先を選ぶ、場所を開く、URL を開く）だけが呼ぶ側に残る
+- **`crates/core`（`ekanban-core`）に UI ツールキットを依存させない。** `model.rs` / `db/mod.rs` / `backup.rs` / `paths.rs` / `instance.rs` / `diagnostics.rs` は画面の作りを知らない。これが、テストを GUI のランタイム無しで走らせ続ける条件である。依存の依存から入り込むほうがありがちなので、解決した依存グラフを `script/check-core-independence` が CI で見る
+- **`crates/app/src/commands.rs` に `tauri` を出さない。** `ipc.rs` の `#[tauri::command]` は、その関数を呼ぶだけの包み。判断が包みに入りはじめたら、それは `commands` に置き場所が無かったということ
+- **盤面の置き場所は差し替えられる。モデルは差し替えない。** 配るアプリは SQLite（`crates/core/src/db/`）、ブラウザで動くときは `web/src/store/`。**分かれているのは「どう置くか」だけ**で、採番も並べ替えも Undo も `web/src/model/board.ts` の 1 つのまま。置き場所に盤面の判断を書かない（[ADR 0039](adr/0039-the-board-model-moves-to-typescript.md)、[ADR 0042](adr/0042-the-browser-build-is-the-same-typescript.md)）
+- **Rust は 2 クレートだけ。** `crates/core`（盤面の形・SQLite・控え）と `crates/app`（Tauri の殻とコマンド）。ブラウザ版は同じ TypeScript がそのまま動くので、そのための組み立ては要らない（[ADR 0042](adr/0042-the-browser-build-is-the-same-typescript.md)）
 - **SQL は `crates/core/src/db/` に閉じる。** `tauri-plugin-sql` は使わない。スキーマ移行も差分保存もここにあり、それを捨てる理由がない。`tauri-plugin-store` も使わない——表示の状態は `app_state` テーブルにあり、データの置き場所を 2 つに割る理由がない
 
 ### 状態の持ち主
@@ -172,8 +171,8 @@ README が「いちばん大事にしています」と書いているところ�
 - **グローバルホットキーが使えるのは macOS と X11 のセッションだけ。** Wayland にはアプリから使える共通の仕組みが無く、Windows はまだ実装していない（`shortcut::platform_support`）。X11 の実装は使えない環境でも登録が成功したように見える（スレッドの生成しか確かめず、そのスレッドが死んでいても `register` が `Ok` を返す）ので、戻り値を信じずに環境変数で先に判定する。使えない環境ではメニュー項目を無効にし、理由を文言に出す。macOS では OS の権限は要らない——`RegisterEventHotKey` で登録でき、権限が要るのはキー入力そのものを覗く `CGEventTap` の方式だけ
 - **グローバルホットキーは既定で登録しない。** ユーザーが割り当てて初めて有効になる。全画面でその組み合わせを奪うので、断りなく取ると、ほかのアプリが動かなくなった理由を追えなくなる。修飾キーを 1 つも含まない割り当ても同じ理由で受け付けない
 - **登録できていない割り当てを保存しない。** 登録に失敗したらその場で理由を出し、設定は変更前のまま残す。起動のたびに黙って失敗する状態を作らない
-- **`app_state` に入る割り当ての表記は変えない**（`ctrl-shift-n` の形）。Tauri の表記（`"Control+Shift+N"`）との変換は `crates/app/src/shortcut.rs` が両方向で行う。保存の形を変えれば移行が要り、読めなかった割り当ては黙って消えるので、変換のほうを持つ
-- **割り当ての捕捉は webview の `keydown` で受け、`event.code` から組み立てる。** `event.key` は配列と修飾キーで変わるので、押された物理キーのほうを見る
+- **`app_state` に入る割り当ての表記は変えない**（`ctrl-shift-n` の形）。押されたキーからこの形にするのは画面（`web/src/shell/shortcut.ts`）、この形を Tauri の表記（`"Control+Shift+N"`）に直すのは殻（`crates/app/src/shortcut.rs`）。保存の形を変えれば移行が要り、読めなかった割り当ては黙って消えるので、変換のほうを持つ。**両側のキー名の表は同じ語彙にする**——食い違うと、保存した割り当てを登録し直せない
+- **割り当ての捕捉も、文字列にするのも webview**（`web/src/shell/shortcut.ts`）。`keydown` を `event.code` から読み、`ctrl-shift-n` の形にして殻へ渡す。`event.key` は配列と修飾キーで変わるので、押された物理キーのほうを見る。**殻がするのは OS への登録だけ**で、そこは受け取った文字列を読み直す（[ADR 0039](adr/0039-the-board-model-moves-to-typescript.md)）
 - **割り当てを捕まえている間は、自前のメニュー項目がキーを取らない状態にする。** OS はメニューの割り当てを webview より先に当てるので、付いたままでは `Cmd+N` のような組み合わせの `keydown` がダイアログに届かない。アクセラレータを外すのと項目を無効にするのを**両方**行う——muda は macOS でアクセラレータを外せない。付け直す形は控えを持たず `menu::sections()` から作り直す（[ADR 0030](adr/0030-capturing-a-shortcut-needs-the-menu-out-of-the-way.md)）
 - **押されているキーを、押している間そのまま画面に出す。** 修飾キーだけの途中も出す。割り当てたあともダイアログを閉じず、登録された組み合わせをその場に残す。キーが届いていない・届いて断られた・届いて登録できたの 3 つが、画面で区別できることが条件（[ADR 0030](adr/0030-capturing-a-shortcut-needs-the-menu-out-of-the-way.md)）
 - **保存されているのに登録できていない割り当ては、理由まで持って画面に出す。** 起動のときの登録の失敗を捨てずに残し、割り当てのダイアログが読む。新しい割り当ての登録に失敗したら、外した前の割り当てを登録し直す——設定は変更前のまま残るので、戻さなければ次の起動まで効かない割り当てができる（[ADR 0030](adr/0030-capturing-a-shortcut-needs-the-menu-out-of-the-way.md)）
@@ -198,11 +197,13 @@ README が「いちばん大事にしています」と書いているところ�
 
 ### テスト
 
-層の分け方（中核 / コマンド / 画面 / 部品）と書き方は [開発の手引きの「テスト」](DEVELOPMENT.md#テスト) にある（[ADR 0021](adr/0021-two-layer-testing-for-the-webview.md)）。ここに置くのは、その形を保つための決まりごと。
+層の分け方（置き場所 / コマンド / 盤面のモデル / 画面）と書き方は [開発の手引きの「テスト」](DEVELOPMENT.md#テスト) にある（[ADR 0041](adr/0041-one-layer-of-screen-tests.md)）。ここに置くのは、その形を保つための決まりごと。
 
-- **偽物のバックエンドを TypeScript で書かない。** `ekanban-harness` が `crates/app` のコマンドを同じ名前で HTTP に出し、答えるのは本物の `ekanban-core`。モデルの挙動がテストの中でだけ違う、が起きない。**ブラウザで配る版（`crates/web`）も同じ**で、そちらは同じコマンドを wasm に組み直して動かす（[ADR 0035](adr/0035-a-browser-build-of-the-real-core.md)）
+- **画面のテストは 1 層で、`npm` だけで回る。** 盤面のモデルは画面と同じ TypeScript にあり（[ADR 0039](adr/0039-the-board-model-moves-to-typescript.md)）、置き場所もブラウザの中（`web/src/store/`）なので、間に立てるプロセスがない。**Playwright が動かすのは本物のコードそのもの**で、偽物を書く余地がない（[ADR 0041](adr/0041-one-layer-of-screen-tests.md)）
+- **殻そのものは手で確かめる。** OS のメニューバー、保存ダイアログ、グローバルホットキー、窓の矩形。ブラウザで動く Playwright にはどれも出てこない（[ADR 0041](adr/0041-one-layer-of-screen-tests.md)）
+- **書き出す JSON の形は、置き場所をまたいで 1 つに固定する。** 同じ fixture（`web/src/store/export.fixture.json`）を Rust と TypeScript の両方のテストが読む。どちらかがずれた日に両方が落ちる
 - **画面の振る舞いは、本物の画面を開いて確かめる。** 純粋関数に切り出して単体で確かめるだけでは、配線（ハンドラの付け忘れ、入力欄にフォーカスがある間の抑止）が抜けても気づけない。切り出し自体は続けるが、それはテストの代わりにはならない
-- **画面のテストは、画面と SQLite の両方を見る。** `web/e2e/harness.ts` の `storedBoard()` で盤面を読み直す。画面に出ているだけでは、保存の配線が抜けていても気づけない
+- **画面のテストは、画面と置き場所の両方を見る。** `web/e2e/harness.ts` の `storedBoard(page)` で盤面を読み直す。画面に出ているだけでは、保存の配線が抜けていても気づけない
 - **待ち合わせは要素の出現で書き、実時間の `sleep` を入れない。** 入れると、保存の完了を待たないテストが偶然通るようになる
 - **webview の実装ごとの差は、Playwright では担保できない。** Playwright が繋がるのは Chromium / Firefox / WebKit であって、WKWebView・WebView2・WebKitGTK ではない。E2E は Chromium と WebKit の 2 つで回し、実物での確認はリリース前に手で行う（[ADR 0023](adr/0023-verifying-the-webview-engines.md)）
 - **`unsafe_code = "forbid"` は Rust 側に残る。** TypeScript 側は `tsc --strict` と ESLint の型付き規則で代える。ファイルを通すために規則を切らない
@@ -215,9 +216,9 @@ README が「いちばん大事にしています」と書いているところ�
 - **大文字と小文字だけが違うファイル名を作らない。** macOS と Windows のファイルシステムは大文字小文字を区別しないので、`Foo.tsx` と `foo.ts` が同じ名前に潰れ、Linux では通ったビルドがそこだけ落ちる
 - **配るものは Tauri のバンドラが作る。** macOS は `.app`（`.zip`）と `.dmg`、Linux は `.deb` と `.AppImage` に加えて `.tar.gz`（root を要求しない導線）、Windows は `.zip` と NSIS のインストーラ。ad-hoc 署名の指定は `tauri.conf.json` にあり、手元で組んだものと CI が組んだものが同じ署名になる（[ADR 0014](adr/0014-unsigned-apple-silicon-only-macos-builds.md)）
 - **`cargo run` はアプリを起動する。** ワークスペースの `default-members` を `crates/app` にしてある。**代わりに `--workspace` を省いた `cargo` のコマンドはそこだけを見る**ので、Makefile と CI は必ず `--workspace` を付ける
-- **ブラウザに SQLite を積まない。** `wasm32-unknown-unknown` に組んだ SQLite だけで 2.1 MB あり、こちらのコード全部より 5 倍大きい。ブラウザ版の置き場所は JSON で、盤面は文字列 1 つとして `localStorage` に入る（[ADR 0036](adr/0036-one-model-two-places-to-put-it.md)）
-- **ブラウザ版に、盤面の判断を書かない。** `crates/web` に入るのは環境の差だけ（保存先、ファイルの持ち出し方、URL の開き方）。メニューの構成も Rust が返し（`menu::web_sections`）、ページはそれを描く。ブラウザにできないことは**消さずに灰色にして、理由を文言に入れる**（[ADR 0035](adr/0035-a-browser-build-of-the-real-core.md)）
-- **ブラウザ版だけが、どの OS かをページから受け取る。** `wasm32-unknown-unknown` はどの OS でもないので、コンパイル時に決められない。配るアプリの経路は変えない（[ADR 0009](adr/0009-per-platform-key-bindings.md)）
+- **ブラウザ版は、アプリと同じ TypeScript がそのまま動く。** 差し替わるのは置き場所（`web/src/store/`、`localStorage`）と環境の口（`web/src/ipc/browser.ts`）だけ。**盤面のコードは 1 文字も違わない**（[ADR 0042](adr/0042-the-browser-build-is-the-same-typescript.md)）
+- **ブラウザ版に、盤面の判断を書かない。** 入るのは環境の差だけ（保存先、ファイルの持ち出し方、URL の開き方）。メニューの構成は配るアプリと同じ `web/src/shell/menu.ts` で、ページはそれを描く。ブラウザにできないことは**消さずに灰色にして、理由を文言に入れる**
+- **ブラウザ版だけが、どの OS かをページ自身で見る。** 配るアプリでは Rust がコンパイル時に知っていて `StartupState.platform` で渡す。ブラウザには訊く相手がそこしかない（[ADR 0009](adr/0009-per-platform-key-bindings.md)）
 - **Node の依存を増やさない。** `cargo` だけで完結していたところに増やしたものなので、版はロックファイルで固定し、入れるのは `npm ci` だけにする
 
 ### 根拠の書き方

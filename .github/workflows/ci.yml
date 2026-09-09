@@ -64,20 +64,15 @@ jobs:
           npm --prefix web run test
 
       # 画面の振る舞いを、2 つのエンジンで確かめます。ここで動くのは本物の
-      # webview ではありませんが（ADR 0021）、エンジンの系統は 2 つしか
+      # webview ではありませんが（ADR 0023）、エンジンの系統は 2 つしか
       # ないので、系統ごとの差はここで出ます——Chromium は WebView2 と、
       # WebKit は WKWebView / WebKitGTK と同じ系統です。
-      # 通っているバックエンドは `ekanban-harness` 越しの本物の core です。
+      # 動いているのは本物の盤面のモデルそのものです（ADR 0041）。
       - name: Install browser engines
         run: npm --prefix web exec -- playwright install --with-deps chromium webkit
 
-      # テストが盤面ごとにハーネスを上げ下げするので、先に組んでおきます
-      # （テストの中で `cargo run` を待つと、1 本目だけ長くかかります）。
       - name: Run the webview end-to-end tests
-        run: |
-          cargo build -p ekanban-harness --example manual_screenshot_seed
-          cargo build -p ekanban-harness
-          npm --prefix web run e2e
+        run: npm --prefix web run e2e
 
       - name: Check formatting
         run: cargo fmt --all -- --check

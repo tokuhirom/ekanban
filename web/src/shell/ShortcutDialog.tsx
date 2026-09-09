@@ -24,7 +24,8 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { useIpc, type Ipc } from "../ipc";
 import { describeFailure } from "../ipc/error";
-import type { KeyPress } from "../ipc/types/KeyPress";
+import type { KeyPress } from "./shortcut";
+import { readKeyPress } from "./shortcut";
 import type { Platform } from "../ipc/types/Platform";
 import { isComposing } from "./ime";
 import {
@@ -115,9 +116,24 @@ export function ShortcutDialog({
     };
   }, []);
 
+  /// 押されたキーを割り当てにする。`null` で解除。
+  ///
+  /// **文字列にするのはここ**です（`shell/shortcut.ts`、ADR 0039）。受け付け
+  /// られない組み合わせはここで断り、理由をその場に出します——打ち直せば直る
+  /// ものなので、ダイアログを閉じません（ADR 0016）。登録できるかどうかは
+  /// 別の話で、そちらは殻が答えます。
   async function apply(press: KeyPress | null) {
+    let shortcut: string | null = null;
+    if (press !== null) {
+      const read = readKeyPress(press);
+      if (!read.ok) {
+        setRejected(read.reason);
+        return;
+      }
+      shortcut = read.shortcut;
+    }
     try {
-      const stored = await ipc.setQuickCaptureShortcut(press);
+      const stored = await ipc.setQuickCaptureShortcut(shortcut);
       onChanged(stored);
       setAssigned(stored);
       setRejected(null);

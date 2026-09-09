@@ -5,12 +5,12 @@
 // core を HTTP へ出すもの、`docs/DESIGN.md`「テスト」）を挟めなくなり、
 // 画面の振る舞いを Playwright から確かめる道が閉じます。
 
+import type { Section } from "../shell/menu";
 import type { AppAction } from "./types/AppAction";
 import type { BoardDocument } from "./types/BoardDocument";
 import type { CardEvent } from "./types/CardEvent";
 import type { SavedBoard } from "./types/SavedBoard";
 import type { CaptureTarget } from "./types/CaptureTarget";
-import type { KeyPress } from "./types/KeyPress";
 import type { FilterState } from "./types/FilterState";
 import type { QuickCaptureStatus } from "./types/QuickCaptureStatus";
 import type { StartupState } from "./types/StartupState";
@@ -42,6 +42,11 @@ export interface Ipc {
   setThemePreference(theme: ThemePreference): Promise<void>;
   /** 文言は画面が組む（`state/board.ts`）。ここは窓に渡すだけ。 */
   setWindowTitle(title: string): Promise<void>;
+  /** メニューバーを掛ける。**構成を決めるのは画面**（`shell/menu.ts`、ADR 0043）。
+   *
+   * 起動の最初に 1 回呼びます。ブラウザだけで動く組み立てには掛ける相手が
+   * いないので、そちらでは何も起きません——メニューはページが描きます。 */
+  setMenu(sections: Section[]): Promise<void>;
   /** メニューが押されたことを受ける（`docs/DESIGN.md`「メニューとキー割り当て」）。返るのは購読をやめる関数。 */
   onAppAction(handler: (action: AppAction) => void): () => void;
   /** OS の保存ダイアログ。閉じられたら `null`——**そのときは何も言わない**
@@ -96,8 +101,12 @@ export interface Ipc {
    * アクセラレータが webview より先に押されたキーを取ってしまいます。
    */
   setMenuAcceleratorsActive(active: boolean): Promise<void>;
-  /** 押されたキーを割り当てにする。`null` で解除。保存された形が返る。 */
-  setQuickCaptureShortcut(press: KeyPress | null): Promise<string | null>;
+  /** 割り当てを差し替える。`null` で解除。保存された形が返る。
+   *
+   * 受けるのは `ctrl-shift-n` の形の文字列で、**組み立てるのは画面**です
+   * （`shell/shortcut.ts`、ADR 0039）。ここから先は OS への登録で、
+   * 登録できなければ保存しません（`docs/DESIGN.md`「クイックキャプチャ」）。 */
+  setQuickCaptureShortcut(shortcut: string | null): Promise<string | null>;
   /** キャプチャの窓を閉じる。`focusBoard` でボードを前に出す（ADR 0012）。 */
   closeCaptureWindow(focusBoard: boolean): Promise<void>;
   /** ほかの窓が盤面を書いたときに届く（`docs/DESIGN.md`「コマンドとイベント」）。

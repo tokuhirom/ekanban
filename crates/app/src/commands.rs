@@ -7,23 +7,16 @@
 //! 1 本の口から届きます。
 //!
 //! ここに `tauri` は出てきません。`#[tauri::command]` の包みは `ipc.rs` にあり、
-//! 開発用のハーネスは同じ関数を HTTP に出します。**偽物のバックエンドを
-//! TypeScript で書かない**ための土台なので、この層が Tauri を知らないことは
-//! 都合ではなく設計です。
+//! こちらは窓を開けずに丸ごと試せます（`crates/app/tests/commands.rs`）。この層が
+//! Tauri を知らないことは、都合ではなく設計です。
 
-// ファイルの読み書きは殻の側だけ（書き出し、控え、場所を開く、[ADR 0036]）。
-#[cfg(feature = "shell")]
 use std::path::{Path, PathBuf};
 
-// `shell` の外では使いません（日次バックアップだけが今日を要る）。素の
-// `use` にすると、ブラウザ向けの組み立てで未使用の警告が出ます。
-#[cfg(feature = "shell")]
 use chrono::Local;
 use ekanban_core::diagnostics;
 use ekanban_core::model::{Board, BoardId, CardEvent, ColumnId, TagId};
 use ekanban_core::store::{FilterState, Store, StoreError, StoredDocument, WindowBoundsState};
 
-#[cfg(feature = "shell")]
 use ekanban_core::backup;
 
 use crate::error::{AppError, ErrorKind};
@@ -228,7 +221,7 @@ pub fn save_document(
 fn store(
     state: &AppState,
     title: &'static str,
-    write: impl FnOnce(&mut Store<'_>) -> Result<(), StoreError>,
+    write: impl FnOnce(&mut Store) -> Result<(), StoreError>,
 ) -> Result<(), AppError> {
     let mut store = state
         .store()
@@ -270,10 +263,7 @@ pub fn set_window_bounds(state: &AppState, bounds: WindowBoundsState) -> Result<
 
 // ---------------------------------------------------------------- ファイル
 
-/// 選ばれたパスに拡張子を補う。**書き出す先があるのは殻の側だけ**（[ADR 0036]）。
-///
-/// [ADR 0036]: ../../../docs/adr/0036-one-model-two-places-to-put-it.md
-#[cfg(feature = "shell")]
+/// 選ばれたパスに拡張子を補う。
 ///
 /// 保存ダイアログで名前を打ち替えると、拡張子ごと消えることがあります。
 /// 拡張子の無いファイルを書くと、次に開くときに何のファイルか分かりません。
@@ -289,14 +279,14 @@ fn with_extension(destination: &Path, extension: &str) -> PathBuf {
 
 /// 開いているボードを JSON にする。**まだ書きません。**
 ///
-/// 書く先が無い環境があるので分けてあります（ブラウザ、[ADR 0035]）。そこでは
+/// 書く先が無い環境があるので分けてあります（ブラウザ、[ADR 0042]）。そこでは
 /// この文字列がそのままページへ渡り、ダウンロードになります。
 ///
 /// **組み立てるのがここなのは、置いてある形の写しだから**です（[ADR 0045]）。
 /// カードの履歴（`card_events`）まで入り、それは置き場所にしかありません。
 /// 人が読む Markdown のほうは webview が組み立てます。
 ///
-/// [ADR 0035]: ../../../docs/adr/0035-a-browser-build-of-the-real-core.md
+/// [ADR 0042]: ../../../docs/adr/0042-the-browser-build-is-the-same-typescript.md
 /// [ADR 0045]: ../../../docs/adr/0045-two-kinds-of-export.md
 pub fn export_board_json_contents(state: &AppState, board_id: BoardId) -> Result<String, AppError> {
     let fail =
@@ -308,12 +298,9 @@ pub fn export_board_json_contents(state: &AppState, board_id: BoardId) -> Result
 
 /// 開いているボードを JSON のファイルに書き出す。書けたパスを返す。
 ///
-/// **書く先があるのは殻の側だけ**です。ブラウザには書き込めるファイルシステム
-/// が無いので、そちらは `export_board_json_contents` の文字列をダウンロードに
-/// します（[ADR 0035]）。
-///
-/// [ADR 0035]: ../../../docs/adr/0035-a-browser-build-of-the-real-core.md
-#[cfg(feature = "shell")]
+/// **書く先があるのは配るアプリだけ**です。ブラウザには書き込めるファイル
+/// システムが無いので、そちらは置き場所ごと TypeScript にあります
+/// （`web/src/store/export.ts`、[ADR 0042]）。
 pub fn export_board_json(
     state: &AppState,
     board_id: BoardId,
@@ -333,7 +320,6 @@ pub fn export_board_json(
 /// 伝えること」）、ここはその間の「書く」だけを引き受けます。
 ///
 /// [ADR 0045]: ../../../docs/adr/0045-two-kinds-of-export.md
-#[cfg(feature = "shell")]
 pub fn write_text_file(
     destination: &Path,
     extension: &str,
@@ -355,12 +341,9 @@ pub fn write_text_file(
 /// **いま使っているファイルそのものは断ります。** `backup_to` は上書きで開くので、
 /// 同じパスを渡すと控えを取ったつもりで元のファイルを触ることになります。
 ///
-/// **殻の側だけ**です。控えは SQLite のファイルを写すもので、置き場所の口
-/// （`store::Store`）には無い操作です（[ADR 0036]）。ブラウザ版では
-/// 「データベースをコピー…」を灰色にしてあります。
-///
-/// [ADR 0036]: ../../../docs/adr/0036-one-model-two-places-to-put-it.md
-#[cfg(feature = "shell")]
+/// 控えは SQLite のファイルを写すものです。**ブラウザ版に SQLite のファイルは
+/// ありません**ので、そちらでは「データベースをコピー…」を灰色にしてあります
+/// （[ADR 0042]）。
 pub fn backup_database(state: &AppState, destination: &Path) -> Result<PathBuf, AppError> {
     let destination = &with_extension(destination, "sqlite3");
     if destination == state.database_path() {
@@ -380,20 +363,16 @@ pub fn backup_database(state: &AppState, destination: &Path) -> Result<PathBuf, 
 }
 
 /// データベースそのものの場所。
-#[cfg(feature = "shell")]
 pub fn database_location(state: &AppState) -> PathBuf {
     state.database_path().to_path_buf()
 }
 
 /// 「場所を開く」で開く先。実際に開くのは呼ぶ側（`tauri-plugin-opener`、`docs/DESIGN.md`「アプリが伝えること」）。
-#[cfg(feature = "shell")]
 pub fn reveal_database(state: &AppState) -> PathBuf {
     state.database_path().to_path_buf()
 }
 
 /// 日ごとの控えが溜まるディレクトリ。
-#[cfg_attr(not(feature = "shell"), allow(dead_code))]
-#[cfg(feature = "shell")]
 ///
 /// まだ 1 つも取れていないうちに押されることがあります。開く先が無いだけなので
 /// `None` を返し、呼ぶ側は黙って何もしません（拒否は何も言わない、`docs/DESIGN.md`）。
@@ -427,7 +406,7 @@ pub fn openable_url(url: &str) -> Option<&str> {
 ///
 /// [ADR 0028]: ../../../docs/adr/0028-a-single-default-quick-capture-target.md
 /// [ADR 0039]: ../../../docs/adr/0039-the-board-model-moves-to-typescript.md
-fn capture_target_of(store: &mut Store<'_>) -> Option<CaptureTarget> {
+fn capture_target_of(store: &mut Store) -> Option<CaptureTarget> {
     store
         .load_capture_target()
         .unwrap_or(None)
@@ -493,7 +472,6 @@ pub fn log_frontend_error(message: &str) {
 ///
 /// 失敗しても起動は止めません（`docs/DESIGN.md`）。取るのは起動時で、終了時では
 /// ない——終了時に取ると、壊した状態のほうを保存することになります。
-#[cfg(feature = "shell")]
 pub fn run_daily_backup(database_path: &Path) {
     if let Err(error) = backup::run_daily(database_path, Local::now().date_naive()) {
         diagnostics::log(&format!(

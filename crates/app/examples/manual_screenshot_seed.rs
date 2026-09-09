@@ -6,15 +6,21 @@
 //!
 //! ```sh
 //! EKANBAN_DATABASE=/tmp/manual.sqlite3 \
-//!   cargo run -p ekanban-harness --example manual_screenshot_seed -- board-dark
+//!   cargo run -p ekanban-app --example manual_screenshot_seed -- board-dark
 //! ```
 //!
-//! 盤面は SQL ではなくアプリ自身の API で組み立てる。撮った画面が、アプリが本当に
-//! 復元できる状態であることを、作り方の側で保証するため。
+//! 盤面は SQL ではなく `Board` を組み立てて保存する。撮った画面が、アプリが本当に
+//! 復元できる状態であることを、作り方の側で保証するため——保存の経路（差分保存と
+//! `Board::validate`）は、アプリが通るものと同じである。
+//!
+//! **盤面の操作は呼ばない。** それは webview のモデルにあり（[ADR 0039]）、
+//! ここに残っているのは形を組み立てる土台のほうである。
+//!
+//! [ADR 0039]: ../../../../docs/adr/0039-the-board-model-moves-to-typescript.md
 
 use chrono::{Duration, Local, NaiveDate};
 use ekanban_core::db::{Database, FilterState};
-use ekanban_core::model::{Board, CardId, ColumnId, TagId};
+use ekanban_core::model::{Board, CardId, ChecklistItem, ColumnId, TagId};
 
 /// 撮れる画面の名前と、それが何を見せているか。
 const SCREENS: &[(&str, &str)] = &[
@@ -110,49 +116,48 @@ struct Tags {
 /// 期限切れ・今日・近い・それより先が 1 枚ずつ出るようにしてある。
 fn build_personal_board(board: &mut Board) -> Tags {
     let tags = Tags {
-        design: board.add_tag("設計", "#8b5cf6").expect("新しいタグ"),
-        research: board.add_tag("調査", "#22c55e").expect("新しいタグ"),
-        deadline: board.add_tag("締切あり", "#ef4444").expect("新しいタグ"),
+        design: board.push_tag("設計", "#8b5cf6"),
+        research: board.push_tag("調査", "#22c55e"),
+        deadline: board.push_tag("締切あり", "#ef4444"),
     };
 
     let todo = board.columns[0].id;
     let doing = board.columns[1].id;
     let done = board.columns[2].id;
-    let later = board.add_column("寝かせる").expect("新しいカラム");
-    // 初回のシード（`Board::first_run`）が作るのは空の 3 カラムだけなので、撮る
-    // 盤面のカードはここで全部足す。中身は下の `edit` で埋める。
-    let demo_todo = [
-        add(board, todo, "画面の描画をひととおり通す", ""),
-        add(board, todo, "ドラッグ＆ドロップを試す", ""),
-    ];
-    let demo_doing = add(board, doing, "SQLite のスキーマを決める", "");
-    let demo_done = add(board, done, "README を書く", "");
+    let later = board.push_column("寝かせる");
 
-    edit(
+    // 初回のシード（`Board::first_run`）が作るのは空の 3 カラムだけなので、撮る
+    // 盤面のカードはここで全部足す。
+    let doing_card = add(
         board,
-        demo_todo[0],
+        doing,
+        "SQLite のスキーマを決める",
+        "差分保存と UPSERT の形を先に決める。",
+        day(1),
+        vec![tags.design, tags.deadline],
+    );
+
+    // マニュアルの「期限の書き分け」の表と揃うよう、期限切れ・今日・近い・
+    // それより先が 1 枚ずつ出るようにしてある。
+    add(
+        board,
+        todo,
         "画面の描画をひととおり通す",
         "カラムとカードが並ぶところまで。",
         day(-2),
         vec![tags.design],
     );
-    edit(
+    add(
         board,
-        demo_todo[1],
+        todo,
         "ドラッグ＆ドロップを試す",
         "カラム間の移動と、カラム内の並べ替え。",
         day(3),
         vec![tags.research],
     );
-    let review = add(
+    add(
         board,
         todo,
-        "週次の振り返りを書く",
-        "今週やったことを 10 行でまとめる。",
-    );
-    edit(
-        board,
-        review,
         "週次の振り返りを書く",
         "今週やったことを 10 行でまとめる。",
         day(6),
@@ -163,70 +168,57 @@ fn build_personal_board(board: &mut Board) -> Tags {
         todo,
         "色のコントラストを確認する",
         "ライトとダークの両方で読めるか。",
+        None,
+        vec![],
     );
-
-    // 編集パネルの screenshot はこのカードを開いて撮る。期限・タグ・チェックリスト
-    // が全部埋まっている 1 枚が要るのは、パネルの項目をひととおり見せるため。
-    edit(
-        board,
-        demo_doing,
-        "SQLite のスキーマを決める",
-        "差分保存と UPSERT の形を先に決める。",
-        day(1),
-        vec![tags.design, tags.deadline],
-    );
-    for (text, checked) in [
-        ("テーブルの列を洗い出す", true),
-        ("移行の手順を決める", false),
-        ("round-trip のテストを書く", false),
-    ] {
-        let item = board
-            .add_checklist_item(demo_doing, text)
-            .expect("カードがある");
-        if checked {
-            board
-                .set_checklist_item_checked(demo_doing, item, true)
-                .expect("項目がある");
-        }
-    }
-
-    let keyboard = add(
+    add(
         board,
         doing,
-        "キーボード操作を詰める",
-        "矢印で選び、Ctrl+Alt+矢印で動かす。",
-    );
-    edit(
-        board,
-        keyboard,
         "キーボード操作を詰める",
         "矢印で選び、Ctrl+Alt+矢印で動かす。",
         day(0),
         vec![tags.design],
     );
-
-    edit(
+    add(
         board,
-        demo_done,
+        done,
         "README を書く",
         "何ができるアプリなのかを 1 段落で。",
         None,
         vec![],
     );
-    let url = add(
+    add(
         board,
         later,
-        "URL スキーマの案をためる",
-        "起動中の 1 つに渡す仕組みが要る。",
-    );
-    edit(
-        board,
-        url,
         "URL スキーマの案をためる",
         "起動中の 1 つに渡す仕組みが要る。",
         None,
         vec![tags.research],
     );
+
+    // 編集パネルの screenshot はこのカードを開いて撮る。期限・タグ・チェックリスト
+    // が全部埋まっている 1 枚が要るのは、パネルの項目をひととおり見せるため。
+    let items = [
+        ("テーブルの列を洗い出す", true),
+        ("移行の手順を決める", false),
+        ("round-trip のテストを書く", false),
+    ];
+    let first_item = board.next_checklist_item_id;
+    board.next_checklist_item_id += i64::try_from(items.len()).expect("項目の数は収まる");
+    let now = Local::now().timestamp_millis();
+    board.card_mut(doing_card).checklist_items = items
+        .into_iter()
+        .enumerate()
+        .map(|(at, (text, checked))| ChecklistItem {
+            id: first_item + i64::try_from(at).expect("項目の数は収まる"),
+            card_id: doing_card,
+            text: text.to_string(),
+            checked,
+            position: i64::try_from(at).expect("項目の数は収まる"),
+            created_at: now,
+            updated_at: now,
+        })
+        .collect();
 
     tags
 }
@@ -236,9 +228,16 @@ fn build_personal_board(board: &mut Board) -> Tags {
 /// 開いた画面は撮らない。ボード一覧に 2 つ目が並んでいるところだけを見せる。
 fn build_home_board(board: &mut Board) {
     let errands = board.columns[0].id;
-    board.add_column("済み").expect("新しいカラム");
-    add(board, errands, "洗剤を買う", "詰め替えの大きいほう。");
-    add(board, errands, "自転車の空気を入れる", "");
+    board.push_column("済み");
+    add(
+        board,
+        errands,
+        "洗剤を買う",
+        "詰め替えの大きいほう。",
+        None,
+        vec![],
+    );
+    add(board, errands, "自転車の空気を入れる", "", None, vec![]);
 }
 
 /// 撮る日から `offset` 日ずらした日付。
@@ -246,21 +245,18 @@ fn day(offset: i64) -> Option<NaiveDate> {
     Some(Local::now().date_naive() + Duration::days(offset))
 }
 
-fn add(board: &mut Board, column_id: ColumnId, title: &str, description: &str) -> CardId {
-    board
-        .add_card(column_id, title, description)
-        .expect("カラムがある")
-}
-
-fn edit(
+/// カードを 1 枚、カラムの末尾に足す。
+fn add(
     board: &mut Board,
-    card_id: CardId,
+    column_id: ColumnId,
     title: &str,
     description: &str,
     due_date: Option<NaiveDate>,
     tag_ids: Vec<TagId>,
-) {
-    board
-        .update_card_details(card_id, title, description, due_date, tag_ids)
-        .expect("カードがある");
+) -> CardId {
+    let card_id = board.push_card(column_id, title, description);
+    let card = board.card_mut(card_id);
+    card.due_date = due_date;
+    card.tag_ids = tag_ids;
+    card_id
 }

@@ -9,7 +9,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { openBoard, startHarness, stopHarness, storedBoard } from "./harness";
 
 // `window.ekanbanMenu` の宣言を読み込むためだけの取り込み（値は使わない）。
-import type {} from "../src/ipc/harness";
+import type {} from "../src/ipc/browser";
 import type { AppAction } from "../src/ipc/types/AppAction";
 
 test.beforeEach(startHarness);
@@ -62,7 +62,7 @@ test("完了扱いにすると、印が出て、カードが沈み、期限を�
   await expect(overdue).toHaveAttribute("data-done", "true");
   await expect(overdue).not.toHaveAttribute("data-dimmed", /.*/);
 
-  const after = await storedBoard();
+  const after = await storedBoard(page);
   expect(after.columns[0]?.done).toBe(true);
   await expect(page.locator(".due-jump[data-tone='danger']")).toHaveCount(0);
 });
@@ -78,7 +78,7 @@ test("完了扱いは何本でも立てられ、やめれば元に戻る", async
   await toggleDone(page, 0, "完了扱いにする");
 
   await expect(page.locator(".column-done")).toHaveCount(2);
-  const marked = await storedBoard();
+  const marked = await storedBoard(page);
   expect(marked.columns.filter((column) => column.done)).toHaveLength(2);
 
   await toggleDone(page, 0, "完了扱いをやめる");
@@ -88,7 +88,7 @@ test("完了扱いは何本でも立てられ、やめれば元に戻る", async
     "data-done",
     /.*/,
   );
-  const cleared = await storedBoard();
+  const cleared = await storedBoard(page);
   expect(cleared.columns[0]?.done).toBe(false);
   await expect(page.locator(".due-jump[data-tone='danger']")).toHaveCount(1);
 });
@@ -97,10 +97,10 @@ test("完了扱いにした 1 手は、Undo で戻る", async ({ page }) => {
   await openBoard(page);
 
   await toggleDone(page, 0, "完了扱いにする");
-  expect((await storedBoard()).columns[0]?.done).toBe(true);
+  expect((await storedBoard(page)).columns[0]?.done).toBe(true);
 
   await chooseMenu(page, "undo");
 
   await expect(page.locator(".column").first().locator(".column-done")).toHaveCount(0);
-  expect((await storedBoard()).columns[0]?.done).toBe(false);
+  expect((await storedBoard(page)).columns[0]?.done).toBe(false);
 });

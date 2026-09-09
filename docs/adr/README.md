@@ -100,7 +100,7 @@
 | [0018](0018-rust-owns-the-board-state.md) | 盤面の状態は Rust が持ち、webview は投影にする | 2026-09-06 | 置き換えられた（→ 0039） |
 | [0019](0019-typescript-react-vite-for-the-webview.md) | 画面は TypeScript + React + Vite で作る | 2026-09-06 | 有効 |
 | [0020](0020-pointer-based-drag-and-drop.md) | D&D はポインタイベントで作り、HTML5 の drag events は使わない | 2026-09-06 | 有効 |
-| [0021](0021-two-layer-testing-for-the-webview.md) | 画面のテストは、ハーネス経由の Playwright と、殻の煙テストに分ける | 2026-09-06 | 有効 |
+| [0021](0021-two-layer-testing-for-the-webview.md) | 画面のテストは、ハーネス経由の Playwright と、殻の煙テストに分ける | 2026-09-06 | 置き換えられた（→ 0041） |
 | [0022](0022-dnd-kit-core-for-drag-and-drop.md) | D&D は `@dnd-kit/core` 6 系に載せる | 2026-09-06 | 有効（条件 8 の確かめ方は 0023 が置き換えた） |
 | [0023](0023-verifying-the-webview-engines.md) | webview の差は、エンジンの系統で確かめる | 2026-09-06 | 有効 |
 | [0024](0024-no-portal-requirement-on-linux.md) | Linux で xdg-desktop-portal を必須にしない | 2026-09-06 | 有効 |
@@ -114,14 +114,14 @@
 | [0032](0032-committing-a-card-field-by-field.md) | 編集パネルは欄ごとに確定する | 2026-09-07 | 有効 |
 | [0033](0033-a-markdown-editor-for-the-description.md) | 説明は Markdown のエディタで書く | 2026-09-07 | 有効 |
 | [0034](0034-dropping-the-wip-limit.md) | WIP 上限をやめる | 2026-09-07 | 有効 |
-| [0035](0035-a-browser-build-of-the-real-core.md) | ブラウザで試せる版は、中核を wasm に組み直して作る | 2026-09-07 | 有効 |
-| [0036](0036-one-model-two-places-to-put-it.md) | モデルは 1 つ、置き場所は 2 つ | 2026-09-07 | 有効 |
+| [0035](0035-a-browser-build-of-the-real-core.md) | ブラウザで試せる版は、中核を wasm に組み直して作る | 2026-09-07 | 置き換えられた（→ 0042） |
+| [0036](0036-one-model-two-places-to-put-it.md) | モデルは 1 つ、置き場所は 2 つ | 2026-09-07 | 置き換えられた（→ 0042） |
 | [0037](0037-a-list-that-ends-where-you-stop-typing.md) | 箇条書きは打ち止めたところで終わる | 2026-09-07 | 有効 |
 | [0038](0038-a-column-that-means-done.md) | 「終わったもの」の置き場であることを、カラムの属性にする | 2026-09-08 | 有効 |
 | [0039](0039-the-board-model-moves-to-typescript.md) | 盤面のモデルを TypeScript に移し、Rust は殻と置き場所に絞る | 2026-09-08 | 有効 |
 | [0040](0040-the-shape-and-the-store-stay-in-rust.md) | 盤面の形と置き場所は Rust に残す | 2026-09-08 | 有効 |
-| [0041](0041-one-layer-of-screen-tests.md) | 画面のテストを 1 層にし、ハーネスを畳む | 2026-09-08 | 草案（未確定。通れば 0021 を置き換える） |
-| [0042](0042-the-browser-build-is-the-same-typescript.md) | ブラウザ版を、アプリと同じ TypeScript で作る | 2026-09-08 | 草案（未確定。通れば 0035 と 0036 を置き換える） |
-| [0043](0043-the-menu-is-described-by-the-webview.md) | メニューの構成を webview が持ち、Rust は組み立てだけを引き受ける | 2026-09-08 | 草案（未確定） |
+| [0041](0041-one-layer-of-screen-tests.md) | 画面のテストを 1 層にし、ハーネスを畳む | 2026-09-08 | 有効 |
+| [0042](0042-the-browser-build-is-the-same-typescript.md) | ブラウザ版を、アプリと同じ TypeScript で作る | 2026-09-08 | 有効 |
+| [0043](0043-the-menu-is-described-by-the-webview.md) | メニューの構成を webview が持ち、Rust は組み立てだけを引き受ける | 2026-09-08 | 有効 |
 | [0044](0044-tags-get-their-colour-automatically.md) | タグの色を自動で割り振り、既定色をやめる | 2026-09-08 | 有効 |
 | [0045](0045-two-kinds-of-export.md) | 書き出しは 2 つに分ける——Markdown は画面、JSON は置き場所 | 2026-09-08 | 有効 |

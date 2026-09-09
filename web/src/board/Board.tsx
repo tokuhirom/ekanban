@@ -733,18 +733,25 @@ export function Board() {
         />
       )}
       {about && (
-        // 版とデータベースの場所を出します（#147）。**どちらも Rust から
-        // 起動のときに受け取った値**で、`package.json` の版は見ません。
-        // 「場所を開く」は既にある `reveal_database` を呼ぶだけです。
+        // 版と盤面の置き場所を出します（#147）。**どちらも起動のときに
+        // 受け取った値**で、`package.json` の版は見ません。
+        //
+        // 「場所を開く」は開く相手がいるときだけ出します（`canRevealPaths`）。
+        // ブラウザだけで動く組み立てには OS のファイル管理がいないので、
+        // **押しても何も起きないボタンを出しません**（ADR 0035）。
         <AlertDialog
           title={`ekanban v${state.about.version}`}
-          detail={`ひとり用の Kanban ボード。データはこの SQLite ファイルにあります:\n${state.about.databasePath}\n\nライセンス: MIT · https://github.com/tokuhirom/ekanban`}
-          action={{
-            label: "場所を開く",
-            act: () => {
-              void ipc.revealDatabase();
-            },
-          }}
+          detail={`ひとり用の Kanban ボード。データはここにあります:\n${state.about.databasePath}\n\nライセンス: MIT · https://github.com/tokuhirom/ekanban`}
+          action={
+            ipc.canRevealPaths
+              ? {
+                  label: "場所を開く",
+                  act: () => {
+                    void ipc.revealDatabase();
+                  },
+                }
+              : undefined
+          }
           onDismiss={() => {
             setAbout(false);
           }}

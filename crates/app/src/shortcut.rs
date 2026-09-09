@@ -14,18 +14,13 @@
 // 保存の形と `KeyboardEvent.code` の間の変換は、殻を外しても要ります
 // （`KeyPress` は webview から届く形です）。**登録できる形（[`Shortcut`]）だけが
 // 殻の側**——グローバルホットキーはブラウザに無いので、`shell` を外すと
-// まるごと消えます（[ADR 0035]）。
+// まるごと消えます（[ADR 0042]）。
 //
-// [ADR 0035]: ../../../docs/adr/0035-a-browser-build-of-the-real-core.md
-#[cfg(feature = "shell")]
+// [ADR 0042]: ../../../docs/adr/0042-the-browser-build-is-the-same-typescript.md
 use std::fmt;
-#[cfg(feature = "shell")]
 use std::str::FromStr;
 
-use serde::{Deserialize, Serialize};
-#[cfg(feature = "shell")]
 use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut as GlobalShortcut};
-use ts_rs::TS;
 
 /// 割り当てを受け付けられない理由。
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -38,22 +33,6 @@ pub enum ShortcutError {
     UnsupportedKey(String),
 }
 
-/// 画面が押されたキーを渡す形。`KeyboardEvent` の modifiers と `code`。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct KeyPress {
-    pub ctrl: bool,
-    pub alt: bool,
-    pub shift: bool,
-    /// macOS の Cmd、ほかの OS の Super。`KeyboardEvent.metaKey`。
-    pub meta: bool,
-    /// `KeyboardEvent.code`。**`key` ではありません**——`key` は修飾キーと配列で
-    /// 変わるので、同じ物理キーが別の名前で届きます。
-    pub code: String,
-}
-
-#[cfg(feature = "shell")]
 /// クイックキャプチャに割り当てられたキーの組み合わせ。
 ///
 /// 作れた時点で、グローバルホットキーとして登録できる形だと分かっています。
@@ -68,27 +47,7 @@ pub struct Shortcut {
     code: Code,
 }
 
-#[cfg(feature = "shell")]
 impl Shortcut {
-    /// 画面から届いた押しかたから作る。受け付けられない組み合わせは断る。
-    pub fn from_key_press(press: &KeyPress) -> Result<Self, ShortcutError> {
-        // 修飾キーなしの割り当ては、ほかのアプリでそのキーを奪う。
-        if !(press.ctrl || press.alt || press.shift || press.meta) {
-            return Err(ShortcutError::NoModifier);
-        }
-        let key = key_name(&press.code)
-            .ok_or_else(|| ShortcutError::UnsupportedKey(press.code.clone()))?;
-        let code = key_code(&key).ok_or_else(|| ShortcutError::UnsupportedKey(key.clone()))?;
-        Ok(Self {
-            ctrl: press.ctrl,
-            alt: press.alt,
-            shift: press.shift,
-            meta: press.meta,
-            key,
-            code,
-        })
-    }
-
     /// 保存してある文字列から復元する。
     pub fn parse(source: &str) -> Result<Self, ShortcutError> {
         let mut ctrl = false;
@@ -148,7 +107,6 @@ impl Shortcut {
     }
 }
 
-#[cfg(feature = "shell")]
 impl fmt::Display for Shortcut {
     /// 保存と表示に使う正規形。修飾キーの順序を固定するので、`cmd-shift-n` と
     /// `shift-cmd-n` は同じ文字列になる。
@@ -169,58 +127,14 @@ impl fmt::Display for Shortcut {
     }
 }
 
-#[cfg(feature = "shell")]
-/// `KeyboardEvent.code` を、保存する側のキー名に直す。
+/// 保存する側のキー名を W3C の `code` に直す。
 ///
-/// 対応しないものは `None` を返し、呼ぶ側が断ります。**取りこぼしを黙って別の
-/// キーに丸めません**——別のキーが登録されると、押しても開かない割り当てが
-/// 残ります。
-fn key_name(code: &str) -> Option<String> {
-    let name = match code {
-        "Space" => "space",
-        "Enter" => "enter",
-        "Tab" => "tab",
-        "Escape" => "escape",
-        "Backspace" => "backspace",
-        "Delete" => "delete",
-        "Insert" => "insert",
-        "Home" => "home",
-        "End" => "end",
-        "PageUp" => "pageup",
-        "PageDown" => "pagedown",
-        "ArrowUp" => "up",
-        "ArrowDown" => "down",
-        "ArrowLeft" => "left",
-        "ArrowRight" => "right",
-        _ => {
-            if let Some(letter) = code.strip_prefix("Key") {
-                return single_ascii(letter).map(|c| c.to_ascii_lowercase().to_string());
-            }
-            if let Some(digit) = code.strip_prefix("Digit") {
-                return single_ascii(digit).map(|c| c.to_string());
-            }
-            if let Some(number) = code.strip_prefix('F') {
-                return (!number.is_empty() && number.chars().all(|c| c.is_ascii_digit()))
-                    .then(|| format!("f{number}"));
-            }
-            return None;
-        }
-    };
-    Some(name.to_string())
-}
-
-#[cfg(feature = "shell")]
-fn single_ascii(value: &str) -> Option<char> {
-    let mut chars = value.chars();
-    match (chars.next(), chars.next()) {
-        (Some(c), None) if c.is_ascii_alphanumeric() => Some(c),
-        _ => None,
-    }
-}
-
-#[cfg(feature = "shell")]
-/// 保存する側のキー名を W3C の `code` に直す。[`key_name`] の逆向きで、
-/// 2 つの表が食い違うと保存した割り当てを登録し直せなくなる。
+/// **逆向きの表は画面側にあります**（`web/src/shell/shortcut.ts` の `keyName`）。
+/// 押されたキーを文字列にするのは画面の判断で（[ADR 0039]）、ここはその文字列を
+/// OS に登録できる形に戻すところです。**2 つが食い違うと、保存した割り当てを
+/// 登録し直せません。**
+///
+/// [ADR 0039]: ../../../docs/adr/0039-the-board-model-moves-to-typescript.md
 fn key_code(key: &str) -> Option<Code> {
     let name = match key {
         "space" => "Space".to_string(),
@@ -289,14 +203,7 @@ pub fn platform_support() -> Result<(), String> {
         )
     }
 
-    // ブラウザ。**アプリの外まで届くキーの割り当ては、ページには作れません。**
-    #[cfg(target_family = "wasm")]
-    {
-        Err("ブラウザでは使えません".to_string())
-    }
-
     #[cfg(not(any(
-        target_family = "wasm",
         target_os = "macos",
         target_os = "linux",
         target_os = "dragonfly",
@@ -314,9 +221,9 @@ pub fn platform_support() -> Result<(), String> {
 /// Wayland にはアプリから使えるグローバルホットキーの共通の仕組みが無い。
 /// XWayland 越しに登録しても、Wayland のクライアントが前面にいる間はイベントが
 /// 来ないので、使えるとは言えない。
-// macOS とブラウザでは `platform_support` が環境変数を見ないので、ここは
-// テストからしか呼ばれない。
-#[cfg_attr(any(target_os = "macos", target_family = "wasm"), allow(dead_code))]
+// macOS では `platform_support` が環境変数を見ないので、ここはテストからしか
+// 呼ばれない。
+#[cfg_attr(target_os = "macos", allow(dead_code))]
 fn x11_support(
     wayland_display: Option<&str>,
     session_type: Option<&str>,
@@ -336,22 +243,12 @@ fn x11_support(
     Ok(())
 }
 
-#[cfg(all(test, feature = "shell"))]
+#[cfg(test)]
 mod shortcut_tests {
     use super::*;
 
     fn shortcut(source: &str) -> Shortcut {
         Shortcut::parse(source).expect("the shortcut parses")
-    }
-
-    fn press(code: &str) -> KeyPress {
-        KeyPress {
-            ctrl: true,
-            alt: false,
-            shift: false,
-            meta: false,
-            code: code.to_string(),
-        }
     }
 
     /// 保存の形が変わっていないこと。**ここが変わると、既にあるデータベースの
@@ -377,19 +274,13 @@ mod shortcut_tests {
         assert_eq!(shortcut("shift-cmd-n").to_string(), "shift-cmd-n");
     }
 
+    /// 修飾キーの無い割り当ては、ほかのアプリでそのキーを奪う。
+    ///
+    /// **画面も同じことを断ります**（`web/src/shell/shortcut.ts`）。断るのは
+    /// そちらが先で、ここは保存されている文字列を読み直す側の砦です。
     #[test]
     fn rejects_a_shortcut_without_a_modifier() {
         assert_eq!(Shortcut::parse("n"), Err(ShortcutError::NoModifier));
-        assert_eq!(
-            Shortcut::from_key_press(&KeyPress {
-                ctrl: false,
-                alt: false,
-                shift: false,
-                meta: false,
-                code: "KeyN".to_string(),
-            }),
-            Err(ShortcutError::NoModifier)
-        );
     }
 
     #[test]
@@ -407,34 +298,21 @@ mod shortcut_tests {
     #[test]
     fn rejects_a_key_that_cannot_be_registered() {
         assert!(matches!(
-            Shortcut::from_key_press(&press("IntlBackslash")),
-            Err(ShortcutError::UnsupportedKey(_))
-        ));
-        assert!(matches!(
             Shortcut::parse("ctrl-§"),
             Err(ShortcutError::UnsupportedKey(_))
         ));
     }
 
-    /// 画面から届くのは `code`。修飾キーと配列で変わる `key` は見ない。
+    /// 画面が組み立てた文字列を、そのまま読めること。
+    ///
+    /// **押されたキーを文字列にするのは画面**です（`web/src/shell/shortcut.ts`
+    /// の `readKeyPress`）。ここが見るのは、その綴りを登録できる形に戻せること
+    /// ——2 つの表が食い違うと、保存した割り当てが効かなくなります。
     #[test]
-    fn reads_the_physical_key_the_browser_reports() {
-        assert_eq!(
-            Shortcut::from_key_press(&press("KeyN")).expect("KeyN is a key"),
-            shortcut("ctrl-n")
-        );
-        assert_eq!(
-            Shortcut::from_key_press(&press("Digit7")).expect("Digit7 is a key"),
-            shortcut("ctrl-7")
-        );
-        assert_eq!(
-            Shortcut::from_key_press(&press("F12")).expect("F12 is a key"),
-            shortcut("ctrl-f12")
-        );
-        assert_eq!(
-            Shortcut::from_key_press(&press("ArrowLeft")).expect("ArrowLeft is a key"),
-            shortcut("ctrl-left")
-        );
+    fn reads_every_key_the_screen_can_hand_over() {
+        for source in ["ctrl-n", "ctrl-7", "ctrl-f12", "ctrl-left", "ctrl-space"] {
+            assert_eq!(shortcut(source).to_string(), source);
+        }
     }
 
     /// 登録に渡す形が、修飾キーごとに変わること。

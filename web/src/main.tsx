@@ -3,16 +3,17 @@ import { createRoot } from "react-dom/client";
 
 import { Board } from "./board/Board";
 import { setIpc } from "./ipc";
-import { harnessIpc, harnessUrl } from "./ipc/harness";
+import { detectPlatform, localIpc, usesLocalStore } from "./ipc/local";
 import { tauriIpc } from "./ipc/tauri";
 import { hardenWebview } from "./shell/harden";
 import "./styles.css";
 
-// ふつうのブラウザで開いたときは、開発用ハーネス越しに Rust を呼びます
-// （`?harness=http://127.0.0.1:1421`、`docs/DESIGN.md`「テスト」）。
-// Tauri の中では `tauri.ts` です。
-const harness = harnessUrl();
-const ipc = harness === null ? tauriIpc : harnessIpc(harness);
+// ふつうのブラウザで開いたときは、置き場所を `localStorage` に差します
+// （`?store=local`、[ADR 0041]）。**盤面のコードは同じ**で、違うのは差した
+// 置き場所だけです。Tauri の中では `tauri.ts` から SQLite を相手にします。
+//
+// [ADR 0041]: ../../docs/adr/0041-one-layer-of-screen-tests.md
+const ipc = usesLocalStore() ? localIpc(detectPlatform()) : tauriIpc;
 setIpc(ipc);
 hardenWebview();
 

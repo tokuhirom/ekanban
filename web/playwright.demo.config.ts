@@ -27,6 +27,6 @@ export default defineConfig({
     stderr: "pipe",
   },
   // 1 つの系統だけにしてあります。エンジンごとの差は `e2e/` が 2 系統で見て
-  // いて、ここで確かめるのは組み立ての違い（wasm と localStorage）だからです。
+  // いて、ここで確かめるのは配る形になったときの違いだからです。
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
 });

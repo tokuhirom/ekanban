@@ -3,11 +3,11 @@
 /**
  * 割り当てのダイアログが開くときに読むもの。
  *
- * 型がここにあるのは、**殻を外した組み立てでも返す必要がある**ためです
- * （`crates/web`、[ADR 0035]）。中身を埋めるのは殻を持っている側
- * （`capture::status`）で、ブラウザでは「使えない理由」だけが入ります。
+ * 型がここにあるのは、**ブラウザ版も同じものを返す必要がある**ためです
+ * （[ADR 0042]）。中身を埋めるのは殻を持っている側（`capture::status`）で、
+ * ブラウザでは「使えない理由」だけが入ります。
  *
- * [ADR 0035]: ../../../docs/adr/0035-a-browser-build-of-the-real-core.md
+ * [ADR 0042]: ../../../docs/adr/0042-the-browser-build-is-the-same-typescript.md
  */
 export type QuickCaptureStatus = { 
 /**

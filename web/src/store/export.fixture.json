@@ -1,0 +1,128 @@
+{
+  "archived_cards": [
+    {
+      "archived_at": 1700000000002,
+      "checklist_items": [],
+      "column_id": 1,
+      "created_at": 1700000000000,
+      "description": "",
+      "due_date": null,
+      "id": 3,
+      "position": 0,
+      "tag_ids": [],
+      "title": "しまったカード",
+      "updated_at": 1700000000000
+    }
+  ],
+  "board": {
+    "created_at": 1700000000000,
+    "id": 1,
+    "name": "個人 Kanban",
+    "next_card_id": 4,
+    "next_checklist_item_id": 3,
+    "next_column_id": 3,
+    "next_tag_id": 2,
+    "updated_at": 1700000000001
+  },
+  "card_events": [
+    {
+      "at": 1700000000000,
+      "board_id": 1,
+      "card_id": 1,
+      "from_column_id": null,
+      "id": 1,
+      "kind": "created",
+      "to_column_id": 1
+    },
+    {
+      "at": 1700000000002,
+      "board_id": 1,
+      "card_id": 3,
+      "from_column_id": 1,
+      "id": 2,
+      "kind": "archived",
+      "to_column_id": null
+    }
+  ],
+  "columns": [
+    {
+      "board_id": 1,
+      "cards": [
+        {
+          "archived_at": null,
+          "checklist_items": [
+            {
+              "card_id": 1,
+              "checked": true,
+              "created_at": 1700000000000,
+              "id": 1,
+              "position": 0,
+              "text": "済んだ項目",
+              "updated_at": 1700000000000
+            },
+            {
+              "card_id": 1,
+              "checked": false,
+              "created_at": 1700000000000,
+              "id": 2,
+              "position": 1,
+              "text": "まだの項目",
+              "updated_at": 1700000000000
+            }
+          ],
+          "column_id": 1,
+          "created_at": 1700000000000,
+          "description": "説明\nの 2 行目",
+          "due_date": "2026-12-24",
+          "id": 1,
+          "position": 0,
+          "tag_ids": [
+            1
+          ],
+          "title": "期限つきのカード",
+          "updated_at": 1700000000000
+        }
+      ],
+      "created_at": 1700000000000,
+      "id": 1,
+      "name": "やること",
+      "position": 0,
+      "updated_at": 1700000000000
+    },
+    {
+      "board_id": 1,
+      "cards": [
+        {
+          "archived_at": null,
+          "checklist_items": [],
+          "column_id": 2,
+          "created_at": 1700000000000,
+          "description": "",
+          "due_date": null,
+          "id": 2,
+          "position": 0,
+          "tag_ids": [],
+          "title": "終わったカード",
+          "updated_at": 1700000000000
+        }
+      ],
+      "created_at": 1700000000000,
+      "id": 2,
+      "name": "完了",
+      "position": 1,
+      "updated_at": 1700000000000
+    }
+  ],
+  "format": "ekanban-board",
+  "tags": [
+    {
+      "board_id": 1,
+      "color": "#8b5cf6",
+      "created_at": 1700000000000,
+      "id": 1,
+      "name": "設計",
+      "updated_at": 1700000000000
+    }
+  ],
+  "version": 1
+}
