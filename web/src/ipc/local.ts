@@ -104,8 +104,17 @@ export function localIpc(platform: Platform): Ipc {
 /// Linux 扱い**——キーの割り当てが Ctrl 側になるだけで、押せなくなる項目は
 /// ありません。
 ///
+/// **`?platform=` が付いていれば、そちらが優先です。** 画面のテストがこれを
+/// 使います（[ADR 0041]）——Playwright の WebKit は Linux の上でも `Macintosh`
+/// を名乗るので、訊いた答えが当たりません。ハーネスが Rust に訊いていた頃と
+/// 同じことを、走らせている側が名乗る形でやります。
+///
 /// [ADR 0009]: ../../../docs/adr/0009-per-platform-key-bindings.md
+/// [ADR 0041]: ../../../docs/adr/0041-one-layer-of-screen-tests.md
 export function detectPlatform(): Platform {
+  const named = new URLSearchParams(location.search).get("platform");
+  if (named === "macos" || named === "windows" || named === "linux") return named;
+
   const data: unknown = (navigator as { userAgentData?: unknown }).userAgentData;
   const reported =
     typeof data === "object" && data !== null && "platform" in data

@@ -249,7 +249,11 @@ mod tests {
         ];
 
         let written = render_board_json(&board, &events).expect("the board renders");
-        let expected = include_str!("../../../web/src/store/export.fixture.json");
+        // 見たいのは中身であって行末ではない。`.gitattributes` が LF に固定して
+        // いるが、それが外れた checkout（Windows の既定は CRLF）で落ちると、
+        // 突き合わせの差分からは理由が読み取れないので、読んだ時点でそろえる。
+        let expected =
+            include_str!("../../../web/src/store/export.fixture.json").replace("\r\n", "\n");
         assert_eq!(written, expected.trim_end_matches('\n'));
     }
 }

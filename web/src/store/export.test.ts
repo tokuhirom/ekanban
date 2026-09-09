@@ -131,10 +131,12 @@ const events: StoredCardEvent[] = [
 
 describe("renderBoardJson", () => {
   it("は Rust が出したものと 1 バイト違わない", () => {
-    const expected = readFileSync(
-      new URL("./export.fixture.json", import.meta.url),
-      "utf8",
-    ).replace(/\n$/, "");
+    // 見たいのは中身であって行末ではない。`.gitattributes` が LF に固定して
+    // いるが、それが外れた checkout（Windows の既定は CRLF）で落ちると、
+    // 突き合わせの差分からは理由が読み取れないので、読んだ時点でそろえる。
+    const expected = readFileSync(new URL("./export.fixture.json", import.meta.url), "utf8")
+      .replace(/\r\n/g, "\n")
+      .replace(/\n$/, "");
 
     expect(renderBoardJson(document(), events)).toBe(expected);
   });

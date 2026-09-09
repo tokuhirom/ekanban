@@ -22,8 +22,18 @@ import { MemoryStore } from "../src/store/memory";
 import * as keys from "../src/store/keys";
 import { seededState } from "./fixture";
 
+/// 走らせている OS。**ページにこれを名乗らせます。**
+///
+/// ブラウザに訊かせません——Playwright の WebKit は Linux の上でも `Macintosh`
+/// を名乗り、`secondary` が Cmd か Ctrl かを取り違えて `Ctrl+Z` が丸ごと効かなく
+/// なります。Playwright の `ControlOrMeta` は**走らせている OS**で決まるので、
+/// ここもそれに合わせます。配るアプリで Rust がコンパイル時に知っているのと
+/// 同じ答えです（`docs/DESIGN.md`「メニューとキー割り当て」）。
+const PLATFORM =
+  process.platform === "darwin" ? "macos" : process.platform === "win32" ? "windows" : "linux";
+
 /// ページに付ける問い合わせ。置き場所を `localStorage` に差します。
-const QUERY = "?store=local";
+const QUERY = `?store=local&platform=${PLATFORM}`;
 
 /// テストが始まるときの置き場所。**テストごとに作り直します。**
 let stored = "";

@@ -6,3 +6,9 @@
 # なので、行末は改行の流儀ではなく中身の一部として扱う。
 *.desktop text eol=lf
 script/* text eol=lf
+
+# 書き出しの JSON を突き合わせるフィクスチャ。**行末が中身の一部**である。
+# Rust（`crates/core/src/export.rs`）と TypeScript（`web/src/store/export.test.ts`）が
+# 1 バイト違わないことを主張する相手なので、Windows の checkout で CRLF に
+# 変えられると、どちらの突き合わせも落ちる。
+web/src/store/export.fixture.json text eol=lf
