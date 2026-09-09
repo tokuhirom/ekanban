@@ -164,6 +164,7 @@ describe("dueCounts", () => {
           cards: active.filter((card) => card.done === true).map((card, i) => cardOf(i + 50, card.due, 2)),
         },
       ],
+      recurrences: [],
     };
   }
 
@@ -180,6 +181,8 @@ describe("dueCounts", () => {
       tagIds: [],
       checklistItems: [],
       archivedAt: columnId === 1 && id >= 100 ? 1 : null,
+      recurrenceId: null,
+      occurrenceDate: null,
     };
   }
 

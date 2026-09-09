@@ -11,7 +11,7 @@ import type { Board } from "./Board";
  * [ADR 0039]: ../../../docs/adr/0039-the-board-model-moves-to-typescript.md
  * [ADR 0040]: ../../../docs/adr/0040-the-shape-and-the-store-stay-in-rust.md
  */
-export type BoardDocument = { board: Board, nextCardId: number, nextColumnId: number, nextTagId: number, nextChecklistItemId: number, 
+export type BoardDocument = { board: Board, nextCardId: number, nextColumnId: number, nextTagId: number, nextChecklistItemId: number, nextRecurrenceId: number, 
 /**
  * 保存のたびに 1 つ進む。手元のものと合わなければ、置き場所が断ります。
  */

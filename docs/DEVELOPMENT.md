@@ -17,7 +17,7 @@ crates/
   core/           ekanban-core: 盤面のモデル、SQLite、控え、置き場所
     src/
       lib.rs          アプリ名・識別子・データベースの置き場所
-      model.rs        Board / Column / Card などの形。行として成り立つかの検め
+      model.rs        Board / Column / Card / Recurrence などの形。行として成り立つかの検め
       backup.rs       起動時の日ごと世代バックアップ（置き場所・命名・世代数）
       instance.rs     同じデータベースを 2 プロセスに開かせないロック
       paths.rs        OS ごとのデータベースとログの配置の解決
@@ -51,6 +51,7 @@ web/             画面。TypeScript + React + Vite（ADR 0019）
                   `types/` は ts-rs の生成物（手で書かない）
     store/        ブラウザで動くときの置き場所（ADR 0041）。SQLite の代わり
     model/        盤面のモデル（ADR 0039）。採番・並べ替え・Undo・タグ・期限・検索
+      recurrence.ts 繰り返しの判断（ADR 0049）。発生日・生成・片付け。時計を読まない
     state/        盤面の保持と、当てて保存する 1 本の経路（`run`）
     board/        サイドバー、ヘッダ、カラム、カード、D&D
       dnd.ts        どこに落ちるかの計算。**ライブラリの外に置く**（ADR 0022）
@@ -101,7 +102,7 @@ SQLite に 1 トランザクションで保存
 
 ## データモデル
 
-スキーマは v10 です。移行は起動時に自動で走ります（`crates/core/src/db/mod.rs` の `migrate`）。
+スキーマは v15 です。移行は起動時に自動で走ります（`crates/core/src/db/mod.rs` の `migrate`）。
 
 ```text
 schema_migrations
@@ -117,6 +118,8 @@ boards
   next_column_id
   next_tag_id
   next_checklist_item_id
+  next_recurrence_id
+  rev (保存の競合を見る版。ADR 0040)
 
 columns
   id
@@ -125,6 +128,7 @@ columns
   position
   created_at
   updated_at
+  done (終わったものの置き場か。ADR 0038)
 
 cards
   id
@@ -136,6 +140,8 @@ cards
   updated_at
   due_date (YYYY-MM-DD または NULL)
   archived_at (UNIX milliseconds または NULL)
+  recurrence_id (出した繰り返しの定義への参照。NULL 可。ADR 0049)
+  occurrence_date (受け持っている発生日。YYYY-MM-DD または NULL)
 
 tags
   id
@@ -158,6 +164,31 @@ checklist_items
   created_at
   updated_at
 
+recurrences
+  id
+  board_id
+  title
+  description
+  column_id (消えていることがある。外部キーは張らない)
+  schedule_kind (daily / weekday / weekly / monthly / monthlyLast)
+  schedule_days (weekly の曜日。月曜 0 の 0〜6 をカンマで並べる)
+  schedule_day (monthly の日。1〜31)
+  lead_days
+  previous (keep / archive / delete)
+  enabled
+  last_generated_on (生成の真実。最後に出した発生日。ADR 0049)
+  created_at
+  updated_at
+
+recurrence_tags
+  recurrence_id
+  tag_id
+
+recurrence_checklist_items
+  recurrence_id
+  position
+  text
+
 card_events
   id
   board_id
@@ -174,7 +205,9 @@ app_state
 
 カードとカラムの順番は `position` で持ち、移動や並べ替えの完了時に対象範囲を振り直します。ローカル専用アプリなので、同期用の ID や競合解決は導入しません。
 
-`app_state` に入るのは、ウィンドウの矩形、フィルターの状態、最後に開いたボード、テーマ設定、クイックキャプチャの割り当てと入れ先です。
+`app_state` に入るのは、ウィンドウの矩形、フィルターの状態、最後に開いたボード、テーマ設定、日付の切り替わり時刻、クイックキャプチャの割り当てと入れ先です。
+
+`recurrences` の 3 つの表には、**`recurrences.column_id` と `cards.recurrence_id` にだけ外部キーを張っていません。** 入れ先のカラムは消えることがあり（消えたら一番左に入ります）、繰り返しの定義を消しても盤面のカードは残るためです（[ADR 0049](adr/0049-recurring-cards-are-defined-apart-from-the-board.md)）。
 
 **スキーマを変えたときは、旧バージョンのデータベースを開くマイグレーションテストを足してください。**
 

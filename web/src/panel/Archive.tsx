@@ -14,6 +14,8 @@ import { archivedGroups } from "./archived";
 interface Props {
   board: Board;
   dueStatuses: ReadonlyMap<number, DueStatus>;
+  /** 繰り返しが出したカードで、定義がまだ残っているもの（#198）。 */
+  recurringCards: ReadonlySet<number>;
   /** `due_statuses` を出した日。カード表面の期限表示がここから年を決める。 */
   today: string;
   /** 絞り込みに一致したカード。`null` は「絞り込んでいない」。 */
@@ -24,6 +26,7 @@ interface Props {
 export function Archive({
   board,
   dueStatuses,
+  recurringCards,
   today,
   matched,
   onRestore,
@@ -56,6 +59,7 @@ export function Archive({
                   card={card}
                   tags={board.tags}
                   due={dueStatuses.get(card.id)}
+                  recurring={recurringCards.has(card.id)}
                   today={today}
                 />
               </div>

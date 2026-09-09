@@ -10,18 +10,21 @@ use std::path::Path;
 use chrono::{NaiveDate, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
 
-use crate::model::{Board, BoardId, BoardSummary, Card, ChecklistItem, Column, ColumnId, Tag};
+use crate::model::{
+    Board, BoardId, BoardSummary, Card, ChecklistItem, Column, ColumnId, NextIds, PreviousPolicy,
+    Recurrence, Schedule, Tag,
+};
 pub use crate::store::{FilterState, StoredDocument, WindowBoundsState};
 
 use crate::store::{
-    board_scoped_id, StoreError, StoredCardEvent, CAPTURE_BOARD_STATE_KEY,
-    CAPTURE_COLUMN_STATE_KEY, DAY_BOUNDARY_HOUR_STATE_KEY, DEFAULT_DAY_BOUNDARY_HOUR,
-    FILTER_SEARCH_STATE_KEY, FILTER_TAG_STATE_KEY, LAST_BOARD_STATE_KEY, NEXT_BOARD_STATE_KEY,
-    QUICK_CAPTURE_SHORTCUT_STATE_KEY, SIDEBAR_COLLAPSED_STATE_KEY, THEME_PREFERENCE_STATE_KEY,
-    WINDOW_BOUNDS_STATE_KEY,
+    board_scoped_id, StoreError, StoredCardEvent, BOARD_ID_NAMESPACE_SHIFT,
+    CAPTURE_BOARD_STATE_KEY, CAPTURE_COLUMN_STATE_KEY, DAY_BOUNDARY_HOUR_STATE_KEY,
+    DEFAULT_DAY_BOUNDARY_HOUR, FILTER_SEARCH_STATE_KEY, FILTER_TAG_STATE_KEY, LAST_BOARD_STATE_KEY,
+    NEXT_BOARD_STATE_KEY, QUICK_CAPTURE_SHORTCUT_STATE_KEY, SIDEBAR_COLLAPSED_STATE_KEY,
+    THEME_PREFERENCE_STATE_KEY, WINDOW_BOUNDS_STATE_KEY,
 };
 
-const CURRENT_SCHEMA_VERSION: i64 = 14;
+const CURRENT_SCHEMA_VERSION: i64 = 15;
 
 pub struct Database {
     connection: Connection,
@@ -353,11 +356,12 @@ impl Database {
             next_column_id,
             next_tag_id,
             next_checklist_item_id,
+            next_recurrence_id,
         ) = self
             .connection
             .query_row(
                 "SELECT id, name, created_at, updated_at, next_card_id, next_column_id,
-                        next_tag_id, next_checklist_item_id
+                        next_tag_id, next_checklist_item_id, next_recurrence_id
                  FROM boards WHERE id = ?1",
                 params![id],
                 |row| {
@@ -370,6 +374,7 @@ impl Database {
                         row.get(5)?,
                         row.get(6)?,
                         row.get(7)?,
+                        row.get(8)?,
                     ))
                 },
             )
@@ -415,7 +420,7 @@ impl Database {
             let mut column = row?;
             let mut card_statement = self.connection.prepare(
                 "SELECT id, column_id, title, description, position, created_at, updated_at,
-                        due_date, archived_at
+                        due_date, archived_at, recurrence_id, occurrence_date
                  FROM cards WHERE column_id = ?1 AND archived_at IS NULL
                  ORDER BY position, id",
             )?;
@@ -445,6 +450,8 @@ impl Database {
                         tag_ids: Vec::new(),
                         checklist_items: Vec::new(),
                         archived_at: row.get(8)?,
+                        recurrence_id: row.get(9)?,
+                        occurrence_date: stored_date(row.get::<_, Option<String>>(10)?, 10)?,
                     })
                 })?
                 .collect::<Result<Vec<_>, _>>()?;
@@ -463,7 +470,8 @@ impl Database {
         let mut archived_statement = self.connection.prepare(
             "SELECT cards.id, cards.column_id, cards.title, cards.description,
                     cards.position, cards.created_at, cards.updated_at,
-                    cards.due_date, cards.archived_at
+                    cards.due_date, cards.archived_at, cards.recurrence_id,
+                    cards.occurrence_date
              FROM cards
              JOIN columns ON columns.id = cards.column_id
              WHERE columns.board_id = ?1 AND cards.archived_at IS NOT NULL
@@ -494,6 +502,8 @@ impl Database {
                 tag_ids: Vec::new(),
                 checklist_items: Vec::new(),
                 archived_at: row.get(8)?,
+                recurrence_id: row.get(9)?,
+                occurrence_date: stored_date(row.get::<_, Option<String>>(10)?, 10)?,
             })
         })?;
         let mut archived_cards = archived_rows.collect::<Result<Vec<_>, _>>()?;
@@ -516,11 +526,69 @@ impl Database {
             next_column_id,
             next_tag_id,
             next_checklist_item_id,
+            next_recurrence_id,
             tags,
             archived_cards,
             columns,
+            recurrences: self.load_recurrences(id)?,
             pending_events: Vec::new(),
         })
+    }
+
+    /// 繰り返しの定義を読む（#198）。
+    ///
+    /// 周期は 3 列（`schedule_kind` / `schedule_days` / `schedule_day`）で
+    /// 置いてあります。JSON を 1 列に詰めると、置いてある値を SQL から
+    /// 読めなくなるためです。
+    fn load_recurrences(&self, board_id: BoardId) -> Result<Vec<Recurrence>, StoreError> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, board_id, title, description, column_id, schedule_kind, schedule_days,
+                    schedule_day, lead_days, previous, enabled, last_generated_on,
+                    created_at, updated_at
+             FROM recurrences WHERE board_id = ?1 ORDER BY id",
+        )?;
+        let rows = statement
+            .query_map(params![board_id], |row| {
+                let kind: String = row.get(5)?;
+                let days: String = row.get(6)?;
+                let day: Option<i64> = row.get(7)?;
+                let previous: String = row.get(9)?;
+                Ok(Recurrence {
+                    id: row.get(0)?,
+                    board_id: row.get(1)?,
+                    title: row.get(2)?,
+                    description: row.get(3)?,
+                    column_id: row.get(4)?,
+                    tag_ids: Vec::new(),
+                    checklist: Vec::new(),
+                    schedule: read_schedule(&kind, &days, day),
+                    lead_days: row.get(8)?,
+                    previous: PreviousPolicy::parse(&previous),
+                    enabled: row.get(10)?,
+                    last_generated_on: stored_date(row.get::<_, Option<String>>(11)?, 11)?,
+                    created_at: row.get(12)?,
+                    updated_at: row.get(13)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let mut recurrences = rows;
+        for recurrence in &mut recurrences {
+            let mut tag_statement = self.connection.prepare(
+                "SELECT tag_id FROM recurrence_tags WHERE recurrence_id = ?1 ORDER BY tag_id",
+            )?;
+            recurrence.tag_ids = tag_statement
+                .query_map(params![recurrence.id], |row| row.get(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            let mut item_statement = self.connection.prepare(
+                "SELECT text FROM recurrence_checklist_items
+                 WHERE recurrence_id = ?1 ORDER BY position",
+            )?;
+            recurrence.checklist = item_statement
+                .query_map(params![recurrence.id], |row| row.get(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+        }
+        Ok(recurrences)
     }
 
     fn load_checklist_items(&self, card_id: i64) -> Result<Vec<ChecklistItem>, StoreError> {
@@ -576,38 +644,35 @@ impl Database {
         // IDs are primary keys rather than (board_id, id) pairs. Reserve a
         // namespace per newly-created board so independent Board values can
         // allocate IDs without colliding after a board switch.
-        let next_card_id = board_scoped_id(board_id);
-        let first_column_id = board_scoped_id(board_id);
-        let next_tag_id = board_scoped_id(board_id);
-        let next_checklist_item_id = board_scoped_id(board_id);
+        let first = board_scoped_id(board_id);
+        let next = NextIds {
+            card: first,
+            column: first,
+            tag: first,
+            checklist_item: first,
+            recurrence: first,
+        };
 
         // **最初のカラムをここで決めません**（ADR 0038）。名前も、どれを
         // 終わったものの置き場にするかも `Board::new_empty` が持っていて、
         // ここはそれを書き写すだけです。2 か所で決めると片方だけ変わります。
-        let board = Board::new_empty(
-            board_id,
-            name,
-            next_card_id,
-            first_column_id,
-            next_tag_id,
-            next_checklist_item_id,
-            now,
-        );
+        let board = Board::new_empty(board_id, name, next, now);
 
         transaction.execute(
             "INSERT INTO boards
              (id, name, created_at, updated_at, next_card_id, next_column_id, next_tag_id,
-              next_checklist_item_id)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+              next_checklist_item_id, next_recurrence_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 board_id,
                 board.name,
                 now,
                 now,
-                next_card_id,
+                next.card,
                 board.next_column_id,
-                next_tag_id,
-                next_checklist_item_id
+                next.tag,
+                next.checklist_item,
+                next.recurrence
             ],
         )?;
         transaction.execute(
@@ -703,8 +768,8 @@ impl Database {
         transaction.execute(
             "INSERT INTO boards
              (id, name, created_at, updated_at, next_card_id, next_column_id, next_tag_id,
-              next_checklist_item_id, rev)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+              next_checklist_item_id, next_recurrence_id, rev)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
              ON CONFLICT(id) DO UPDATE SET
                name = excluded.name,
                created_at = excluded.created_at,
@@ -713,6 +778,7 @@ impl Database {
                next_column_id = excluded.next_column_id,
                next_tag_id = excluded.next_tag_id,
                next_checklist_item_id = excluded.next_checklist_item_id,
+               next_recurrence_id = excluded.next_recurrence_id,
                rev = excluded.rev",
             params![
                 board.id,
@@ -723,6 +789,7 @@ impl Database {
                 board.next_column_id,
                 board.next_tag_id,
                 board.next_checklist_item_id,
+                board.next_recurrence_id,
                 rev
             ],
         )?;
@@ -823,8 +890,8 @@ impl Database {
                 transaction.execute(
                     "INSERT INTO cards
                      (id, column_id, title, description, position, created_at, updated_at,
-                      due_date, archived_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                      due_date, archived_at, recurrence_id, occurrence_date)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
                      ON CONFLICT(id) DO UPDATE SET
                        column_id = excluded.column_id,
                        title = excluded.title,
@@ -833,7 +900,9 @@ impl Database {
                        created_at = excluded.created_at,
                        updated_at = excluded.updated_at,
                        due_date = excluded.due_date,
-                       archived_at = excluded.archived_at",
+                       archived_at = excluded.archived_at,
+                       recurrence_id = excluded.recurrence_id,
+                       occurrence_date = excluded.occurrence_date",
                     params![
                         card.id,
                         column.id,
@@ -844,7 +913,10 @@ impl Database {
                         card.updated_at,
                         card.due_date
                             .map(|date| date.format("%Y-%m-%d").to_string()),
-                        card.archived_at
+                        card.archived_at,
+                        card.recurrence_id,
+                        card.occurrence_date
+                            .map(|date| date.format("%Y-%m-%d").to_string())
                     ],
                 )?;
             }
@@ -854,8 +926,8 @@ impl Database {
             transaction.execute(
                 "INSERT INTO cards
                  (id, column_id, title, description, position, created_at, updated_at,
-                  due_date, archived_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                  due_date, archived_at, recurrence_id, occurrence_date)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
                  ON CONFLICT(id) DO UPDATE SET
                    column_id = excluded.column_id,
                    title = excluded.title,
@@ -864,7 +936,9 @@ impl Database {
                    created_at = excluded.created_at,
                    updated_at = excluded.updated_at,
                    due_date = excluded.due_date,
-                   archived_at = excluded.archived_at",
+                   archived_at = excluded.archived_at,
+                   recurrence_id = excluded.recurrence_id,
+                   occurrence_date = excluded.occurrence_date",
                 params![
                     card.id,
                     card.column_id,
@@ -875,7 +949,10 @@ impl Database {
                     card.updated_at,
                     card.due_date
                         .map(|date| date.format("%Y-%m-%d").to_string()),
-                    card.archived_at
+                    card.archived_at,
+                    card.recurrence_id,
+                    card.occurrence_date
+                        .map(|date| date.format("%Y-%m-%d").to_string())
                 ],
             )?;
         }
@@ -992,6 +1069,97 @@ impl Database {
                 transaction.execute(
                     "INSERT INTO card_tags (card_id, tag_id) VALUES (?1, ?2)",
                     params![card.id, tag_id],
+                )?;
+            }
+        }
+
+        // 繰り返しの定義（#198）。カラムやタグと同じく、**手元に無い行は消して**
+        // から書き直します。定義は `recurrence_tags` と
+        // `recurrence_checklist_items` を連れているので、`ON DELETE CASCADE`
+        // に任せて親だけを見ます。
+        let recurrence_ids = board
+            .recurrences
+            .iter()
+            .map(|recurrence| recurrence.id)
+            .collect::<Vec<_>>();
+        if recurrence_ids.is_empty() {
+            transaction.execute(
+                "DELETE FROM recurrences WHERE board_id = ?1",
+                params![board.id],
+            )?;
+        } else {
+            let placeholders = std::iter::repeat_n("?", recurrence_ids.len())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let sql = format!(
+                "DELETE FROM recurrences
+                 WHERE board_id = ?1 AND id NOT IN ({placeholders})"
+            );
+            let mut values = vec![board.id];
+            values.extend(recurrence_ids);
+            transaction.execute(&sql, rusqlite::params_from_iter(values))?;
+        }
+
+        for recurrence in &board.recurrences {
+            let (kind, days, day) = write_schedule(&recurrence.schedule);
+            transaction.execute(
+                "INSERT INTO recurrences
+                 (id, board_id, title, description, column_id, schedule_kind, schedule_days,
+                  schedule_day, lead_days, previous, enabled, last_generated_on,
+                  created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+                 ON CONFLICT(id) DO UPDATE SET
+                   board_id = excluded.board_id,
+                   title = excluded.title,
+                   description = excluded.description,
+                   column_id = excluded.column_id,
+                   schedule_kind = excluded.schedule_kind,
+                   schedule_days = excluded.schedule_days,
+                   schedule_day = excluded.schedule_day,
+                   lead_days = excluded.lead_days,
+                   previous = excluded.previous,
+                   enabled = excluded.enabled,
+                   last_generated_on = excluded.last_generated_on,
+                   created_at = excluded.created_at,
+                   updated_at = excluded.updated_at",
+                params![
+                    recurrence.id,
+                    board.id,
+                    recurrence.title,
+                    recurrence.description,
+                    recurrence.column_id,
+                    kind,
+                    days,
+                    day,
+                    recurrence.lead_days,
+                    recurrence.previous.as_str(),
+                    recurrence.enabled,
+                    recurrence
+                        .last_generated_on
+                        .map(|date| date.format("%Y-%m-%d").to_string()),
+                    recurrence.created_at,
+                    recurrence.updated_at
+                ],
+            )?;
+            transaction.execute(
+                "DELETE FROM recurrence_tags WHERE recurrence_id = ?1",
+                params![recurrence.id],
+            )?;
+            for tag_id in &recurrence.tag_ids {
+                transaction.execute(
+                    "INSERT INTO recurrence_tags (recurrence_id, tag_id) VALUES (?1, ?2)",
+                    params![recurrence.id, tag_id],
+                )?;
+            }
+            transaction.execute(
+                "DELETE FROM recurrence_checklist_items WHERE recurrence_id = ?1",
+                params![recurrence.id],
+            )?;
+            for (position, text) in recurrence.checklist.iter().enumerate() {
+                transaction.execute(
+                    "INSERT INTO recurrence_checklist_items (recurrence_id, position, text)
+                     VALUES (?1, ?2, ?3)",
+                    params![recurrence.id, i64::try_from(position).unwrap_or(0), text],
                 )?;
             }
         }
@@ -1383,6 +1551,95 @@ impl Database {
             }
             transaction.execute(
                 "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, ?2)",
+                params![14, now()],
+            )?;
+            transaction.commit()?;
+        }
+
+        if version < 15 {
+            // 繰り返しの定義（#198、[ADR 0049]）。**カードとは別の表**です——
+            // 次を出すかどうかを決める真実は定義側の `last_generated_on` に
+            // あり、カードから逆引きすると手で消したカードが生えてきます。
+            //
+            // 周期は 3 列に開きます。JSON を 1 列に詰めると、置いてある値を
+            // SQL から読めなくなります。
+            //
+            // `column_id` にも `cards.recurrence_id` にも**外部キーを張りません**。
+            // 入れ先のカラムは消えることがあり（消えたら一番左）、定義を消しても
+            // 盤面のカードは残ります。
+            //
+            // [ADR 0049]: ../../../../docs/adr/0049-recurring-cards-are-defined-apart-from-the-board.md
+            let transaction = self.connection.transaction()?;
+            transaction.execute_batch(
+                "CREATE TABLE IF NOT EXISTS recurrences (
+                    id INTEGER PRIMARY KEY,
+                    board_id INTEGER NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
+                    title TEXT NOT NULL,
+                    description TEXT NOT NULL DEFAULT '',
+                    column_id INTEGER NOT NULL,
+                    schedule_kind TEXT NOT NULL,
+                    schedule_days TEXT NOT NULL DEFAULT '',
+                    schedule_day INTEGER,
+                    lead_days INTEGER NOT NULL DEFAULT 0,
+                    previous TEXT NOT NULL DEFAULT 'archive',
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    last_generated_on TEXT,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                 );
+                 CREATE INDEX IF NOT EXISTS idx_recurrences_board
+                     ON recurrences(board_id, id);
+                 CREATE TABLE IF NOT EXISTS recurrence_tags (
+                    recurrence_id INTEGER NOT NULL
+                        REFERENCES recurrences(id) ON DELETE CASCADE,
+                    tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+                    PRIMARY KEY (recurrence_id, tag_id)
+                 );
+                 CREATE TABLE IF NOT EXISTS recurrence_checklist_items (
+                    recurrence_id INTEGER NOT NULL
+                        REFERENCES recurrences(id) ON DELETE CASCADE,
+                    position INTEGER NOT NULL,
+                    text TEXT NOT NULL,
+                    PRIMARY KEY (recurrence_id, position)
+                 );",
+            )?;
+            // SQLite に `ADD COLUMN IF NOT EXISTS` は無いので、移行 12 や 14 と
+            // 同じ形で先に有無を見る。移行のテストは進んだ DB の
+            // `schema_migrations` を巻き戻して古い DB を装うので、列がすでに
+            // ある状態でここへ来ることがある。
+            let mut added_the_counter = false;
+            for (table, column, definition) in [
+                ("boards", "next_recurrence_id", "INTEGER NOT NULL DEFAULT 1"),
+                ("cards", "recurrence_id", "INTEGER"),
+                ("cards", "occurrence_date", "TEXT"),
+            ] {
+                let present = transaction.query_row(
+                    "SELECT COUNT(*) FROM pragma_table_info(?1) WHERE name = ?2",
+                    params![table, column],
+                    |row| row.get::<_, i64>(0),
+                )? > 0;
+                if !present {
+                    transaction.execute_batch(&format!(
+                        "ALTER TABLE {table} ADD COLUMN {column} {definition};"
+                    ))?;
+                    added_the_counter = added_the_counter || table == "boards";
+                }
+            }
+            // 採番の続きは、ボードごとの区画の先頭から始めます
+            // （`store::board_scoped_id` と同じ数え方）。ID は主キー 1 本なので、
+            // 別々のボードが手元で採番しても衝突しないように。
+            //
+            // **列を足したときにだけ書きます。** 移行のテストは進んだ DB の
+            // `schema_migrations` を巻き戻して古い DB を装うので、無条件に書くと
+            // すでに数え始めているボードの続きを巻き戻してしまいます。
+            if added_the_counter {
+                transaction.execute(
+                    "UPDATE boards SET next_recurrence_id = (id << ?1) + 1",
+                    params![BOARD_ID_NAMESPACE_SHIFT],
+                )?;
+            }
+            transaction.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, ?2)",
                 params![CURRENT_SCHEMA_VERSION, now()],
             )?;
             transaction.commit()?;
@@ -1402,6 +1659,61 @@ impl Database {
             self.set_last_board_id(board.id)?;
         }
         Ok(())
+    }
+}
+
+/// 置いてある `"YYYY-MM-DD"` を読む。空でなければ日付として成り立っていること。
+///
+/// 期限・発生日・最後に出した発生日で同じ形を使うので、1 か所に置いてあります。
+fn stored_date(value: Option<String>, column: usize) -> rusqlite::Result<Option<NaiveDate>> {
+    value
+        .map(|value| {
+            NaiveDate::parse_from_str(&value, "%Y-%m-%d").map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    column,
+                    rusqlite::types::Type::Text,
+                    Box::new(error),
+                )
+            })
+        })
+        .transpose()
+}
+
+/// 置いてある 3 列から周期を組み立てる（#198）。
+///
+/// **知らない綴りは `Daily` に落とします。** 読めない行 1 つでボードが開かなく
+/// なるより、いちばん素直な周期として読むほうがましです。
+fn read_schedule(kind: &str, days: &str, day: Option<i64>) -> Schedule {
+    match kind {
+        "weekday" => Schedule::Weekday,
+        "weekly" => Schedule::Weekly {
+            days: days
+                .split(',')
+                .filter_map(|value| value.trim().parse::<u8>().ok())
+                .filter(|value| *value <= 6)
+                .collect(),
+        },
+        "monthly" => Schedule::Monthly {
+            day: u8::try_from(day.unwrap_or(1)).unwrap_or(1).clamp(1, 31),
+        },
+        "monthlyLast" => Schedule::MonthlyLast,
+        _ => Schedule::Daily,
+    }
+}
+
+/// 周期を、置き場所の 3 列に開く。
+fn write_schedule(schedule: &Schedule) -> (&'static str, String, Option<i64>) {
+    match schedule {
+        Schedule::Weekly { days } => (
+            schedule.kind_str(),
+            days.iter()
+                .map(|day| day.to_string())
+                .collect::<Vec<_>>()
+                .join(","),
+            None,
+        ),
+        Schedule::Monthly { day } => (schedule.kind_str(), String::new(), Some(i64::from(*day))),
+        _ => (schedule.kind_str(), String::new(), None),
     }
 }
 
@@ -1973,6 +2285,152 @@ mod tests {
             .find(|card| card.id == card_id)
             .unwrap();
         assert_eq!(moved_card.created_at, created_at);
+    }
+
+    /// 繰り返しの定義が、周期もテンプレートも変わらずに戻ってくる（#198）。
+    ///
+    /// 周期は 3 列に開いて置いてあるので、**開いて畳んで同じもの**であることを
+    /// ここで押さえます。
+    #[test]
+    fn round_trips_recurrences_with_their_schedules_and_templates() {
+        use crate::model::{PreviousPolicy, Schedule};
+
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("board.sqlite3");
+        let mut database = open_with_cards(&path);
+        let mut board = database.load_board().unwrap();
+        let tag_id = board.push_tag("毎日", "");
+
+        let daily = board.push_recurrence("メールを見る", Schedule::Daily);
+        {
+            let recurrence = board.recurrence_mut(daily);
+            recurrence.description = "受信箱を空にする".to_string();
+            recurrence.tag_ids = vec![tag_id];
+            recurrence.checklist = vec!["未読を見る".to_string(), "返信する".to_string()];
+            recurrence.previous = PreviousPolicy::Delete;
+            recurrence.last_generated_on = NaiveDate::from_ymd_opt(2026, 2, 14);
+        }
+        let weekly = board.push_recurrence("週次の振り返り", Schedule::Weekly { days: vec![0, 4] });
+        board.recurrence_mut(weekly).lead_days = 2;
+        let monthly = board.push_recurrence("社内報", Schedule::Monthly { day: 31 });
+        board.recurrence_mut(monthly).enabled = false;
+        let month_end = board.push_recurrence("締め", Schedule::MonthlyLast);
+        let weekday = board.push_recurrence("朝の予定確認", Schedule::Weekday);
+
+        // 出来たカードは、定義と発生日を参照として持つ。
+        let card_id = board.push_card(1, "メールを見る", "");
+        {
+            let card = board.card_mut(card_id);
+            card.recurrence_id = Some(daily);
+            card.occurrence_date = NaiveDate::from_ymd_opt(2026, 2, 14);
+        }
+
+        board.validate().expect("the board holds together");
+        database.save_board(&mut board).unwrap();
+
+        let read = Database::open(&path).unwrap().load_board().unwrap();
+        assert_eq!(read.recurrences, board.recurrences, "定義がそのまま戻る");
+        assert_eq!(read.next_recurrence_id, board.next_recurrence_id);
+        let stored_card = read
+            .columns
+            .iter()
+            .flat_map(|column| column.cards.iter())
+            .find(|card| card.id == card_id)
+            .expect("the card is there");
+        assert_eq!(stored_card.recurrence_id, Some(daily));
+        assert_eq!(
+            stored_card.occurrence_date,
+            NaiveDate::from_ymd_opt(2026, 2, 14)
+        );
+        assert_eq!(
+            read.recurrences
+                .iter()
+                .map(|recurrence| recurrence.id)
+                .collect::<Vec<_>>(),
+            vec![daily, weekly, monthly, month_end, weekday]
+        );
+
+        // 手元から消した定義は、次の保存で行ごと消える（差分保存）。
+        let mut fewer = read;
+        fewer
+            .recurrences
+            .retain(|recurrence| recurrence.id != weekly);
+        database.save_board(&mut fewer).unwrap();
+        let read = Database::open(&path).unwrap().load_board().unwrap();
+        assert_eq!(read.recurrences.len(), 4);
+        let orphans: i64 = Database::open(&path)
+            .unwrap()
+            .connection
+            .query_row(
+                "SELECT COUNT(*) FROM recurrence_checklist_items
+                 WHERE recurrence_id NOT IN (SELECT id FROM recurrences)",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(orphans, 0, "連れていた行も一緒に消える");
+    }
+
+    /// 繰り返しを知らない DB（版 14）を開いても、盤面はそのまま（#198）。
+    #[test]
+    fn adds_the_recurrence_tables_when_migrating_a_version_fourteen_database() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("board.sqlite3");
+
+        let before = {
+            let database = open_with_cards(&path);
+            let board = database.load_board().unwrap();
+            // 版 14 まで巻き戻し、繰り返しを知らない DB にする。
+            database
+                .connection
+                .execute("DELETE FROM schema_migrations WHERE version >= ?1", [15])
+                .unwrap();
+            database
+                .connection
+                .execute_batch(
+                    "DROP TABLE recurrence_checklist_items;
+                     DROP TABLE recurrence_tags;
+                     DROP TABLE recurrences;
+                     ALTER TABLE boards DROP COLUMN next_recurrence_id;
+                     ALTER TABLE cards DROP COLUMN recurrence_id;
+                     ALTER TABLE cards DROP COLUMN occurrence_date;",
+                )
+                .unwrap();
+            board
+        };
+
+        let mut database = open_with_cards(&path);
+        let read = database.load_board().unwrap();
+
+        assert_eq!(read.recurrences, Vec::new(), "繰り返しは 1 つも立たない");
+        assert_eq!(read.columns, before.columns, "盤面は変わらない");
+        assert_eq!(
+            read.next_recurrence_id,
+            board_scoped_id(read.id),
+            "採番はボードごとの区画の先頭から"
+        );
+        assert_eq!(
+            database
+                .connection
+                .query_row("SELECT MAX(version) FROM schema_migrations", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .unwrap(),
+            CURRENT_SCHEMA_VERSION
+        );
+
+        // 移行したあとの DB にも、繰り返しをそのまま置ける。
+        let mut board = read;
+        board.push_recurrence("メールを見る", crate::model::Schedule::Daily);
+        database.save_board(&mut board).unwrap();
+        assert_eq!(
+            Database::open(&path)
+                .unwrap()
+                .load_board()
+                .unwrap()
+                .recurrences,
+            board.recurrences
+        );
     }
 
     #[test]

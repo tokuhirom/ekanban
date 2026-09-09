@@ -35,9 +35,17 @@ export interface StoredBoard {
   nextColumnId: number;
   nextTagId: number;
   nextChecklistItemId: number;
+  /// 繰り返しの定義の採番の続き（#198）。
+  ///
+  /// **置いてあった文字列に無いことがあります。** 繰り返しを知らない版が
+  /// 書いたものをそのまま読み続けられるように、任意にしてあります
+  /// （`memory.ts` の `documentOf` が既定に落とします）。
+  nextRecurrenceId?: number;
   tags: Board["tags"];
   archivedCards: Board["archivedCards"];
   columns: Board["columns"];
+  /// 繰り返しの定義（#198）。古い文字列には入っていません。
+  recurrences?: Board["recurrences"];
   events: StoredCardEvent[];
   /// 保存の競合を見るための版（ADR 0040）。
   rev: number;

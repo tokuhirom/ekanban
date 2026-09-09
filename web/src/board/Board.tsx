@@ -34,6 +34,7 @@ import {
 } from "../model/board";
 import { Archive } from "../panel/Archive";
 import { CardPanel } from "../panel/CardPanel";
+import { RecurrencePanel } from "../panel/RecurrencePanel";
 import { TagPanel } from "../panel/TagPanel";
 import { tagChipStyle } from "../panel/tags";
 import { useAppActions, useAppActionSource } from "../shell/actions";
@@ -153,6 +154,7 @@ export function Board() {
     },
     addTag: state.openTagPanel,
     manageTags: state.openTagPanel,
+    manageRecurrences: state.openRecurrencePanel,
     renameBoard: () => {
       if (board !== null) askRenameBoard(board);
     },
@@ -522,6 +524,7 @@ export function Board() {
           <Archive
             board={board}
             dueStatuses={state.dueStatuses}
+            recurringCards={state.recurringCards}
             today={today}
             matched={state.matched}
             onRestore={state.restoreCard}
@@ -551,6 +554,7 @@ export function Board() {
                   column={column}
                   tags={board.tags}
                   dueStatuses={state.dueStatuses}
+                  recurringCards={state.recurringCards}
                   today={today}
                   matched={state.matched}
                   activeTag={state.tagId}
@@ -597,6 +601,7 @@ export function Board() {
                   tags={board.tags}
                   due={state.dueStatuses.get(draggingCard.id)}
                   done={draggingCardDone}
+                  recurring={state.recurringCards.has(draggingCard.id)}
                   today={today}
                 />
               </article>
@@ -635,6 +640,15 @@ export function Board() {
       )}
       {state.tagPanelOpen && (
         <TagPanel tags={board.tags} run={run} onClose={state.toggleTagPanel} />
+      )}
+      {state.recurrencePanelOpen && (
+        <RecurrencePanel
+          recurrences={board.recurrences}
+          columns={board.columns}
+          tags={board.tags}
+          run={run}
+          onClose={state.closeRecurrencePanel}
+        />
       )}
 
       {/* カードの右クリックメニューは盤面の外で描く。カードは dnd-kit の

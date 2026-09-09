@@ -151,12 +151,14 @@ export class MemoryStore {
       nextColumnId: first + 2,
       nextTagId: first,
       nextChecklistItemId: first,
+      nextRecurrenceId: first,
       tags: [],
       archivedCards: [],
       columns: [
         column(first, boardId, "やること", 0, at, false),
         column(first + 1, boardId, "完了", 1, at, true),
       ],
+      recurrences: [],
       events: [],
       rev: 0,
     };
@@ -226,11 +228,16 @@ function documentOf(stored: StoredBoard): BoardDocument {
       tags: stored.tags,
       archivedCards: stored.archivedCards,
       columns: stored.columns,
+      // **繰り返しを知らない版が書いた文字列も読みます**（#198）。無ければ
+      // 空で始め、採番はボードごとの区画の先頭から——ID は主キー 1 本なので、
+      // 別々のボードが手元で採番しても衝突しないように（`board_scoped_id`）。
+      recurrences: stored.recurrences ?? [],
     },
     nextCardId: stored.nextCardId,
     nextColumnId: stored.nextColumnId,
     nextTagId: stored.nextTagId,
     nextChecklistItemId: stored.nextChecklistItemId,
+    nextRecurrenceId: stored.nextRecurrenceId ?? boardScopedId(stored.id),
     rev: stored.rev,
   };
 }
@@ -250,9 +257,11 @@ function storedOf(
     nextColumnId: document.nextColumnId,
     nextTagId: document.nextTagId,
     nextChecklistItemId: document.nextChecklistItemId,
+    nextRecurrenceId: document.nextRecurrenceId,
     tags: board.tags,
     archivedCards: board.archivedCards,
     columns: board.columns,
+    recurrences: board.recurrences,
     events,
     rev,
   };

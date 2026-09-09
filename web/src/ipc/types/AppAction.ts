@@ -7,4 +7,4 @@
  * 書きません**（`docs/DESIGN.md`「コマンドとイベント」）。dispatcher が網羅しているかどうかは、この型から作った
  * `Record` を TypeScript の型検査が見ます。
  */
-export type AppAction = "addBoard" | "addCard" | "addColumn" | "addTag" | "exportBoardJson" | "exportBoardMarkdown" | "saveEdit" | "undo" | "redo" | "cancelEdit" | "clearSearch" | "renameBoard" | "deleteBoard" | "manageTags" | "focusSearch" | "toggleBoardList" | "toggleArchiveView" | "openSettings" | "useLightTheme" | "useDarkTheme" | "useSystemTheme" | "backupDatabase" | "revealDatabase" | "revealBackups" | "about";
+export type AppAction = "addBoard" | "addCard" | "addColumn" | "addTag" | "exportBoardJson" | "exportBoardMarkdown" | "saveEdit" | "undo" | "redo" | "cancelEdit" | "clearSearch" | "renameBoard" | "deleteBoard" | "manageTags" | "manageRecurrences" | "focusSearch" | "toggleBoardList" | "toggleArchiveView" | "openSettings" | "useLightTheme" | "useDarkTheme" | "useSystemTheme" | "backupDatabase" | "revealDatabase" | "revealBackups" | "about";

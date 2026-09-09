@@ -23,7 +23,17 @@ import type { CardEventKind } from "../ipc/types/CardEventKind";
 import type { Card } from "../ipc/types/Card";
 import type { ChecklistItem } from "../ipc/types/ChecklistItem";
 import type { Column } from "../ipc/types/Column";
+import type { PreviousPolicy } from "../ipc/types/PreviousPolicy";
+import type { Recurrence } from "../ipc/types/Recurrence";
+import type { Schedule } from "../ipc/types/Schedule";
 import type { Tag } from "../ipc/types/Tag";
+import {
+  cardsToCleanUp,
+  dueDateOf,
+  leadDaysOf,
+  occurrenceToGenerate,
+  targetColumnId,
+} from "./recurrence";
 
 /// 盤面と、それに付いて回るもの。
 ///
@@ -63,7 +73,9 @@ export type BoardError =
   | { kind: "duplicateTagName"; name: string }
   | { kind: "emptyChecklistItemText" }
   | { kind: "checklistItemNotFound"; itemId: number; cardId: number }
-  | { kind: "lastColumn" };
+  | { kind: "lastColumn" }
+  | { kind: "emptyRecurrenceTitle" }
+  | { kind: "recurrenceNotFound"; recurrenceId: number };
 
 /** 操作の結果。`false` は「変わらなかった」——断られたのとは違う。 */
 export type Outcome<T> = { ok: true; value: T } | { ok: false; error: BoardError };
@@ -167,6 +179,8 @@ export type BoardOperation =
       index: number;
       activeCardTags: [number, number[]][];
       archivedCardTags: [number, number[]][];
+      /** テンプレートからも外れるので、戻すときの控え（#198）。 */
+      recurrenceTags: [number, number[]][];
     }
   | { kind: "setCardTags"; cardId: number; before: number[]; after: number[] }
   | { kind: "addColumn"; column: Column; index: number }
@@ -178,7 +192,10 @@ export type BoardOperation =
       index: number;
       fallbackColumnId: number;
       archivedCardColumnIds: [number, number][];
-    };
+    }
+  | { kind: "addRecurrence"; recurrence: Recurrence }
+  | { kind: "updateRecurrence"; before: Recurrence; after: Recurrence }
+  | { kind: "removeRecurrence"; recurrence: Recurrence; index: number };
 
 /** 編集パネルの 1 回の確定で変わるもの。`editCard` が前後の両方を抱える。 */
 export interface CardContent {
@@ -417,6 +434,9 @@ export function addCardWithDetails(
     tagIds: normalizeTagIds(tagIds),
     checklistItems,
     archivedAt: null,
+    // 手で足したカードは繰り返しのものではありません（#198）。
+    recurrenceId: null,
+    occurrenceDate: null,
   };
   column.cards.push(card);
   document.nextCardId += 1;
@@ -766,6 +786,10 @@ export function copyCard(document: BoardDocument, cardId: number): Outcome<numbe
     tagIds: [...source.tagIds],
     checklistItems,
     archivedAt: null,
+    // 写しは繰り返しのものではありません（#198）。同じ発生日のカードが 2 枚に
+    // なると、片付けるときにどちらを指しているのか決められなくなります。
+    recurrenceId: null,
+    occurrenceDate: null,
   };
   document.nextCardId += 1;
   column.cards.splice(location.card + 1, 0, card);
@@ -1016,12 +1040,28 @@ export function removeTag(document: BoardDocument, tagId: number): Outcome<void>
     .filter((card) => card.tagIds.includes(tagId))
     .map((card): [number, number[]] => [card.id, [...card.tagIds]]);
 
+  // 繰り返しのテンプレートからも外します（#198）。残すと、置き場所が
+  // 「知らないタグを指している」として保存を断ります（`Board::validate`）。
+  const recurrenceTags = board.recurrences
+    .filter((recurrence) => recurrence.tagIds.includes(tagId))
+    .map((recurrence): [number, number[]] => [recurrence.id, [...recurrence.tagIds]]);
+
   board.tags.splice(index, 1);
   for (const card of [...allCards(board), ...board.archivedCards]) {
     card.tagIds = card.tagIds.filter((id) => id !== tagId);
   }
+  for (const recurrence of board.recurrences) {
+    recurrence.tagIds = recurrence.tagIds.filter((id) => id !== tagId);
+  }
   board.updatedAt = now();
-  pushOperation(document, { kind: "removeTag", tag, index, activeCardTags, archivedCardTags });
+  pushOperation(document, {
+    kind: "removeTag",
+    tag,
+    index,
+    activeCardTags,
+    archivedCardTags,
+    recurrenceTags,
+  });
   return ok(undefined);
 }
 
@@ -1183,6 +1223,218 @@ export function renameBoard(document: BoardDocument, name: string): Outcome<bool
 }
 
 /// 次の保存で書く履歴を捨てる。保存に失敗したときに、盤面と一緒に巻き戻す。
+// ---------------------------------------------------------------- 繰り返し
+
+/// 繰り返しの定義の下書き（#198）。**採番と時刻はモデルが付けます。**
+export interface RecurrenceDraft {
+  title: string;
+  description: string;
+  columnId: number;
+  tagIds: number[];
+  checklist: string[];
+  schedule: Schedule;
+  leadDays: number;
+  previous: PreviousPolicy;
+  enabled: boolean;
+}
+
+/// 下書きを、置ける形にそろえる。
+///
+/// 先読みの日数は周期から決まります（`daily` / `weekday` は 0）。同じ規則を
+/// 画面にも書かないよう、通り道をここ 1 本にしてあります。
+function shaped(draft: RecurrenceDraft): RecurrenceDraft {
+  return {
+    ...draft,
+    title: draft.title,
+    tagIds: normalizeTagIds(draft.tagIds),
+    checklist: draft.checklist.filter((text) => text.trim() !== ""),
+    leadDays: leadDaysOf(draft.schedule, draft.leadDays),
+  };
+}
+
+/// 繰り返しの定義を 1 つ足す。**これは使う人の操作なので Undo に積みます。**
+///
+/// 積まないのは生成のほう（[`applyRecurrences`]）です。
+export function addRecurrence(document: BoardDocument, draft: RecurrenceDraft): Outcome<number> {
+  const { board } = document;
+  if (draft.title.trim() === "") return fail({ kind: "emptyRecurrenceTitle" });
+  for (const tagId of draft.tagIds) {
+    if (!board.tags.some((tag) => tag.id === tagId)) return fail({ kind: "tagNotFound", tagId });
+  }
+
+  const at = now();
+  const shape = shaped(draft);
+  const recurrence: Recurrence = {
+    id: document.nextRecurrenceId,
+    boardId: board.id,
+    title: shape.title,
+    description: shape.description,
+    columnId: shape.columnId,
+    tagIds: shape.tagIds,
+    checklist: shape.checklist,
+    schedule: shape.schedule,
+    leadDays: shape.leadDays,
+    previous: shape.previous,
+    enabled: shape.enabled,
+    // **まだ 1 枚も出していない**という意味。次の発生日から始まります。
+    lastGeneratedOn: null,
+    createdAt: at,
+    updatedAt: at,
+  };
+  document.nextRecurrenceId += 1;
+  board.recurrences.push(recurrence);
+  board.updatedAt = at;
+  pushOperation(document, { kind: "addRecurrence", recurrence: structuredClone(recurrence) });
+  return ok(recurrence.id);
+}
+
+/// 定義を書き換える。**`lastGeneratedOn` は触りません**——生成の真実は、
+/// 定義を編んだかどうかとは別のことです。
+export function updateRecurrence(
+  document: BoardDocument,
+  recurrenceId: number,
+  draft: RecurrenceDraft,
+): Outcome<boolean> {
+  const { board } = document;
+  if (draft.title.trim() === "") return fail({ kind: "emptyRecurrenceTitle" });
+  for (const tagId of draft.tagIds) {
+    if (!board.tags.some((tag) => tag.id === tagId)) return fail({ kind: "tagNotFound", tagId });
+  }
+  const recurrence = board.recurrences.find((each) => each.id === recurrenceId);
+  if (recurrence === undefined) return fail({ kind: "recurrenceNotFound", recurrenceId });
+
+  const shape = shaped(draft);
+  const before = structuredClone(recurrence);
+  const after: Recurrence = { ...recurrence, ...shape, updatedAt: now() };
+  if (sameRecurrence(before, after)) return ok(false);
+
+  Object.assign(recurrence, after);
+  board.updatedAt = after.updatedAt;
+  pushOperation(document, { kind: "updateRecurrence", before, after: structuredClone(after) });
+  return ok(true);
+}
+
+/// 定義を消す。**盤面のカードは残します**（#198）。
+///
+/// 出来たカードは、出たあとは普通のカードです。消えた定義を指したままになり
+/// ますが、画面が 🔁 を出さなくなるだけで、中身は何も変わりません。
+export function removeRecurrence(
+  document: BoardDocument,
+  recurrenceId: number,
+): Outcome<void> {
+  const { board } = document;
+  const index = board.recurrences.findIndex((each) => each.id === recurrenceId);
+  const recurrence = board.recurrences[index];
+  if (recurrence === undefined) return fail({ kind: "recurrenceNotFound", recurrenceId });
+
+  board.recurrences.splice(index, 1);
+  board.updatedAt = now();
+  pushOperation(document, { kind: "removeRecurrence", recurrence, index });
+  return ok(undefined);
+}
+
+/// 中身が同じか。`updatedAt` だけの違いは「変わっていない」と読みます。
+function sameRecurrence(left: Recurrence, right: Recurrence): boolean {
+  return (
+    JSON.stringify({ ...left, updatedAt: 0 }) === JSON.stringify({ ...right, updatedAt: 0 })
+  );
+}
+
+/// 基準日ぶんの生成と片付けを、まとめて 1 回当てる（#198、[ADR 0049]）。
+///
+/// **Undo に積みません。** 使う人の操作ではないので、`Cmd+Z` で昨日のカードが
+/// 戻ってくるのはおかしなことです。`card_events` には積みます——`created` と、
+/// 片付け方に応じた `archived` / `deleted` が、時刻付きで残ります。
+///
+/// 片付けを先にします。先読みのある定義では、いま出したカードと片付ける
+/// カードが同時に手元にあるので、順を決めておかないと読みづらくなります。
+///
+/// 返すのは「盤面が変わったか」です。`false` のときは呼ぶ側が保存しません
+/// ——起動のたびに、何も起きていないボードの版を進めないためです。
+///
+/// [ADR 0049]: ../../../docs/adr/0049-recurring-cards-are-defined-apart-from-the-board.md
+export function applyRecurrences(document: BoardDocument, today: string): Outcome<boolean> {
+  const { board } = document;
+  let changed = false;
+  const at = now();
+
+  for (const recurrence of board.recurrences) {
+    if (!recurrence.enabled) continue;
+    for (const card of cardsToCleanUp(recurrence, allCards(board), today)) {
+      if (recurrence.previous === "archive") {
+        const location = locateCard(board, card.id);
+        const column = location === null ? undefined : board.columns[location.column];
+        if (column === undefined) continue;
+        const [taken] = column.cards.splice(location?.card ?? 0, 1);
+        if (taken === undefined) continue;
+        taken.archivedAt = at;
+        taken.updatedAt = at;
+        board.archivedCards.push(taken);
+        recordEvent(document, taken.id, "archived", column.id, null, at);
+      } else {
+        const location = locateCard(board, card.id);
+        const column = location === null ? undefined : board.columns[location.column];
+        if (column === undefined) continue;
+        column.cards.splice(location?.card ?? 0, 1);
+        recordEvent(document, card.id, "deleted", column.id, null, at);
+      }
+      changed = true;
+    }
+  }
+
+  for (const recurrence of board.recurrences) {
+    const occurrence = occurrenceToGenerate(recurrence, today);
+    if (occurrence === null) continue;
+    // 入れ先が 1 本も無いボードでは何も出しません。**それでも
+    // `lastGeneratedOn` は書きません**——カラムを作った日に出るように。
+    const columnId = targetColumnId(recurrence, board.columns);
+    if (columnId === null) continue;
+    const column = findColumn(board, columnId);
+    if (column === null) continue;
+
+    const cardId = document.nextCardId;
+    document.nextCardId += 1;
+    const checklistItems: ChecklistItem[] = [];
+    for (const text of recurrence.checklist) {
+      checklistItems.push({
+        id: document.nextChecklistItemId,
+        cardId,
+        text,
+        checked: false,
+        position: checklistItems.length,
+        createdAt: at,
+        updatedAt: at,
+      });
+      document.nextChecklistItemId += 1;
+    }
+    // 位置は先頭。出たことに気づけるのは、目に入るところに置いたときだけです。
+    column.cards.unshift({
+      id: cardId,
+      columnId: column.id,
+      title: recurrence.title,
+      description: recurrence.description,
+      position: 0,
+      createdAt: at,
+      updatedAt: at,
+      dueDate: dueDateOf(recurrence.schedule, occurrence),
+      tagIds: [...recurrence.tagIds],
+      checklistItems,
+      archivedAt: null,
+      recurrenceId: recurrence.id,
+      occurrenceDate: occurrence,
+    });
+    recurrence.lastGeneratedOn = occurrence;
+    recurrence.updatedAt = at;
+    recordEvent(document, cardId, "created", null, column.id, at);
+    changed = true;
+  }
+
+  if (!changed) return ok(false);
+  reindex(board);
+  board.updatedAt = at;
+  return ok(true);
+}
+
 export function discardPendingEvents(document: BoardDocument): void {
   document.pendingEvents.length = 0;
 }
@@ -1432,6 +1684,10 @@ function applyOperation(
         board.tags.splice(operation.index, 0, structuredClone(operation.tag));
         restoreCardTags(board, operation.activeCardTags);
         restoreCardTags(board, operation.archivedCardTags);
+        for (const [recurrenceId, tagIds] of operation.recurrenceTags) {
+          const recurrence = board.recurrences.find((each) => each.id === recurrenceId);
+          if (recurrence !== undefined) recurrence.tagIds = [...tagIds];
+        }
       } else {
         step = removeTagRaw(board, operation.tag.id);
       }
@@ -1465,6 +1721,34 @@ function applyOperation(
         operation.columnId,
         undoing ? operation.before : operation.after,
       );
+      break;
+    }
+    case "addRecurrence": {
+      if (undoing) {
+        step = removeRecurrenceRaw(board, operation.recurrence.id);
+      } else {
+        board.recurrences.push(structuredClone(operation.recurrence));
+        document.nextRecurrenceId = Math.max(
+          document.nextRecurrenceId,
+          operation.recurrence.id + 1,
+        );
+      }
+      break;
+    }
+    case "updateRecurrence": {
+      step = replaceRecurrenceRaw(board, undoing ? operation.before : operation.after);
+      break;
+    }
+    case "removeRecurrence": {
+      if (undoing) {
+        board.recurrences.splice(operation.index, 0, structuredClone(operation.recurrence));
+        document.nextRecurrenceId = Math.max(
+          document.nextRecurrenceId,
+          operation.recurrence.id + 1,
+        );
+      } else {
+        step = removeRecurrenceRaw(board, operation.recurrence.id);
+      }
       break;
     }
     case "removeColumn": {
@@ -1658,6 +1942,9 @@ function removeTagRaw(board: Board, tagId: number): Outcome<void> {
   for (const card of [...allCards(board), ...board.archivedCards]) {
     card.tagIds = card.tagIds.filter((id) => id !== tagId);
   }
+  for (const recurrence of board.recurrences) {
+    recurrence.tagIds = recurrence.tagIds.filter((id) => id !== tagId);
+  }
   return ok(undefined);
 }
 
@@ -1706,5 +1993,21 @@ function removeColumnRaw(board: Board, columnId: number): Outcome<void> {
   if (index === -1) return fail({ kind: "columnNotFound", columnId });
   board.columns.splice(index, 1);
   reindex(board);
+  return ok(undefined);
+}
+
+function removeRecurrenceRaw(board: Board, recurrenceId: number): Outcome<void> {
+  const index = board.recurrences.findIndex((each) => each.id === recurrenceId);
+  if (index === -1) return fail({ kind: "recurrenceNotFound", recurrenceId });
+  board.recurrences.splice(index, 1);
+  return ok(undefined);
+}
+
+function replaceRecurrenceRaw(board: Board, recurrence: Recurrence): Outcome<void> {
+  const found = board.recurrences.find((each) => each.id === recurrence.id);
+  if (found === undefined) {
+    return fail({ kind: "recurrenceNotFound", recurrenceId: recurrence.id });
+  }
+  Object.assign(found, structuredClone(recurrence));
   return ok(undefined);
 }

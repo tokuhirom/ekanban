@@ -18,6 +18,8 @@ function card(id: number, archivedAt: number | null): Card {
     tagIds: [],
     checklistItems: [],
     archivedAt,
+    recurrenceId: null,
+    occurrenceDate: null,
   };
 }
 

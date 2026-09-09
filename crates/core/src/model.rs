@@ -23,6 +23,7 @@ pub type ColumnId = i64;
 pub type CardId = i64;
 pub type TagId = i64;
 pub type ChecklistItemId = i64;
+pub type RecurrenceId = i64;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -113,6 +114,22 @@ pub struct Card {
     pub tag_ids: Vec<TagId>,
     pub checklist_items: Vec<ChecklistItem>,
     pub archived_at: Option<i64>,
+    /// このカードを出した繰り返しの定義（#198）。
+    ///
+    /// **参照であって、生成の真実ではありません。** 次を出すかどうかを決める
+    /// のは定義側の `last_generated_on` です（[ADR 0049]）。定義を消しても
+    /// この参照は残り、盤面のカードもそのまま残ります——指す先が消えたことは、
+    /// 画面が 🔁 を出さないことで表れます。
+    ///
+    /// [ADR 0049]: ../../../docs/adr/0049-recurring-cards-are-defined-apart-from-the-board.md
+    pub recurrence_id: Option<RecurrenceId>,
+    /// このカードが受け持っている発生日（`"YYYY-MM-DD"`）。
+    ///
+    /// 片付ける相手を選ぶのに要ります——「次の発生日が来たら片付ける」の
+    /// 「次」は、この日から数えます（[ADR 0049]）。
+    ///
+    /// [ADR 0049]: ../../../docs/adr/0049-recurring-cards-are-defined-apart-from-the-board.md
+    pub occurrence_date: Option<NaiveDate>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -148,6 +165,117 @@ pub struct Column {
     pub cards: Vec<Card>,
 }
 
+/// 繰り返しの周期（#198）。
+///
+/// **`weekly{月〜金}` と `weekday` は分けてあります。** 見た目の並びは同じに
+/// なりますが、祝日の扱いを持つのは後者だけです（いまはまだ曜日の意味しか
+/// 持ちません）。片方に寄せると、祝日を足す日に受け皿が無くなります。
+///
+/// 曜日は**月曜を 0** とした 0〜6 です。`web/src/model/dates.ts` の
+/// `weekdayFromMonday` と同じ数え方で、`Date` の日曜 0 とは 1 つずれます。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+#[ts(export)]
+pub enum Schedule {
+    /// 毎日。
+    Daily,
+    /// 平日（月〜金）。祝日の扱いはここに足す。
+    Weekday,
+    /// 決まった曜日。
+    Weekly { days: Vec<u8> },
+    /// 毎月の決まった日。**その日が無い月は月末に丸めます**（判断は webview）。
+    Monthly { day: u8 },
+    /// 毎月末。
+    MonthlyLast,
+}
+
+impl Schedule {
+    /// 置き場所が書くときの綴り。`--no-default-features` では誰も呼ばない。
+    #[cfg_attr(not(feature = "sqlite"), allow(dead_code))]
+    pub(crate) fn kind_str(&self) -> &'static str {
+        match self {
+            Self::Daily => "daily",
+            Self::Weekday => "weekday",
+            Self::Weekly { .. } => "weekly",
+            Self::Monthly { .. } => "monthly",
+            Self::MonthlyLast => "monthlyLast",
+        }
+    }
+}
+
+/// 前回のカードの片付け方（#198）。
+///
+/// **未完了でも進行中のカラムにあっても同じように片付けます。** 選んだのは
+/// この旗を立てた人で、置き場所がそこを読み替えません。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "lowercase")]
+#[ts(export)]
+pub enum PreviousPolicy {
+    /// 盤面に残す。
+    Keep,
+    /// アーカイブへ移す。
+    Archive,
+    /// 消す。
+    Delete,
+}
+
+impl PreviousPolicy {
+    /// 置き場所が書くときの綴り。`--no-default-features` では誰も呼ばない。
+    #[cfg_attr(not(feature = "sqlite"), allow(dead_code))]
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Keep => "keep",
+            Self::Archive => "archive",
+            Self::Delete => "delete",
+        }
+    }
+
+    /// 置いてある綴りから読む。知らない綴りは `Keep`——**片付けないほうへ倒す**。
+    #[cfg_attr(not(feature = "sqlite"), allow(dead_code))]
+    pub(crate) fn parse(value: &str) -> Self {
+        match value {
+            "archive" => Self::Archive,
+            "delete" => Self::Delete,
+            _ => Self::Keep,
+        }
+    }
+}
+
+/// 繰り返しの定義 1 つ（#198、[ADR 0049]）。
+///
+/// **カードとは別のものです。** カード側が持つ `recurrence_id` は参照で、
+/// 次を出すかどうかを決める真実はこちらの `last_generated_on` にあります。
+/// カードから逆引きすると、手で消したカードが消した次の瞬間に生えてきます。
+///
+/// 前半はテンプレート（出すカードの中身）、後半は周期と片付け方です。
+///
+/// [ADR 0049]: ../../../docs/adr/0049-recurring-cards-are-defined-apart-from-the-board.md
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct Recurrence {
+    pub id: RecurrenceId,
+    pub board_id: BoardId,
+    pub title: String,
+    pub description: String,
+    /// 入れ先のカラム。**消えていることがあります**——そのときは一番左に入ります。
+    pub column_id: ColumnId,
+    pub tag_ids: Vec<TagId>,
+    /// チェックリストのひな型。**項目に ID を持たせません**——テンプレートの
+    /// 項目は同一性を持たない文字列の並びで、ID を持つのは出来たカードのほうです。
+    pub checklist: Vec<String>,
+    pub schedule: Schedule,
+    /// 発生日の何日前から出すか。`daily` / `weekday` は 0 に固定です
+    /// （毎日 `⚠` を 1 件増やさないため、期限も先読みも持ちません）。
+    pub lead_days: i64,
+    pub previous: PreviousPolicy,
+    pub enabled: bool,
+    /// **生成の真実**。最後に出したカードの発生日（`"YYYY-MM-DD"`）。
+    pub last_generated_on: Option<NaiveDate>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -168,9 +296,16 @@ pub struct Board {
     #[serde(skip)]
     #[ts(skip)]
     pub next_checklist_item_id: ChecklistItemId,
+    #[serde(skip)]
+    #[ts(skip)]
+    pub next_recurrence_id: RecurrenceId,
     pub tags: Vec<Tag>,
     pub archived_cards: Vec<Card>,
     pub columns: Vec<Column>,
+    /// 繰り返しの定義（#198）。**カードとは別に持ちます**（[ADR 0049]）。
+    ///
+    /// [ADR 0049]: ../../../docs/adr/0049-recurring-cards-are-defined-apart-from-the-board.md
+    pub recurrences: Vec<Recurrence>,
     /// Events that are written by the next save and then cleared.
     #[serde(skip)]
     #[ts(skip)]
@@ -187,7 +322,9 @@ impl PartialEq for Board {
             && self.next_column_id == other.next_column_id
             && self.next_tag_id == other.next_tag_id
             && self.next_checklist_item_id == other.next_checklist_item_id
+            && self.next_recurrence_id == other.next_recurrence_id
             && self.tags == other.tags
+            && self.recurrences == other.recurrences
             && self.archived_cards == other.archived_cards
             && self.columns == other.columns
             && self.pending_events == other.pending_events
@@ -222,6 +359,10 @@ pub enum BoardError {
     ChecklistItemNotFound(ChecklistItemId, CardId),
     #[error("a board must have at least one column")]
     LastColumn,
+    #[error("a recurrence title cannot be empty")]
+    EmptyRecurrenceTitle,
+    #[error("recurrence {0} was not found")]
+    RecurrenceNotFound(RecurrenceId),
     /// 保存を頼まれた盤面が、行として成り立っていない（[ADR 0040]）。
     ///
     /// 使う人の入力の間違いではなく、**画面の側の食い違い**です。入力欄の脇に
@@ -252,33 +393,45 @@ pub fn parse_stored_due_date(value: &str) -> Result<Option<NaiveDate>, BoardErro
         .map_err(|_| BoardError::InvalidDueDate(raw.to_string()))
 }
 
+/// 新しいボードが使いはじめる採番の続き。
+///
+/// **ボードごとに区画を切ります**（`store::board_scoped_id`）。ID は
+/// `(board_id, id)` の組ではなく主キー 1 本なので、別々のボードが手元で採番
+/// しても衝突しないように、先頭を離してあります。
+///
+/// 5 つを 1 つにまとめてあるのは、渡す先（[`Board::new_empty`]）が引数の並び
+/// だけで意味を伝えられなくなったためです。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NextIds {
+    pub card: CardId,
+    pub column: ColumnId,
+    pub tag: TagId,
+    pub checklist_item: ChecklistItemId,
+    pub recurrence: RecurrenceId,
+}
+
 impl Board {
     // 新しいボードを作るのは置き場所。`--no-default-features` では誰も呼ばない。
     #[cfg_attr(not(feature = "sqlite"), allow(dead_code))]
-    pub(crate) fn new_empty(
-        id: BoardId,
-        name: impl Into<String>,
-        next_card_id: CardId,
-        first_column_id: ColumnId,
-        next_tag_id: TagId,
-        next_checklist_item_id: ChecklistItemId,
-        now: i64,
-    ) -> Self {
+    pub(crate) fn new_empty(id: BoardId, name: impl Into<String>, next: NextIds, now: i64) -> Self {
+        let first_column_id = next.column;
         Self {
             id,
             name: name.into(),
             created_at: now,
             updated_at: now,
-            next_card_id,
+            next_card_id: next.card,
             next_column_id: first_column_id + 2,
-            next_tag_id,
-            next_checklist_item_id,
+            next_tag_id: next.tag,
+            next_checklist_item_id: next.checklist_item,
+            next_recurrence_id: next.recurrence,
             tags: Vec::new(),
             archived_cards: Vec::new(),
             columns: vec![
                 Column::new(first_column_id, id, "やること", 0, now),
                 Column::new_done(first_column_id + 1, id, "完了", 1, now),
             ],
+            recurrences: Vec::new(),
             pending_events: Vec::new(),
         }
     }
@@ -300,6 +453,7 @@ impl Board {
             next_column_id: 4,
             next_tag_id: 1,
             next_checklist_item_id: 1,
+            next_recurrence_id: 1,
             tags: Vec::new(),
             archived_cards: Vec::new(),
             columns: vec![
@@ -307,6 +461,7 @@ impl Board {
                 Column::new(2, 1, "進行中", 1, now),
                 Column::new_done(3, 1, "完了", 2, now),
             ],
+            recurrences: Vec::new(),
             pending_events: Vec::new(),
         }
     }
@@ -335,6 +490,7 @@ impl Board {
             next_column_id: 4,
             next_tag_id: 1,
             next_checklist_item_id: 1,
+            next_recurrence_id: 1,
             tags: Vec::new(),
             archived_cards: Vec::new(),
             columns: vec![
@@ -342,6 +498,7 @@ impl Board {
                 Column::new(2, 1, "進行中", 1, now),
                 Column::new(3, 1, "完了", 2, now),
             ],
+            recurrences: Vec::new(),
             pending_events: Vec::new(),
         };
 
@@ -388,6 +545,8 @@ impl Board {
             tag_ids: Vec::new(),
             checklist_items: Vec::new(),
             archived_at: None,
+            recurrence_id: None,
+            occurrence_date: None,
         });
         id
     }
@@ -407,6 +566,50 @@ impl Board {
             updated_at: now,
         });
         id
+    }
+
+    /// 繰り返しの定義を 1 つ足す。**土台を組み立てるためだけのもの。**
+    ///
+    /// 中身は返ってきた ID から引いて直に書き換えられます（`recurrence_mut`）。
+    /// 盤面の判断は入りません——それは webview のモデルの仕事です（[ADR 0039]）。
+    ///
+    /// [ADR 0039]: ../../../docs/adr/0039-the-board-model-moves-to-typescript.md
+    #[cfg(any(test, feature = "test-fixtures"))]
+    pub fn push_recurrence(
+        &mut self,
+        title: impl Into<String>,
+        schedule: Schedule,
+    ) -> RecurrenceId {
+        let now = timestamp();
+        let id = self.next_recurrence_id;
+        self.next_recurrence_id += 1;
+        let column_id = self.columns.first().map_or(0, |column| column.id);
+        self.recurrences.push(Recurrence {
+            id,
+            board_id: self.id,
+            title: title.into(),
+            description: String::new(),
+            column_id,
+            tag_ids: Vec::new(),
+            checklist: Vec::new(),
+            schedule,
+            lead_days: 0,
+            previous: PreviousPolicy::Archive,
+            enabled: true,
+            last_generated_on: None,
+            created_at: now,
+            updated_at: now,
+        });
+        id
+    }
+
+    /// 繰り返しの定義を 1 つ引き当てる。**土台を組み立てるためだけのもの。**
+    #[cfg(any(test, feature = "test-fixtures"))]
+    pub fn recurrence_mut(&mut self, recurrence_id: RecurrenceId) -> &mut Recurrence {
+        self.recurrences
+            .iter_mut()
+            .find(|recurrence| recurrence.id == recurrence_id)
+            .expect("the recurrence is there")
     }
 
     /// カラムを 1 本足す。**土台を組み立てるためだけのもの。**
@@ -516,10 +719,15 @@ impl Board {
     ///
     /// 見るのは 4 つ。
     ///
-    /// - 空のタイトル・カラム名・タグ名（画面が断っているはずのもの）
-    /// - 知らないタグを指すカード
+    /// - 空のタイトル・カラム名・タグ名・繰り返しの題（画面が断っているはずのもの）
+    /// - 知らないタグを指すカードと、知らないタグを指す繰り返しの定義
     /// - 並びと `position` の食い違い（見た目と保存が別のことを言う）
     /// - 採番の続きが、使っている ID を追い越していない状態（次に採ると衝突する）
+    ///
+    /// **カードの `recurrence_id` が実在するかは見ません**（#198）。定義を
+    /// 消しても盤面のカードは残るので、そこを見ると消した瞬間から保存できなく
+    /// なります。同じ理由で `Recurrence::column_id` の行き先も見ません——
+    /// 消えていたら一番左に入れる、と webview が決めています。
     ///
     /// [ADR 0040]: ../../../docs/adr/0040-the-shape-and-the-store-stay-in-rust.md
     pub fn validate(&self) -> Result<(), BoardError> {
@@ -584,6 +792,57 @@ impl Board {
                     card.id
                 )));
             }
+        }
+        for recurrence in &self.recurrences {
+            self.validate_recurrence(recurrence, &tag_ids)?;
+        }
+        Ok(())
+    }
+
+    /// 繰り返しの定義 1 つが、行として成り立っているか（#198）。
+    fn validate_recurrence(
+        &self,
+        recurrence: &Recurrence,
+        tag_ids: &[TagId],
+    ) -> Result<(), BoardError> {
+        if recurrence.title.trim().is_empty() {
+            return Err(BoardError::EmptyRecurrenceTitle);
+        }
+        if recurrence.id >= self.next_recurrence_id {
+            return Err(BoardError::Inconsistent(format!(
+                "recurrence {} is at or past the next recurrence id {}",
+                recurrence.id, self.next_recurrence_id
+            )));
+        }
+        for tag_id in &recurrence.tag_ids {
+            if !tag_ids.contains(tag_id) {
+                return Err(BoardError::TagNotFound(*tag_id));
+            }
+        }
+        if recurrence.lead_days < 0 {
+            return Err(BoardError::Inconsistent(format!(
+                "recurrence {} looks ahead {} days",
+                recurrence.id, recurrence.lead_days
+            )));
+        }
+        match &recurrence.schedule {
+            Schedule::Weekly { days } => {
+                if days.is_empty() || days.iter().any(|day| *day > 6) {
+                    return Err(BoardError::Inconsistent(format!(
+                        "recurrence {} names no usable weekday",
+                        recurrence.id
+                    )));
+                }
+            }
+            Schedule::Monthly { day } => {
+                if *day < 1 || *day > 31 {
+                    return Err(BoardError::Inconsistent(format!(
+                        "recurrence {} names day {} of the month",
+                        recurrence.id, day
+                    )));
+                }
+            }
+            Schedule::Daily | Schedule::Weekday | Schedule::MonthlyLast => {}
         }
         Ok(())
     }

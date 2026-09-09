@@ -24,6 +24,8 @@ function card(id: number): Card {
     tagIds: [],
     checklistItems: [],
     archivedAt: null,
+    recurrenceId: null,
+    occurrenceDate: null,
   };
 }
 
@@ -49,6 +51,7 @@ function board(...columns: Column[]): Board {
     tags: [],
     archivedCards: [],
     columns,
+    recurrences: [],
   };
 }
 
