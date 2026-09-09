@@ -87,6 +87,11 @@ interface FaceProps {
   due: DueStatus | undefined;
   /** 終わったものの置き場にあるか（ADR 0038）。トーンダウンして描く。 */
   done?: boolean;
+  /** 繰り返しが出したカードで、**その定義がまだ残っている**（#198）。
+   *
+   * 出すのは、勝手に片付くことの説明になるからです。定義が消えたあとの
+   * カードには出しません——説明する相手がもういません。 */
+  recurring?: boolean;
   /** `due_statuses` を出した日。年を出すかどうかをここから決める（時計ではなく）。 */
   today: string;
   /** 絞り込んでいるタグ。押されているチップに印を付けるのに使う。 */
@@ -105,6 +110,7 @@ export function CardFace({
   tags,
   due,
   done = false,
+  recurring = false,
   today,
   activeTag,
   onToggleTagFilter,
@@ -120,7 +126,17 @@ export function CardFace({
 
   return (
     <>
-      <div className="card-title">{card.title}</div>
+      {/* しるしはタイトルの行に置きます。行を増やすとカードの高さが中身で
+          変わり、落とす位置の判定が動きます（`docs/DESIGN.md`「画面の作り」）。
+          色だけに意味を持たせないので、読み上げにも名前を付けます。 */}
+      <div className="card-title">
+        {recurring && (
+          <span className="card-recurring" role="img" aria-label="繰り返し">
+            🔁
+          </span>
+        )}
+        {card.title}
+      </div>
       {badge !== null && (
         <div className="card-due" data-tone={badge.tone}>
           {badge.text}
@@ -226,6 +242,7 @@ export function Card({
   tags,
   due,
   done = false,
+  recurring = false,
   today,
   activeTag,
   onToggleTagFilter,
@@ -290,6 +307,7 @@ export function Card({
         tags={tags}
         due={due}
         done={done}
+        recurring={recurring}
         today={today}
         activeTag={activeTag}
         onToggleTagFilter={onToggleTagFilter}

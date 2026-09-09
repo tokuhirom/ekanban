@@ -24,6 +24,7 @@ export function firstRunBoard(): StoredBoard {
     nextColumnId: 4,
     nextTagId: 1,
     nextChecklistItemId: 1,
+    nextRecurrenceId: 1,
     tags: [],
     archivedCards: [],
     columns: [
@@ -31,6 +32,7 @@ export function firstRunBoard(): StoredBoard {
       { id: 2, boardId: 1, name: "進行中", position: 1, createdAt: at, updatedAt: at, done: false, cards: [] },
       { id: 3, boardId: 1, name: "完了", position: 2, createdAt: at, updatedAt: at, done: true, cards: [] },
     ],
+    recurrences: [],
     events: [],
     rev: 0,
   };

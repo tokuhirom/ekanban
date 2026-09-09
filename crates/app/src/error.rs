@@ -42,6 +42,7 @@ pub enum Field {
     ColumnName,
     TagName,
     BoardName,
+    RecurrenceTitle,
 }
 
 /// コマンドの `Err`。
@@ -118,6 +119,11 @@ fn field_for(error: &BoardError) -> Option<(Field, &'static str, Option<String>)
             (Field::ChecklistItem, "チェック項目を入力してください", None)
         }
         BoardError::EmptyBoardName => (Field::BoardName, "ボード名を入力してください", None),
+        BoardError::EmptyRecurrenceTitle => (
+            Field::RecurrenceTitle,
+            "繰り返しの題を入力してください",
+            None,
+        ),
         _ => return None,
     };
     Some((field, message, value))
@@ -150,6 +156,10 @@ fn board_detail(error: &BoardError) -> String {
             format!("カード #{card_id} のチェック項目 #{item_id} が見つかりません")
         }
         BoardError::LastColumn => "最後のカラムは削除できません".to_string(),
+        BoardError::EmptyRecurrenceTitle => "繰り返しの題を入力してください".to_string(),
+        BoardError::RecurrenceNotFound(recurrence_id) => {
+            format!("繰り返し #{recurrence_id} が見つかりません。画面を更新してください")
+        }
         // 使う人の入力の間違いではなく、画面の側の食い違い（ADR 0040）。
         // **理由をそのまま出します**——打ち直して直るものではないので、
         // 言い換えても手の打ちようが増えません。追う手がかりのほうが要ります。

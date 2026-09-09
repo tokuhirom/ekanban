@@ -19,7 +19,9 @@ use ekanban_app::snapshot::{CaptureTarget, ThemePreference};
 use ekanban_app::state::Source;
 use ekanban_app::AppState;
 use ekanban_core::db::{Database, FilterState, WindowBoundsState};
-use ekanban_core::model::{Board, BoardId, CardEvent, CardEventKind, CardId};
+use ekanban_core::model::{
+    Board, BoardId, CardEvent, CardEventKind, CardId, PreviousPolicy, Recurrence, Schedule,
+};
 use tempfile::TempDir;
 
 struct Harness {
@@ -342,6 +344,139 @@ fn a_board_that_does_not_hold_together_is_refused() {
 
     // どれも書かれていない。
     assert_eq!(harness.stored(), before);
+}
+
+/// 繰り返しの定義が、`save_document` の 1 本の口から SQLite まで届く（#198）。
+///
+/// **判断は webview 側**です（`web/src/model/recurrence.ts`）。ここが見るのは、
+/// 画面が組み立てた定義がそのまま行として着地することだけ。
+#[test]
+fn a_recurrence_the_webview_made_reaches_sqlite() {
+    let harness = Harness::open();
+    let mut document = harness.document();
+    let column_id = document.board.columns[0].id;
+    let now = 1_700_000_000_000;
+
+    document.board.recurrences.push(Recurrence {
+        id: document.next_recurrence_id,
+        board_id: document.board.id,
+        title: "週次の振り返り".to_string(),
+        description: "今週やったことを 10 行で。".to_string(),
+        column_id,
+        tag_ids: Vec::new(),
+        checklist: vec!["やったことを並べる".to_string()],
+        schedule: Schedule::Weekly { days: vec![0, 4] },
+        lead_days: 2,
+        previous: PreviousPolicy::Delete,
+        enabled: true,
+        last_generated_on: chrono::NaiveDate::from_ymd_opt(2026, 2, 13),
+        created_at: now,
+        updated_at: now,
+    });
+    document.next_recurrence_id += 1;
+    let recurrence_id = document.board.recurrences[0].id;
+    // 出来たカードは、定義と発生日を参照として持つ。
+    document.board.columns[0].cards[0].recurrence_id = Some(recurrence_id);
+    document.board.columns[0].cards[0].occurrence_date =
+        chrono::NaiveDate::from_ymd_opt(2026, 2, 13);
+    let expected = document.board.recurrences.clone();
+
+    commands::save_document(&harness.state, document, Vec::new()).expect("the board is saved");
+
+    let stored = harness.stored();
+    assert_eq!(stored.recurrences, expected, "定義がそのまま届く");
+    assert_eq!(
+        stored.columns[0].cards[0].recurrence_id,
+        Some(recurrence_id)
+    );
+    assert_eq!(
+        stored.columns[0].cards[0].occurrence_date,
+        chrono::NaiveDate::from_ymd_opt(2026, 2, 13)
+    );
+}
+
+/// 繰り返しの定義も、行として成り立っているかを検める（[ADR 0040]）。
+///
+/// **カードが指す定義が実在するかは見ません**——定義を消しても盤面のカードは
+/// 残るので、そこを見ると消した瞬間から保存できなくなります。
+///
+/// [ADR 0040]: ../../docs/adr/0040-the-shape-and-the-store-stay-in-rust.md
+#[test]
+fn a_recurrence_that_does_not_hold_together_is_refused() {
+    let harness = Harness::open();
+    let before = harness.stored();
+    let document = harness.document();
+    let column_id = document.board.columns[0].id;
+    let now = 1_700_000_000_000;
+    let recurrence = |over: fn(&mut Recurrence)| {
+        let mut document = document.clone();
+        let mut recurrence = Recurrence {
+            id: document.next_recurrence_id,
+            board_id: document.board.id,
+            title: "メールを見る".to_string(),
+            description: String::new(),
+            column_id,
+            tag_ids: Vec::new(),
+            checklist: Vec::new(),
+            schedule: Schedule::Daily,
+            lead_days: 0,
+            previous: PreviousPolicy::Archive,
+            enabled: true,
+            last_generated_on: None,
+            created_at: now,
+            updated_at: now,
+        };
+        over(&mut recurrence);
+        document.board.recurrences.push(recurrence);
+        document.next_recurrence_id += 1;
+        document
+    };
+
+    let failure = commands::save_document(
+        &harness.state,
+        recurrence(|recurrence| recurrence.title = "  ".to_string()),
+        Vec::new(),
+    )
+    .expect_err("an empty title is refused");
+    assert_eq!(failure.field, Some(Field::RecurrenceTitle));
+
+    commands::save_document(
+        &harness.state,
+        recurrence(|recurrence| recurrence.tag_ids = vec![999]),
+        Vec::new(),
+    )
+    .expect_err("a template pointing at a tag that is not there is refused");
+
+    commands::save_document(
+        &harness.state,
+        recurrence(|recurrence| recurrence.schedule = Schedule::Weekly { days: Vec::new() }),
+        Vec::new(),
+    )
+    .expect_err("a weekly schedule that names no weekday is refused");
+
+    commands::save_document(
+        &harness.state,
+        recurrence(|recurrence| recurrence.lead_days = -1),
+        Vec::new(),
+    )
+    .expect_err("looking backwards is refused");
+
+    let mut behind_counter = recurrence(|_| {});
+    behind_counter.next_recurrence_id = 0;
+    commands::save_document(&harness.state, behind_counter, Vec::new())
+        .expect_err("a counter that would hand out an id already in use is refused");
+
+    // カードが消えた定義を指しているのは、断る理由になりません。
+    let mut orphan = document.clone();
+    orphan.board.columns[0].cards[0].recurrence_id = Some(999);
+    commands::save_document(&harness.state, orphan, Vec::new())
+        .expect("a card left over from a deleted recurrence is fine");
+
+    let stored = harness.stored();
+    assert_eq!(
+        stored.recurrences, before.recurrences,
+        "どれも書かれていない"
+    );
 }
 
 // ---------------------------------------------------------------- ファイル

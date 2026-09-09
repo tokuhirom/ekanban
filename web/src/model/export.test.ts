@@ -25,6 +25,8 @@ function card(id: number, title: string, description: string, extra: Partial<Car
     tagIds: [],
     checklistItems: [],
     archivedAt: null,
+    recurrenceId: null,
+    occurrenceDate: null,
     ...extra,
   };
 }
@@ -50,6 +52,7 @@ function board(columns: Column[], archived: Card[] = [], tags: Tag[] = []): Boar
     tags,
     archivedCards: archived,
     columns,
+    recurrences: [],
   };
 }
 

@@ -18,6 +18,7 @@ const TITLES = {
   column: "カラムを操作できませんでした",
   tag: "タグを操作できませんでした",
   board: "ボードを操作できませんでした",
+  recurrence: "繰り返しを操作できませんでした",
 } as const;
 
 /// モデルの断りを `AppError` にする。
@@ -40,6 +41,13 @@ export function describeBoardError(error: BoardError): AppError {
       );
     case "emptyChecklistItemText":
       return fieldFailure(TITLES.card, "checklistItem", "チェック項目を入力してください", null);
+    case "emptyRecurrenceTitle":
+      return fieldFailure(
+        TITLES.recurrence,
+        "recurrenceTitle",
+        "繰り返しの題を入力してください",
+        null,
+      );
     // 以下は打ち直して直るものではないので、ダイアログに出します。画面が
     // 古いまま操作したときに出るもので、更新すれば消えます。
     case "cardNotFound":
@@ -58,6 +66,11 @@ export function describeBoardError(error: BoardError): AppError {
       );
     case "lastColumn":
       return dialog(TITLES.column, "最後のカラムは削除できません");
+    case "recurrenceNotFound":
+      return dialog(
+        TITLES.recurrence,
+        `繰り返し #${String(error.recurrenceId)} が見つかりません。画面を更新してください`,
+      );
   }
 }
 

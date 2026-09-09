@@ -8,7 +8,9 @@
       "description": "",
       "due_date": null,
       "id": 3,
+      "occurrence_date": null,
       "position": 0,
+      "recurrence_id": null,
       "tag_ids": [],
       "title": "しまったカード",
       "updated_at": 1700000000000
@@ -75,7 +77,9 @@
           "description": "説明\nの 2 行目",
           "due_date": "2026-12-24",
           "id": 1,
+          "occurrence_date": null,
           "position": 0,
+          "recurrence_id": null,
           "tag_ids": [
             1
           ],
@@ -100,7 +104,9 @@
           "description": "",
           "due_date": null,
           "id": 2,
+          "occurrence_date": "2026-12-21",
           "position": 0,
+          "recurrence_id": 1,
           "tag_ids": [],
           "title": "終わったカード",
           "updated_at": 1700000000000
@@ -114,6 +120,34 @@
     }
   ],
   "format": "ekanban-board",
+  "recurrences": [
+    {
+      "board_id": 1,
+      "checklist": [
+        "やったことを並べる"
+      ],
+      "column_id": 1,
+      "created_at": 1700000000000,
+      "description": "今週やったことを 10 行で。",
+      "enabled": true,
+      "id": 1,
+      "last_generated_on": "2026-12-21",
+      "lead_days": 2,
+      "previous": "archive",
+      "schedule": {
+        "days": [
+          0,
+          4
+        ],
+        "kind": "weekly"
+      },
+      "tag_ids": [
+        1
+      ],
+      "title": "週次の振り返り",
+      "updated_at": 1700000000000
+    }
+  ],
   "tags": [
     {
       "board_id": 1,

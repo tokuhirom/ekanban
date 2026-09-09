@@ -88,6 +88,7 @@ function boardItems(): Item[] {
     app("deleteBoard", "現在のボードを削除"),
     SEPARATOR,
     app("manageTags", "タグを整理…"),
+    app("manageRecurrences", "繰り返しを設定…"),
   ];
 }
 

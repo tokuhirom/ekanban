@@ -454,6 +454,18 @@ textarea {
   overflow-wrap: anywhere;
 }
 
+/* 繰り返しが出したカードのしるし（#198、ADR 0049）。
+ *
+ * タイトルの行に置くので、カードの高さは項目数で変わらない
+ * （`docs/DESIGN.md`「ドラッグ＆ドロップ」）。絵文字は行の高さを押し広げ
+ * やすいので、少しだけ小さくして行送りを固定する。 */
+.card-recurring {
+  margin-right: 4px;
+  font-size: 11px;
+  line-height: 1;
+  vertical-align: 1px;
+}
+
 .card-due,
 .card-checklist,
 .card-description {
@@ -1162,6 +1174,92 @@ button.danger {
   flex-wrap: wrap;
   align-items: center;
   gap: 4px;
+}
+
+/* 繰り返しの設定パネル（#198、ADR 0049）。
+ *
+ * 1 つの定義が持つ項目が多いので、行ではなく区切られた区画で並べる。区切りが
+ * 無いと、どの欄がどの定義のものか読めなくなる。 */
+.recurrence-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-input-background);
+}
+
+.recurrence-head,
+.recurrence-add {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.recurrence-title-input {
+  flex: 1 1 120px;
+  width: auto;
+  min-width: 0;
+}
+
+.recurrence-enabled {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: var(--color-muted-foreground);
+}
+
+.recurrence-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.recurrence-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 140px;
+  min-width: 0;
+}
+
+.recurrence-weekdays,
+.recurrence-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+}
+
+.recurrence-weekday {
+  padding: 2px 6px;
+  font-size: 12px;
+}
+
+.recurrence-day-input,
+.recurrence-lead-input {
+  width: 100%;
+}
+
+.recurrence-description-input,
+.recurrence-checklist-input {
+  width: 100%;
+  resize: vertical;
+}
+
+/* 押されている曜日とタグは、色だけでなく `✓` でも出す（`docs/DESIGN.md`
+ * 「色だけに意味を持たせない」）。枠のほうはその補いとして付ける。 */
+.recurrence-weekday[aria-pressed="true"],
+.recurrence-tags .tag-chip[aria-pressed="true"] {
+  outline: 2px solid var(--color-info);
+  outline-offset: 1px;
+}
+
+.recurrence-summary {
+  margin: 0;
 }
 
 /* チェックリストの 1 項目は必ず 1 行（#137）。折り返すと、行ごとに折り返しの

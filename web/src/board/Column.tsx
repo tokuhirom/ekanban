@@ -20,6 +20,8 @@ interface Props {
   column: ColumnData;
   tags: readonly Tag[];
   dueStatuses: ReadonlyMap<number, DueStatus>;
+  /** 繰り返しが出したカードで、定義がまだ残っているもの（#198）。 */
+  recurringCards: ReadonlySet<number>;
   /** `due_statuses` を出した日。カード表面の期限表示がここから年を決める。 */
   today: string;
   matched: ReadonlySet<number> | null;
@@ -50,6 +52,7 @@ export function Column({
   column,
   tags,
   dueStatuses,
+  recurringCards,
   today,
   matched,
   activeTag,
@@ -238,6 +241,7 @@ export function Column({
               card={card}
               tags={tags}
               due={dueStatuses.get(card.id)}
+              recurring={recurringCards.has(card.id)}
               today={today}
               activeTag={activeTag}
               onToggleTagFilter={onToggleTagFilter}

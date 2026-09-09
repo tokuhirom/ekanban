@@ -31,6 +31,8 @@ function card(id: number): Card {
     tagIds: [],
     checklistItems: [],
     archivedAt: null,
+    recurrenceId: null,
+    occurrenceDate: null,
   };
 }
 
@@ -48,7 +50,7 @@ function column(id: number, cardIds: number[]): Column {
 }
 
 function board(...columns: Column[]): Board {
-  return { id: 1, name: "盤面", createdAt: 0, updatedAt: 0, tags: [], archivedCards: [], columns };
+  return { id: 1, name: "盤面", createdAt: 0, updatedAt: 0, tags: [], archivedCards: [], columns, recurrences: [] };
 }
 
 describe("nextSelection", () => {

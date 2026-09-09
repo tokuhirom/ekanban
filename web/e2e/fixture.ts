@@ -67,6 +67,8 @@ function place(board: StoredBoard, drafts: Draft[]): void {
       tagIds: draft.tagIds,
       checklistItems: [],
       archivedAt: null,
+      recurrenceId: null,
+      occurrenceDate: null,
     });
   }
 }
@@ -86,6 +88,7 @@ export function seededState(): StoredState {
     nextColumnId: 5,
     nextTagId: 4,
     nextChecklistItemId: 4,
+    nextRecurrenceId: 4,
     tags: [
       { id: design, boardId: 1, name: "設計", color: "#8b5cf6", createdAt: AT, updatedAt: AT },
       { id: research, boardId: 1, name: "調査", color: "#22c55e", createdAt: AT, updatedAt: AT },
@@ -98,6 +101,7 @@ export function seededState(): StoredState {
       column(3, 1, "完了", 2, true),
       column(4, 1, "寝かせる", 3, false),
     ],
+    recurrences: [],
     events: [],
     rev: 0,
   };
@@ -191,6 +195,7 @@ export function seededState(): StoredState {
     nextColumnId: first + 3,
     nextTagId: first,
     nextChecklistItemId: first,
+    nextRecurrenceId: first,
     tags: [],
     archivedCards: [],
     columns: [
@@ -198,6 +203,7 @@ export function seededState(): StoredState {
       column(first + 1, 2, "完了", 1, true),
       column(first + 2, 2, "済み", 2, false),
     ],
+    recurrences: [],
     events: [],
     rev: 0,
   };

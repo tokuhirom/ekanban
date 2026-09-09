@@ -12,6 +12,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { moveCardArgs, moveColumnArgs, parseHandle, previewMove } from "../board/dnd";
 import type { BoardDocument, Outcome } from "../model/board";
 import {
+  applyRecurrences,
   canRedo,
   canUndo,
   cloneDocument,
@@ -110,6 +111,10 @@ export interface BoardState {
   toggleTagPanel: () => void;
   /** メニューから開くときはこちら。開いているのにもう一度押して畳まない。 */
   openTagPanel: () => void;
+  /** 繰り返しの定義パネルの開閉（#198）。タグ整理と同じ「ボード全体のもの」。 */
+  recurrencePanelOpen: boolean;
+  openRecurrencePanel: () => void;
+  closeRecurrencePanel: () => void;
   /** 入力欄の中身。確定していないので Rust には渡していない。 */
   search: string;
   /** 絞り込んでいるタグの ID。無ければ `null`。 */
@@ -135,6 +140,11 @@ export interface BoardState {
   /** 検索とタグに一致したカード。`null` は「絞り込んでいない」。 */
   matched: ReadonlySet<number> | null;
   dueStatuses: ReadonlyMap<number, DueStatus>;
+  /** 繰り返しが出したカードのうち、**定義がまだ残っている**もの（#198）。
+   *
+   * 🔁 を出す相手です。定義を消したあとのカードには出しません——なぜ勝手に
+   * 片付くのかを説明する相手が、もういないためです。 */
+  recurringCards: ReadonlySet<number>;
   /** サイドバーに出すボードの一覧。期限の件数は手元で数える（ADR 0011）。 */
   boards: readonly BoardRow[];
   /** 期限を数える基準日（`"YYYY-MM-DD"`）。日付をまたぐと進む。 */
@@ -229,6 +239,7 @@ export function useBoardState(): BoardState {
   const [alert, setAlert] = useState<Alert | null>(null);
   const [requested, setRequested] = useState<Editing | null>(null);
   const [tagPanelOpen, setTagPanelOpen] = useState(false);
+  const [recurrencePanelOpen, setRecurrencePanelOpen] = useState(false);
   // 表示だけの状態なので、覚えません。次に開いたときは盤面から始めます。
   const [showArchived, setShowArchived] = useState(false);
   const [quickCaptureShortcut, setQuickCaptureShortcut] = useState<string | null>(null);
@@ -295,6 +306,7 @@ export function useBoardState(): BoardState {
     async (
       act: (document: BoardDocument) => Outcome<unknown>,
       boardId?: number,
+      quiet = false,
     ): Promise<AppError | null> => {
       const target = boardId ?? openBoardIdRef.current;
       const open = documentsRef.current.find((document) => document.board.id === target);
@@ -307,7 +319,7 @@ export function useBoardState(): BoardState {
         // 入力欄に返すものは、呼び元しか置き場所を知らない。ここでダイアログに
         // 出すと、打ち直す先から離れたところに理由が出る（ADR 0016）。
         if (failure.kind === "validation") return failure;
-        setAlert(failure);
+        if (!quiet) setAlert(failure);
         void ipc.logFrontendError(`${failure.title}: ${failure.detail}`);
         return failure;
       }
@@ -328,7 +340,10 @@ export function useBoardState(): BoardState {
       } catch (error: unknown) {
         const failure = asAppError(error);
         const alert: Alert = describeFailure(error);
-        setAlert(alert);
+        // **黙って持ち越す道**（#198）。繰り返しの生成は使う人が押した操作では
+        // ないので、起動した途端に「保存できませんでした」を出しません。
+        // `lastGeneratedOn` を書けていないぶんは、次の起動でやり直します。
+        if (!quiet) setAlert(alert);
         void ipc.logFrontendError(`${alert.title}: ${alert.detail}`);
         // 書き負けたときは、置き場所にあるものを読み直します（ADR 0040）。
         // 画面が古いまま押し続けると、断られ続けるだけになります。
@@ -346,6 +361,19 @@ export function useBoardState(): BoardState {
       boardId?: number,
     ): Promise<AppError | null> => {
       const queued = queue.current.then(() => apply(act, boardId));
+      queue.current = queued;
+      return queued;
+    },
+    [apply],
+  );
+
+  /// 同じ 1 本の経路を、**何も言わずに**通す（#198）。
+  ///
+  /// 繰り返しの生成だけが使います。失敗しても画面には何も出ず、書けなかった
+  /// ぶんは次の契機に持ち越されます。
+  const runQuietly = useCallback(
+    (act: (document: BoardDocument) => Outcome<unknown>, boardId: number) => {
+      const queued = queue.current.then(() => apply(act, boardId, true));
       queue.current = queued;
       return queued;
     },
@@ -490,6 +518,70 @@ export function useBoardState(): BoardState {
     }
     return map;
   }, [snapshot, today]);
+
+  // 🔁 を出す相手（#198）。**定義がまだ残っているカードだけ**です。
+  //
+  // 定義を消しても盤面のカードは残ります。そこにしるしを出し続けると、片付く
+  // 見込みのないカードに「繰り返し」と書いてあることになります。
+  const recurringCards = useMemo(() => {
+    const marked = new Set<number>();
+    if (snapshot === null) return marked;
+    const alive = new Set(snapshot.board.recurrences.map((recurrence) => recurrence.id));
+    const cards = [
+      ...snapshot.board.columns.flatMap((column) => column.cards),
+      ...snapshot.board.archivedCards,
+    ];
+    for (const card of cards) {
+      if (card.recurrenceId !== null && alive.has(card.recurrenceId)) marked.add(card.id);
+    }
+    return marked;
+  }, [snapshot]);
+
+  // 繰り返しの生成と片付け（#198、ADR 0049）。
+  //
+  // **契機は 3 つ**——起動、基準日が進んだとき、そして定義を編んだ直後です。
+  // 3 つめは、作った定義が次の起動まで何も出さないと、押した手ごたえが無く
+  // なるためです。走らせるのは**全ボード**（開いていないものも。開いた日に
+  // 30 枚並ばないように）で、**メインウィンドウだけ**です——この hook を使う
+  // のはボードの窓だけで、キャプチャの窓は自分の経路を持っています。
+  //
+  // 見張るのは**生成に効く項目だけ**（周期・先読み・片付け方・入れ先・有効か）
+  // です。`lastGeneratedOn` を入れると、1 枚出すたびに自分で自分をもう一度
+  // 呼ぶことになります。題や説明を直しても出し直しません——出ているカードを
+  // 書き換える操作ではないからです。
+  //
+  // 失敗はボード単位で、`runQuietly` が黙って持ち越します。`lastGeneratedOn`
+  // を書けていないので、次の契機でやり直しになります。
+  const trigger = useMemo(
+    () =>
+      JSON.stringify(
+        documents.map((document) => [
+          document.board.id,
+          document.board.recurrences.map((recurrence) => [
+            recurrence.id,
+            recurrence.enabled,
+            recurrence.schedule,
+            recurrence.leadDays,
+            recurrence.previous,
+            recurrence.columnId,
+          ]),
+        ]),
+      ),
+    [documents],
+  );
+  const generatedFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (documents.length === 0) return;
+    const key = `${today}\u0000${trigger}`;
+    if (generatedFor.current === key) return;
+    generatedFor.current = key;
+    for (const document of documentsRef.current) {
+      void runQuietly((target) => applyRecurrences(target, today), document.board.id);
+    }
+    // `documents` は `trigger` の材料なので、依存には入れません——中身が変わら
+    // ないまま参照だけ入れ替わったときに、もう一度走らせないためです。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runQuietly, today, trigger]);
 
   // ボード一覧。**名前と並びは置き場所から、件数は手元から。**
   //
@@ -772,6 +864,14 @@ export function useBoardState(): BoardState {
     setTagPanelOpen(true);
   }, []);
 
+  const openRecurrencePanel = useCallback(() => {
+    setRecurrencePanelOpen(true);
+  }, []);
+
+  const closeRecurrencePanel = useCallback(() => {
+    setRecurrencePanelOpen(false);
+  }, []);
+
   const dismissAlert = useCallback(() => {
     setAlert(null);
   }, []);
@@ -820,6 +920,9 @@ export function useBoardState(): BoardState {
     tagPanelOpen,
     toggleTagPanel,
     openTagPanel,
+    recurrencePanelOpen,
+    openRecurrencePanel,
+    closeRecurrencePanel,
     search,
     tagId: effectiveTagId,
     activeTag,
@@ -835,6 +938,7 @@ export function useBoardState(): BoardState {
     redo,
     matched,
     dueStatuses,
+    recurringCards,
     boards,
     boardOf,
     setCaptureColumn,

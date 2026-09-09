@@ -16,7 +16,7 @@
 
 use serde_json::json;
 
-use crate::model::{Board, Card};
+use crate::model::{Board, Card, Recurrence, Schedule};
 use crate::store::{StoreError, StoredCardEvent};
 
 /// 書き出す JSON。`events` は置き場所が持っているカードの履歴。
@@ -48,6 +48,8 @@ pub fn render_board_json(board: &Board, events: &[StoredCardEvent]) -> Result<St
             "due_date": card.due_date.map(|date| date.format("%Y-%m-%d").to_string()),
             "tag_ids": card.tag_ids,
             "archived_at": card.archived_at,
+            "recurrence_id": card.recurrence_id,
+            "occurrence_date": card.occurrence_date.map(|date| date.format("%Y-%m-%d").to_string()),
             "checklist_items": card.checklist_items.iter().map(|item| json!({
                 "id": item.id,
                 "card_id": item.card_id,
@@ -93,6 +95,13 @@ pub fn render_board_json(board: &Board, events: &[StoredCardEvent]) -> Result<St
         .iter()
         .map(card_json)
         .collect::<Vec<_>>();
+    // 繰り返しの定義（#198）。**Markdown には入りません**——あちらは人が読む
+    // 盤面の写しで、定義は盤面の上に見えているものではありません（ADR 0045）。
+    let recurrences = board
+        .recurrences
+        .iter()
+        .map(recurrence_json)
+        .collect::<Vec<_>>();
 
     serde_json::to_string_pretty(&json!({
         "format": "ekanban-board",
@@ -110,15 +119,44 @@ pub fn render_board_json(board: &Board, events: &[StoredCardEvent]) -> Result<St
         "columns": columns,
         "tags": tags,
         "archived_cards": archived_cards,
+        "recurrences": recurrences,
         "card_events": events,
     }))
     .map_err(StoreError::from)
 }
 
+/// 繰り返しの定義 1 つ。周期は置いてある 3 列ではなく、**形のまま**書きます
+/// ——読む人には `{"kind":"weekly","days":[0,4]}` のほうが辿れます。
+fn recurrence_json(recurrence: &Recurrence) -> serde_json::Value {
+    let schedule = match &recurrence.schedule {
+        Schedule::Weekly { days } => json!({ "kind": "weekly", "days": days }),
+        Schedule::Monthly { day } => json!({ "kind": "monthly", "day": day }),
+        other => json!({ "kind": other.kind_str() }),
+    };
+    json!({
+        "id": recurrence.id,
+        "board_id": recurrence.board_id,
+        "title": recurrence.title,
+        "description": recurrence.description,
+        "column_id": recurrence.column_id,
+        "tag_ids": recurrence.tag_ids,
+        "checklist": recurrence.checklist,
+        "schedule": schedule,
+        "lead_days": recurrence.lead_days,
+        "previous": recurrence.previous,
+        "enabled": recurrence.enabled,
+        "last_generated_on": recurrence
+            .last_generated_on
+            .map(|date| date.format("%Y-%m-%d").to_string()),
+        "created_at": recurrence.created_at,
+        "updated_at": recurrence.updated_at,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Card, ChecklistItem, Column, Tag};
+    use crate::model::{Card, ChecklistItem, Column, PreviousPolicy, Tag};
 
     /// 書き出しの形を 1 か所に固定する（[ADR 0041]、[ADR 0042]）。
     ///
@@ -141,6 +179,7 @@ mod tests {
             next_column_id: 3,
             next_tag_id: 2,
             next_checklist_item_id: 3,
+            next_recurrence_id: 2,
             tags: vec![Tag {
                 id: 1,
                 board_id: 1,
@@ -161,6 +200,8 @@ mod tests {
                 tag_ids: Vec::new(),
                 checklist_items: Vec::new(),
                 archived_at: Some(at + 2),
+                recurrence_id: None,
+                occurrence_date: None,
             }],
             columns: vec![
                 Column {
@@ -202,6 +243,8 @@ mod tests {
                             },
                         ],
                         archived_at: None,
+                        recurrence_id: None,
+                        occurrence_date: None,
                     }],
                 },
                 Column {
@@ -224,9 +267,28 @@ mod tests {
                         tag_ids: Vec::new(),
                         checklist_items: Vec::new(),
                         archived_at: None,
+                        // 繰り返しが出したカード（#198）。**参照だけ**を持ちます。
+                        recurrence_id: Some(1),
+                        occurrence_date: chrono::NaiveDate::from_ymd_opt(2026, 12, 21),
                     }],
                 },
             ],
+            recurrences: vec![Recurrence {
+                id: 1,
+                board_id: 1,
+                title: "週次の振り返り".to_string(),
+                description: "今週やったことを 10 行で。".to_string(),
+                column_id: 1,
+                tag_ids: vec![1],
+                checklist: vec!["やったことを並べる".to_string()],
+                schedule: Schedule::Weekly { days: vec![0, 4] },
+                lead_days: 2,
+                previous: PreviousPolicy::Archive,
+                enabled: true,
+                last_generated_on: chrono::NaiveDate::from_ymd_opt(2026, 12, 21),
+                created_at: at,
+                updated_at: at,
+            }],
             pending_events: Vec::new(),
         };
         let events = vec![

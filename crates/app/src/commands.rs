@@ -143,6 +143,7 @@ pub struct BoardDocument {
     pub next_column_id: ColumnId,
     pub next_tag_id: TagId,
     pub next_checklist_item_id: i64,
+    pub next_recurrence_id: i64,
     /// 保存のたびに 1 つ進む。手元のものと合わなければ、置き場所が断ります。
     pub rev: i64,
 }
@@ -154,6 +155,7 @@ impl BoardDocument {
             next_column_id: stored.board.next_column_id,
             next_tag_id: stored.board.next_tag_id,
             next_checklist_item_id: stored.board.next_checklist_item_id,
+            next_recurrence_id: stored.board.next_recurrence_id,
             rev: stored.rev,
             board: stored.board,
         }
@@ -167,6 +169,7 @@ impl BoardDocument {
         board.next_column_id = self.next_column_id;
         board.next_tag_id = self.next_tag_id;
         board.next_checklist_item_id = self.next_checklist_item_id;
+        board.next_recurrence_id = self.next_recurrence_id;
         board.adopt_pending_events(events);
         board
     }

@@ -12,6 +12,7 @@
 
 import type { BoardDocument } from "../ipc/types/BoardDocument";
 import type { Card } from "../ipc/types/Card";
+import type { Recurrence } from "../ipc/types/Recurrence";
 import type { StoredCardEvent } from "./types";
 
 /// `serde_json` が出す形に合わせて書く。
@@ -48,6 +49,8 @@ function cardJson(card: Card): Record<string, unknown> {
     due_date: card.dueDate,
     tag_ids: card.tagIds,
     archived_at: card.archivedAt,
+    recurrence_id: card.recurrenceId,
+    occurrence_date: card.occurrenceDate,
     checklist_items: card.checklistItems.map((item) => ({
       id: item.id,
       card_id: item.cardId,
@@ -57,6 +60,33 @@ function cardJson(card: Card): Record<string, unknown> {
       created_at: item.createdAt,
       updated_at: item.updatedAt,
     })),
+  };
+}
+
+/// 繰り返しの定義 1 つ。周期は置いてある形ではなく、**形のまま**書きます。
+function recurrenceJson(recurrence: Recurrence): Record<string, unknown> {
+  const { schedule } = recurrence;
+  const rendered =
+    schedule.kind === "weekly"
+      ? { kind: "weekly", days: schedule.days }
+      : schedule.kind === "monthly"
+        ? { kind: "monthly", day: schedule.day }
+        : { kind: schedule.kind };
+  return {
+    id: recurrence.id,
+    board_id: recurrence.boardId,
+    title: recurrence.title,
+    description: recurrence.description,
+    column_id: recurrence.columnId,
+    tag_ids: recurrence.tagIds,
+    checklist: recurrence.checklist,
+    schedule: rendered,
+    lead_days: recurrence.leadDays,
+    previous: recurrence.previous,
+    enabled: recurrence.enabled,
+    last_generated_on: recurrence.lastGeneratedOn,
+    created_at: recurrence.createdAt,
+    updated_at: recurrence.updatedAt,
   };
 }
 
@@ -98,6 +128,7 @@ export function renderBoardJson(
         updated_at: tag.updatedAt,
       })),
       archived_cards: board.archivedCards.map(cardJson),
+      recurrences: board.recurrences.map(recurrenceJson),
       card_events: events.map((event) => ({
         id: event.id,
         board_id: board.id,
