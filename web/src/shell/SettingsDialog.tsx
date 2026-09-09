@@ -4,7 +4,7 @@
 // （タグの整理、繰り返しの定義）は右のパネルで、そちらは「いま開いている
 // ボードを編む場所」です。混ぜると、どのボードの設定なのかが読めなくなります。
 //
-// 中身は 3 つ——テーマ、クイックキャプチャの割り当て、その入れ先。
+// 中身は 4 つ——テーマ、日付の切り替わり、クイックキャプチャの割り当て、その入れ先。
 //
 // **保存ボタンはありません。** 触った時点で確定します（カードの欄ごとの確定と
 // 同じ流儀、[ADR 0032]）。
@@ -61,10 +61,16 @@ const THEMES: { value: ThemePreference; label: string }[] = [
   { value: "system", label: "システムに合わせる" },
 ];
 
+/// 日付の切り替わりに選べる時刻。分は持たないので 0〜23 の 24 択（ADR 0048）。
+const BOUNDARY_HOURS = Array.from({ length: 24 }, (_, hour) => hour);
+
 interface Props {
   /** 選ばれているテーマ。 */
   theme: ThemePreference;
   setTheme: (theme: ThemePreference) => void;
+  /** 日付が変わる時刻（0〜23）。 */
+  dayBoundaryHour: number;
+  setDayBoundaryHour: (hour: number) => void;
   /** いま保存されている割り当て。無ければ `null`。 */
   shortcut: string | null;
   /** 割り当てを使えない環境なら、その理由。 */
@@ -82,6 +88,8 @@ interface Props {
 export function SettingsDialog({
   theme,
   setTheme,
+  dayBoundaryHour,
+  setDayBoundaryHour,
   shortcut,
   unavailable,
   failure,
@@ -92,6 +100,7 @@ export function SettingsDialog({
 }: Props) {
   const ipc = useIpc();
   const themeName = useId();
+  const boundaryName = useId();
 
   // 開いているあいだ、メニューがキーを取らない状態にする。閉じたら必ず戻す。
   //
@@ -128,6 +137,35 @@ export function SettingsDialog({
             ))}
           </div>
           <p className="settings-note">「表示」メニューからも切り替えられます。</p>
+        </section>
+
+        {/* 日付の切り替わり（ADR 0048）。**基準日はこれ 1 つから作ります**
+            ——カードの `⚠` もボード一覧の件数も、ここで選んだ時刻からその日が
+            始まります。 */}
+        <section className="settings-section">
+          <h3 className="settings-heading" id={boundaryName}>
+            日付の切り替わり
+          </h3>
+          {/* 名前は見出しから引きます。同じ言葉を 2 つ並べると、読み上げが
+              「日付の切り替わり 日付の切り替わり」になります。 */}
+          <select
+            className="settings-select"
+            aria-labelledby={boundaryName}
+            value={dayBoundaryHour}
+            onChange={(event) => {
+              setDayBoundaryHour(Number(event.target.value));
+            }}
+          >
+            {BOUNDARY_HOURS.map((hour) => (
+              <option key={hour} value={hour}>
+                {hour}:00
+              </option>
+            ))}
+          </select>
+          <p className="settings-note">
+            この時刻から次の日が始まります。既定の 4:00 なら、午前 3 時はまだ前の日で、
+            期限の「今日」もそのまま前の日を指します。
+          </p>
         </section>
 
         <ShortcutSection

@@ -10,8 +10,16 @@
 
 import { expect, test } from "@playwright/test";
 
-import { localDay } from "../src/state/day";
-import { editStoredBoard, openBoard, startHarness, stopHarness, storedBoard } from "./harness";
+import { DEFAULT_DAY_BOUNDARY_HOUR, localDay } from "../src/state/day";
+import {
+  editStoredBoard,
+  editStoredSetting,
+  openBoard,
+  startHarness,
+  stopHarness,
+  storedBoard,
+} from "./harness";
+import { DAY_BOUNDARY_HOUR } from "../src/store/keys";
 import { setCardDueDate } from "../src/model/board";
 import type { Board } from "../src/ipc/types/Board";
 
@@ -19,7 +27,7 @@ test.beforeEach(startHarness);
 test.afterEach(stopHarness);
 
 test("日付をまたぐと、コマンドを呼ばなくても期限の表示が進む", async ({ page }) => {
-  const today = localDay(new Date());
+  const today = localDay(new Date(), DEFAULT_DAY_BOUNDARY_HOUR);
   const tomorrow = new Date(Date.parse(`${today}T00:00:00Z`) + 86_400_000)
     .toISOString()
     .slice(0, 10);
@@ -43,13 +51,70 @@ test("日付をまたぐと、コマンドを呼ばなくても期限の表示�
     if (request.url().includes("/invoke/")) commands += 1;
   });
 
+  // 0 時をまたいだだけでは、まだ変わらない（既定の境界は午前 4 時、ADR 0048）。
   await page.clock.setSystemTime(new Date(`${tomorrow}T00:00:30`));
   // 分ごとの見張りが 1 回動くぶんだけ進める。
+  await page.clock.runFor(60_000);
+
+  await expect(due).toHaveAttribute("data-tone", "info");
+  await expect(due).toContainText("あと1日");
+
+  // 午前 4 時を過ぎたところで、基準日が進む。
+  await page.clock.setSystemTime(new Date(`${tomorrow}T04:00:30`));
   await page.clock.runFor(60_000);
 
   await expect(due).toHaveAttribute("data-tone", "warning");
   await expect(due).toContainText("今日");
   expect(commands, "日付が変わっただけでは、置き場所に聞きに行かない").toBe(0);
+});
+
+/// 受け入れ条件（#197）。**午前 3 時は、まだ前の日。**
+///
+/// カードの `⚠` もボード一覧の件数も同じ基準日から出ているので、両方が同じ
+/// 前日を指していることまで見ます。
+test("既定では、午前 3 時の時点で前日が「今日」として数えられる", async ({ page }) => {
+  const today = localDay(new Date(), DEFAULT_DAY_BOUNDARY_HOUR);
+  const tomorrow = new Date(Date.parse(`${today}T00:00:00Z`) + 86_400_000)
+    .toISOString()
+    .slice(0, 10);
+
+  // 「今日」が期限のカードを 1 枚。
+  const cardId = firstCard(await storedBoard(page));
+  await editStoredBoard(page, (document) => setCardDueDate(document, cardId, today));
+
+  // 暦のうえでは翌日の午前 3 時。境界は午前 4 時なので、基準日はまだ前の日。
+  await page.clock.install({ time: new Date(`${tomorrow}T03:00:00`) });
+  await openBoard(page);
+
+  const due = page.locator(`.card[data-card="${String(cardId)}"] .card-due`);
+  await expect(due).toHaveAttribute("data-tone", "warning");
+  await expect(due).toContainText("今日");
+  // ボード一覧の件数も同じ基準日から出ている。**まだ 1 枚も過ぎていない。**
+  // 件数そのものは土台の盤面しだいなので、何の件数が出ているかで見ます
+  // （`done.spec.ts` と同じ読み方）。
+  await expect(page.locator(".due-jump[data-tone='warning']")).toHaveCount(1);
+  await expect(page.locator(".due-jump[data-tone='danger']")).toHaveCount(0);
+});
+
+/// 0 を選べば、0 時境界に戻る（#197）。
+test("切り替わりを 0 時にすると、午前 3 時は翌日として数えられる", async ({ page }) => {
+  const today = localDay(new Date(), DEFAULT_DAY_BOUNDARY_HOUR);
+  const tomorrow = new Date(Date.parse(`${today}T00:00:00Z`) + 86_400_000)
+    .toISOString()
+    .slice(0, 10);
+
+  const cardId = firstCard(await storedBoard(page));
+  await editStoredBoard(page, (document) => setCardDueDate(document, cardId, today));
+  await editStoredSetting(page, DAY_BOUNDARY_HOUR, "0");
+
+  await page.clock.install({ time: new Date(`${tomorrow}T03:00:00`) });
+  await openBoard(page);
+
+  // 0 時境界では、もう翌日。前の日が期限のカードは過ぎている。
+  const due = page.locator(`.card[data-card="${String(cardId)}"] .card-due`);
+  await expect(due).toHaveAttribute("data-tone", "danger");
+  // 同じ時刻・同じ盤面で、一覧の件数も「期限切れ」に変わる。
+  await expect(page.locator(".due-jump[data-tone='danger']")).toHaveCount(1);
 });
 
 function firstCard(board: Board): number {

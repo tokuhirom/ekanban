@@ -15,9 +15,10 @@ pub use crate::store::{FilterState, StoredDocument, WindowBoundsState};
 
 use crate::store::{
     board_scoped_id, StoreError, StoredCardEvent, CAPTURE_BOARD_STATE_KEY,
-    CAPTURE_COLUMN_STATE_KEY, FILTER_SEARCH_STATE_KEY, FILTER_TAG_STATE_KEY, LAST_BOARD_STATE_KEY,
-    NEXT_BOARD_STATE_KEY, QUICK_CAPTURE_SHORTCUT_STATE_KEY, SIDEBAR_COLLAPSED_STATE_KEY,
-    THEME_PREFERENCE_STATE_KEY, WINDOW_BOUNDS_STATE_KEY,
+    CAPTURE_COLUMN_STATE_KEY, DAY_BOUNDARY_HOUR_STATE_KEY, DEFAULT_DAY_BOUNDARY_HOUR,
+    FILTER_SEARCH_STATE_KEY, FILTER_TAG_STATE_KEY, LAST_BOARD_STATE_KEY, NEXT_BOARD_STATE_KEY,
+    QUICK_CAPTURE_SHORTCUT_STATE_KEY, SIDEBAR_COLLAPSED_STATE_KEY, THEME_PREFERENCE_STATE_KEY,
+    WINDOW_BOUNDS_STATE_KEY,
 };
 
 const CURRENT_SCHEMA_VERSION: i64 = 14;
@@ -200,6 +201,28 @@ impl Database {
             SIDEBAR_COLLAPSED_STATE_KEY,
             if collapsed { "1" } else { "0" },
         )
+    }
+
+    /// 日付が変わる時刻（0〜23）。置かれていなければ既定の 4（[ADR 0048]）。
+    ///
+    /// **読めない値でも失敗させません。** 境界時刻が壊れていても盤面は開ける
+    /// べきなので、既定に落とします。書くほうは断るので、ここへ来るのは手で
+    /// 書き換えられた行だけです。
+    ///
+    /// [ADR 0048]: ../../../docs/adr/0048-the-day-turns-at-four-in-the-morning.md
+    pub fn load_day_boundary_hour(&self) -> Result<u8, StoreError> {
+        Ok(self
+            .load_app_state(DAY_BOUNDARY_HOUR_STATE_KEY)?
+            .and_then(|value| value.parse::<u8>().ok())
+            .filter(|hour| *hour < 24)
+            .unwrap_or(DEFAULT_DAY_BOUNDARY_HOUR))
+    }
+
+    pub fn set_day_boundary_hour(&self, hour: u8) -> Result<(), StoreError> {
+        if hour > 23 {
+            return Err(StoreError::InvalidAppState);
+        }
+        self.set_app_state(DAY_BOUNDARY_HOUR_STATE_KEY, hour.to_string())
     }
 
     pub fn load_quick_capture_shortcut(&self) -> Result<Option<String>, StoreError> {
@@ -1397,8 +1420,9 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{
-        board_scoped_id, save_board_snapshot, Database, FilterState, WindowBoundsState,
-        CURRENT_SCHEMA_VERSION,
+        board_scoped_id, params, save_board_snapshot, Database, FilterState, StoreError,
+        WindowBoundsState, CURRENT_SCHEMA_VERSION, DAY_BOUNDARY_HOUR_STATE_KEY,
+        DEFAULT_DAY_BOUNDARY_HOUR,
     };
     use crate::model::{Board, CardEvent, CardEventKind, CardId, ChecklistItem, ColumnId, TagId};
     use crate::MAX_SAFE_JS_INTEGER;
@@ -1439,6 +1463,102 @@ mod tests {
                 .expect("the fixture board is stored");
         }
         database
+    }
+
+    /// 日付が変わる時刻（ADR 0048）。**選べるのは 0〜23 の整数だけ。**
+    #[test]
+    fn stores_the_day_boundary_hour() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("board.sqlite3");
+        let database = open_with_cards(&path);
+
+        assert_eq!(
+            database.load_day_boundary_hour().unwrap(),
+            DEFAULT_DAY_BOUNDARY_HOUR,
+            "何も選ばれていなければ午前 4 時から"
+        );
+
+        database.set_day_boundary_hour(0).unwrap();
+        assert_eq!(database.load_day_boundary_hour().unwrap(), 0);
+
+        database.set_day_boundary_hour(23).unwrap();
+        assert_eq!(database.load_day_boundary_hour().unwrap(), 23);
+
+        assert!(
+            matches!(
+                database.set_day_boundary_hour(24),
+                Err(StoreError::InvalidAppState)
+            ),
+            "24 時は無い"
+        );
+        assert_eq!(
+            database.load_day_boundary_hour().unwrap(),
+            23,
+            "断られた値は覚えない"
+        );
+    }
+
+    /// 手で書き換えられた行を読んでも、盤面は開ける（ADR 0048）。
+    #[test]
+    fn falls_back_to_the_default_when_the_stored_day_boundary_hour_is_unreadable() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("board.sqlite3");
+        let database = open_with_cards(&path);
+
+        for stored in ["", "よる", "-1", "24", "4.5"] {
+            database
+                .set_app_state(DAY_BOUNDARY_HOUR_STATE_KEY, stored)
+                .unwrap();
+            assert_eq!(
+                database.load_day_boundary_hour().unwrap(),
+                DEFAULT_DAY_BOUNDARY_HOUR,
+                "{stored:?} は読めない"
+            );
+        }
+    }
+
+    /// 旧い版のデータベースを開く（ADR 0048）。
+    ///
+    /// **スキーマの版は上げていません。** `app_state` は鍵と値の表なので、
+    /// 行が無いだけの旧 DB はそのまま開き、一律に午前 4 時から始まります。
+    /// 0 時に戻したい人は設定で 0 を選べます。
+    #[test]
+    fn starts_an_existing_database_at_four_in_the_morning() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("board.sqlite3");
+        let before = {
+            let database = open_with_cards(&path);
+            // 版 13 まで巻き戻し、この設定を知らない DB にする。
+            database
+                .connection
+                .execute("DELETE FROM schema_migrations WHERE version >= ?1", [14])
+                .unwrap();
+            database
+                .connection
+                .execute_batch("ALTER TABLE boards DROP COLUMN rev;")
+                .unwrap();
+            database
+                .connection
+                .execute(
+                    "DELETE FROM app_state WHERE key = ?1",
+                    params![DAY_BOUNDARY_HOUR_STATE_KEY],
+                )
+                .unwrap();
+            database.load_board().unwrap()
+        };
+
+        let database = open_with_cards(&path);
+
+        assert_eq!(database.load_board().unwrap(), before, "盤面は変わらない");
+        assert_eq!(
+            database.load_day_boundary_hour().unwrap(),
+            4,
+            "旧い DB も午前 4 時から始まる"
+        );
+
+        // 0 を選べば 0 時境界に戻り、それは覚えられる。
+        database.set_day_boundary_hour(0).unwrap();
+        assert_eq!(database.load_day_boundary_hour().unwrap(), 0);
     }
 
     /// 初回起動で見えるもの。読んだ人が消して回らずに使い始められること（#57）。

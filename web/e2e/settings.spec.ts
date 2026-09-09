@@ -17,7 +17,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
 import { openBoard, startHarness, stopHarness, storedSetting } from "./harness";
-import { QUICK_CAPTURE_SHORTCUT, THEME_PREFERENCE } from "../src/store/keys";
+import { DAY_BOUNDARY_HOUR, QUICK_CAPTURE_SHORTCUT, THEME_PREFERENCE } from "../src/store/keys";
 
 // `window.ekanbanMenu` の宣言を読み込むためだけの取り込み（値は使わない）。
 import type {} from "../src/ipc/browser";
@@ -56,6 +56,29 @@ test("「設定…」から開き、テーマを変えるとその場で反映�
   await again.getByRole("radio", { name: "システムに合わせる" }).check();
   await expect(page.locator("html")).not.toHaveAttribute("data-theme", /.*/);
   await expect.poll(() => storedSetting(page, THEME_PREFERENCE)).toBe("system");
+});
+
+/// 日付の切り替わり（#197、[ADR 0048]）。
+///
+/// 選んだ時点で確定し、開き直しても保たれます。**基準日が動くところ**は
+/// `day.spec.ts` の担当で、ここは設定として往復することだけを見ます。
+///
+/// [ADR 0048]: ../../docs/adr/0048-the-day-turns-at-four-in-the-morning.md
+test("日付の切り替わりを選ぶと、その場で覚えられ、開き直しても保たれる", async ({ page }) => {
+  await openBoard(page);
+  const dialog = await openSettings(page);
+
+  const boundary = dialog.getByLabel("日付の切り替わり");
+  // 既定は午前 4 時。まだ何も選んでいなくても、選択肢としては出ている。
+  await expect(boundary).toHaveValue("4");
+
+  await boundary.selectOption("0");
+  await expect.poll(() => storedSetting(page, DAY_BOUNDARY_HOUR)).toBe("0");
+
+  await dialog.getByRole("button", { name: "閉じる" }).click();
+  await expect(dialog).toBeHidden();
+  const again = await openSettings(page);
+  await expect(again.getByLabel("日付の切り替わり")).toHaveValue("0");
 });
 
 test("`Escape` でも閉じる", async ({ page }) => {

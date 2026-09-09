@@ -103,6 +103,18 @@ export async function storedSetting(page: Page, key: string): Promise<string | n
   return (await read(page)).get(key);
 }
 
+/// 覚えてある設定を 1 つ書き換える。**開く前に置けます**——設定を選んだ状態で
+/// 起動するところを見たいテストがあるので（日付の切り替わり、#197）。
+export async function editStoredSetting(
+  page: Page,
+  key: string,
+  value: string,
+): Promise<void> {
+  const store = await read(page);
+  store.set(key, value);
+  await write(page, store);
+}
+
 async function storedOpenDocument(
   page: Page,
 ): Promise<{ store: MemoryStore; document: BoardDocument }> {

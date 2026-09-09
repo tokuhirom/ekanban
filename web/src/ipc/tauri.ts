@@ -36,6 +36,9 @@ export const tauriIpc: Ipc = {
   setThemePreference: async (theme) => {
     await invoke("set_theme_preference", { preference: theme });
   },
+  setDayBoundaryHour: async (hour) => {
+    await invoke("set_day_boundary_hour", { hour });
+  },
   setWindowTitle: async (title) => {
     await invoke("set_window_title", { title });
   },

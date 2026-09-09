@@ -15,7 +15,9 @@ use std::path::{Path, PathBuf};
 use chrono::Local;
 use ekanban_core::diagnostics;
 use ekanban_core::model::{Board, BoardId, CardEvent, ColumnId, TagId};
-use ekanban_core::store::{FilterState, Store, StoreError, StoredDocument, WindowBoundsState};
+use ekanban_core::store::{
+    FilterState, Store, StoreError, StoredDocument, WindowBoundsState, DEFAULT_DAY_BOUNDARY_HOUR,
+};
 
 use ekanban_core::backup;
 
@@ -65,6 +67,9 @@ pub fn startup_state(state: &AppState) -> Result<StartupState, AppError> {
         window_bounds: store.load_window_bounds().ok().flatten(),
         theme: ThemePreference::parse(store.load_theme_preference().ok().flatten().as_deref()),
         sidebar_collapsed: store.load_sidebar_collapsed().unwrap_or(false),
+        day_boundary_hour: store
+            .load_day_boundary_hour()
+            .unwrap_or(DEFAULT_DAY_BOUNDARY_HOUR),
         capture_target: capture_target_of(&mut store),
         quick_capture_shortcut: store.load_quick_capture_shortcut().unwrap_or(None),
         version: env!("CARGO_PKG_VERSION").to_string(),
@@ -242,6 +247,20 @@ pub fn set_theme_preference(state: &AppState, preference: ThemePreference) -> Re
         state,
         "テーマを覚えられませんでした",
         |store| store.set_theme_preference(preference.as_str()),
+    )
+}
+
+/// 日付が変わる時刻を覚える（[ADR 0048]）。
+///
+/// 0〜23 の外は置き場所が断ります。**基準日を作るのは画面**で、ここは覚えて
+/// おくだけです。
+///
+/// [ADR 0048]: ../../../docs/adr/0048-the-day-turns-at-four-in-the-morning.md
+pub fn set_day_boundary_hour(state: &AppState, hour: u8) -> Result<(), AppError> {
+    store(
+        state,
+        "日付の切り替わりを覚えられませんでした",
+        |store| store.set_day_boundary_hour(hour),
     )
 }
 

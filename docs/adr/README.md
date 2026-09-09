@@ -127,3 +127,4 @@
 | [0045](0045-two-kinds-of-export.md) | 書き出しは 2 つに分ける——Markdown は画面、JSON は置き場所 | 2026-09-08 | 有効 |
 | [0046](0046-picking-a-due-date-from-a-calendar.md) | 期限はカレンダーからも選べるようにする | 2026-09-09 | 有効 |
 | [0047](0047-app-settings-live-in-a-settings-dialog.md) | アプリ全体の設定は設定画面に置く | 2026-09-09 | 有効 |
+| [0048](0048-the-day-turns-at-four-in-the-morning.md) | 日付の切り替わりを選べるようにし、既定を午前 4 時にする | 2026-09-09 | 有効 |

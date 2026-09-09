@@ -1427,6 +1427,17 @@ button.danger {
   overflow-wrap: anywhere;
 }
 
+/* 日付の切り替わりの時刻。欄の見た目は、ほかの入力欄と揃えます。 */
+.settings-select {
+  align-self: flex-start;
+  padding: 5px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-input-background);
+  color: inherit;
+  font: inherit;
+}
+
 .settings-note {
   margin: 0;
   font-size: 12px;

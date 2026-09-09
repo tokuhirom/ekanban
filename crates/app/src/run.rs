@@ -148,6 +148,7 @@ pub fn run() {
             ipc::set_filter_state,
             ipc::set_theme_preference,
             ipc::set_sidebar_collapsed,
+            ipc::set_day_boundary_hour,
             ipc::set_window_bounds,
             ipc::set_window_title,
             ipc::choose_save_path,
