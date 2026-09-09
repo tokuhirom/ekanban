@@ -663,9 +663,10 @@ button.danger {
 
 /* 期限の欄。行を丸ごと使う（#169）——タグと 1 行に並べていたころは 7.5em に
  * 詰めていて、placeholder の「期限（9/12、明日、金、+3）」が切れていた。
- * 外す × は入力に重ねず右へ並べる（#128）——`type="date"` が右端に出す
- * カレンダーアイコンの位置が webview ごとに違うため。 */
+ * 外す × とカレンダーの 📅 は入力に重ねず右へ並べる（#128、#194）。
+ * カレンダーはこの行を基準に出すので、`position` を持たせる。 */
 .due-field {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 4px;
@@ -686,6 +687,107 @@ button.danger {
   padding: 4px 8px;
   color: var(--color-muted-foreground);
   line-height: 1;
+}
+
+.due-calendar-button {
+  flex: none;
+  padding: 4px 6px;
+  line-height: 1;
+}
+
+/* カレンダー（#194、ADR 0046）。欄のすぐ下に出す。`.panel-body` は縦に
+ * スクロールする箱なので、`position: fixed` にすると欄と一緒に動かない。 */
+.due-calendar {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  gap: 6px;
+  min-width: 0;
+  margin-top: 4px;
+}
+
+.due-calendar-head {
+  display: flex;
+  /* 月送りの ‹ › も、`.menu button` の左寄せから戻す。 */
+  text-align: center;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+}
+
+.due-calendar-month {
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.due-calendar-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.due-calendar-week {
+  display: grid;
+  grid-template-columns: repeat(7, 30px);
+  gap: 2px;
+}
+
+/* 曜日の見出し。押せないものと押せるものが同じ大きさで並ぶので、色で分ける。 */
+.due-calendar-weekday {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 22px;
+  font-size: 11px;
+  color: var(--color-muted-foreground);
+}
+
+.due-calendar-day {
+  height: 28px;
+  padding: 0;
+  /* `.menu button` は左寄せ。升目の中では真ん中に置く。 */
+  text-align: center;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 前後の月からはみ出した日。押せば選べるので、消さずに落とすだけ。 */
+.due-calendar-day[data-outside] {
+  color: var(--color-muted-foreground);
+}
+
+/* 今日は枠、選ばれている日は塗り。**色の違いだけにしない**（`docs/DESIGN.md`
+ * 「画面の作り」）——枠と塗りは形が違うので、色が読めなくても見分けられる。
+ * 選ばれている日は `aria-pressed` でも分かり、同じ日付が欄にも出ている。 */
+.due-calendar-day[data-today] {
+  border: 1px solid var(--color-info);
+}
+
+.due-calendar-day[aria-pressed="true"] {
+  background: var(--color-foreground);
+  color: var(--color-background);
+}
+
+.due-calendar-day:focus-visible {
+  outline: 2px solid var(--color-info);
+  outline-offset: -2px;
+}
+
+/* 近道。右クリックメニューと同じ候補（`board/due.ts`）に「なし」を足したもの。 */
+.due-calendar-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding-top: 4px;
+  border-top: 1px solid var(--color-border);
+}
+
+.due-calendar-choices button {
+  flex: 1 1 auto;
+  padding: 4px 6px;
+  font-size: 12px;
+  text-align: center;
 }
 
 .field-label {

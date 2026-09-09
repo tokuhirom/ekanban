@@ -65,7 +65,8 @@ README が使う人向けの入口、[マニュアル](MANUAL.md) が使い方�
 ### 盤面とカード
 
 - **期限は日付のみ**、`TEXT` の `'YYYY-MM-DD'` で持つ。時刻は持たない。必要になった時点で `due_time` を足す
-- **期限は文字で打ち、読み方は webview に 1 つだけ置く**（`web/src/model/due.ts`）。欄はテキスト欄で、`9/12` `明日` `金` `+3` `来週` `今週末` を受ける。基準日は引数で渡し、`parseDueDate` の中で時計を読まない。読めない文字列はコマンドを呼ばずに `Validation` で欄の脇に返す。打った文字をどう読んだかは、確定する前に欄の下に出す。**コマンドが受けるのは `"YYYY-MM-DD"` か空文字だけ**で、`parse_stored_due_date` はそれが日付として成り立つかだけを見る（[ADR 0031](adr/0031-typing-a-due-date.md)、[ADR 0039](adr/0039-the-board-model-moves-to-typescript.md)）
+- **期限は打っても選んでも入れられ、読み方は webview に 1 つだけ置く**（`web/src/model/due.ts`）。欄はテキスト欄で、`9/12` `明日` `金` `+3` `来週` `今週末` を受ける。基準日は引数で渡し、`parseDueDate` の中で時計を読まない。読めない文字列はコマンドを呼ばずに `Validation` で欄の脇に返す。打った文字をどう読んだかは、確定する前に欄の下に出す。**コマンドが受けるのは `"YYYY-MM-DD"` か空文字だけ**で、`parse_stored_due_date` はそれが日付として成り立つかだけを見る（[ADR 0031](adr/0031-typing-a-due-date.md)、[ADR 0039](adr/0039-the-board-model-moves-to-typescript.md)）
+- **カレンダーは自前で描き、欄は 1 つに保つ。** 期限の欄に触れると開き（`📅` でも開く）、押された日は `"YYYY-MM-DD"` としてその欄に入って確定する。`<input type="date">` には戻さない——見た目と操作が webview ごとに違う。カレンダーは値を持たず、升目の組み立ては `web/src/panel/calendar.ts` の純粋な関数、日付の足し算は `web/src/model/dates.ts`。近道（「今日」「明日」「来週」）は右クリックメニューと同じ `web/src/board/due.ts` の候補から採る（[ADR 0046](adr/0046-picking-a-due-date-from-a-calendar.md)）
 - **並べ替えは一時的なビューではなく `position` の書き換え**として行う。見た目の位置と本来の位置が食い違わないようにする
 - **履歴に残すのはカードのライフサイクルだけ**（`created` / `moved` / `archived` / `restored` / `deleted`）。カラム内の並べ替えと属性変更は残さない。既存データを遡って生成しない
 - **Undo のスタックと `card_events` は共有しない。** 寿命（セッション / 永続）と目的（取り消し / フローの記録）が違う

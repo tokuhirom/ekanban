@@ -110,7 +110,7 @@
 | [0028](0028-a-single-default-quick-capture-target.md) | クイックキャプチャの既定の入れ先を、先頭のボードに固定する | 2026-09-06 | 有効 |
 | [0029](0029-detecting-ime-composition.md) | IME の変換中かは 1 か所で判定し、`keyCode` も見る | 2026-09-07 | 有効 |
 | [0030](0030-capturing-a-shortcut-needs-the-menu-out-of-the-way.md) | 割り当てを捕まえている間はメニューのアクセラレータを外し、押されているキーをその場に映す | 2026-09-07 | 有効 |
-| [0031](0031-typing-a-due-date.md) | 期限は文字で打つ | 2026-09-07 | 有効 |
+| [0031](0031-typing-a-due-date.md) | 期限は文字で打つ | 2026-09-07 | 有効（0046 がカレンダーを足した） |
 | [0032](0032-committing-a-card-field-by-field.md) | 編集パネルは欄ごとに確定する | 2026-09-07 | 有効 |
 | [0033](0033-a-markdown-editor-for-the-description.md) | 説明は Markdown のエディタで書く | 2026-09-07 | 有効 |
 | [0034](0034-dropping-the-wip-limit.md) | WIP 上限をやめる | 2026-09-07 | 有効 |
@@ -125,3 +125,4 @@
 | [0043](0043-the-menu-is-described-by-the-webview.md) | メニューの構成を webview が持ち、Rust は組み立てだけを引き受ける | 2026-09-08 | 有効 |
 | [0044](0044-tags-get-their-colour-automatically.md) | タグの色を自動で割り振り、既定色をやめる | 2026-09-08 | 有効 |
 | [0045](0045-two-kinds-of-export.md) | 書き出しは 2 つに分ける——Markdown は画面、JSON は置き場所 | 2026-09-08 | 有効 |
+| [0046](0046-picking-a-due-date-from-a-calendar.md) | 期限はカレンダーからも選べるようにする | 2026-09-09 | 有効 |
