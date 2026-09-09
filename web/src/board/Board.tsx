@@ -724,6 +724,8 @@ export function Board() {
         <SettingsDialog
           theme={state.theme}
           setTheme={state.setTheme}
+          dayBoundaryHour={state.dayBoundaryHour}
+          setDayBoundaryHour={state.setDayBoundaryHour}
           shortcut={state.quickCaptureShortcut}
           unavailable={settings.unavailable}
           failure={settings.failure}

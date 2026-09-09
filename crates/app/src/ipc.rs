@@ -90,6 +90,11 @@ pub fn set_theme_preference(state: State<'_, AppState>, preference: ThemePrefere
 }
 
 #[tauri::command]
+pub fn set_day_boundary_hour(state: State<'_, AppState>, hour: u8) -> Reply<()> {
+    commands::set_day_boundary_hour(&state, hour)
+}
+
+#[tauri::command]
 pub fn set_sidebar_collapsed(state: State<'_, AppState>, collapsed: bool) -> Reply<()> {
     commands::set_sidebar_collapsed(&state, collapsed)
 }

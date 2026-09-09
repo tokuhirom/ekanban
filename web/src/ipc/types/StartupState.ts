@@ -23,7 +23,16 @@ openBoardId: number,
 /**
  * 動いている OS。キーの割り当てを決めるのに使います。
  */
-platform: Platform, filter: FilterState, windowBounds: WindowBoundsState | null, theme: ThemePreference, sidebarCollapsed: boolean, captureTarget: CaptureTarget | null, 
+platform: Platform, filter: FilterState, windowBounds: WindowBoundsState | null, theme: ThemePreference, sidebarCollapsed: boolean, 
+/**
+ * 日付が変わる時刻（0〜23、既定は 4）。基準日を作るのに使います（[ADR 0048]）。
+ *
+ * **基準日は 1 つだけ**です。カードの `⚠` もボード一覧の件数も、画面が
+ * この時刻から作った 1 つの基準日から出ます。
+ *
+ * [ADR 0048]: ../../../docs/adr/0048-the-day-turns-at-four-in-the-morning.md
+ */
+dayBoundaryHour: number, captureTarget: CaptureTarget | null, 
 /**
  * 保存されている割り当て。登録できるかどうかは別の話（`docs/DESIGN.md`「クイックキャプチャ」）。
  */

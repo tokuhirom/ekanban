@@ -91,9 +91,18 @@ pub(crate) const FILTER_SEARCH_STATE_KEY: &str = "filter_search";
 pub(crate) const FILTER_TAG_STATE_KEY: &str = "filter_tag_id";
 pub(crate) const THEME_PREFERENCE_STATE_KEY: &str = "theme_preference";
 pub(crate) const SIDEBAR_COLLAPSED_STATE_KEY: &str = "sidebar_collapsed";
+pub(crate) const DAY_BOUNDARY_HOUR_STATE_KEY: &str = "day_boundary_hour";
 pub(crate) const QUICK_CAPTURE_SHORTCUT_STATE_KEY: &str = "quick_capture_shortcut";
 pub(crate) const CAPTURE_BOARD_STATE_KEY: &str = "capture_board_id";
 pub(crate) const CAPTURE_COLUMN_STATE_KEY: &str = "capture_column_id";
+
+/// 日付が変わる時刻の既定（[ADR 0048]）。
+///
+/// 0 時ではありません。深夜に作業している最中に盤面が入れ替わらないように、
+/// 午前 4 時から次の日を数えます。
+///
+/// [ADR 0048]: ../../docs/adr/0048-the-day-turns-at-four-in-the-morning.md
+pub const DEFAULT_DAY_BOUNDARY_HOUR: u8 = 4;
 
 pub(crate) const BOARD_ID_NAMESPACE_SHIFT: u32 = 32;
 
@@ -325,6 +334,20 @@ impl Store {
     pub fn load_sidebar_collapsed(&self) -> Result<bool, StoreError> {
         match self {
             Store::Sqlite(database) => database.load_sidebar_collapsed(),
+        }
+    }
+
+    /// 日付が変わる時刻（0〜23）。置かれていなければ既定の 4。
+    pub fn load_day_boundary_hour(&self) -> Result<u8, StoreError> {
+        match self {
+            Store::Sqlite(database) => database.load_day_boundary_hour(),
+        }
+    }
+
+    /// 日付が変わる時刻を覚える。0〜23 の外は断ります。
+    pub fn set_day_boundary_hour(&mut self, hour: u8) -> Result<(), StoreError> {
+        match self {
+            Store::Sqlite(database) => database.set_day_boundary_hour(hour),
         }
     }
 

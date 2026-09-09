@@ -10,6 +10,7 @@ export const FILTER_SEARCH = "filter_search";
 export const FILTER_TAG = "filter_tag_id";
 export const THEME_PREFERENCE = "theme_preference";
 export const SIDEBAR_COLLAPSED = "sidebar_collapsed";
+export const DAY_BOUNDARY_HOUR = "day_boundary_hour";
 export const QUICK_CAPTURE_SHORTCUT = "quick_capture_shortcut";
 export const CAPTURE_BOARD = "capture_board_id";
 export const CAPTURE_COLUMN = "capture_column_id";

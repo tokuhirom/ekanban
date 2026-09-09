@@ -132,6 +132,13 @@ pub struct StartupState {
     pub window_bounds: Option<WindowBoundsState>,
     pub theme: ThemePreference,
     pub sidebar_collapsed: bool,
+    /// 日付が変わる時刻（0〜23、既定は 4）。基準日を作るのに使います（[ADR 0048]）。
+    ///
+    /// **基準日は 1 つだけ**です。カードの `⚠` もボード一覧の件数も、画面が
+    /// この時刻から作った 1 つの基準日から出ます。
+    ///
+    /// [ADR 0048]: ../../../docs/adr/0048-the-day-turns-at-four-in-the-morning.md
+    pub day_boundary_hour: u8,
     pub capture_target: Option<CaptureTarget>,
     /// 保存されている割り当て。登録できるかどうかは別の話（`docs/DESIGN.md`「クイックキャプチャ」）。
     pub quick_capture_shortcut: Option<String>,

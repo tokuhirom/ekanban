@@ -40,6 +40,13 @@ export interface Ipc {
   setFilterState(filter: FilterState): Promise<void>;
   setSidebarCollapsed(collapsed: boolean): Promise<void>;
   setThemePreference(theme: ThemePreference): Promise<void>;
+  /** 日付が変わる時刻（0〜23）を覚える（[ADR 0048]）。
+   *
+   * **基準日を作るのは画面**です（`state/day.ts`）。ここは覚えておくだけで、
+   * 次の起動では `StartupState.dayBoundaryHour` として返ってきます。
+   *
+   * [ADR 0048]: ../../../docs/adr/0048-the-day-turns-at-four-in-the-morning.md */
+  setDayBoundaryHour(hour: number): Promise<void>;
   /** 文言は画面が組む（`state/board.ts`）。ここは窓に渡すだけ。 */
   setWindowTitle(title: string): Promise<void>;
   /** メニューバーを掛ける。**構成を決めるのは画面**（`shell/menu.ts`、ADR 0043）。

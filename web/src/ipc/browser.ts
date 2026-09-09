@@ -19,6 +19,7 @@
 // [ADR 0041]: ../../../docs/adr/0041-one-layer-of-screen-tests.md
 // [ADR 0042]: ../../../docs/adr/0042-the-browser-build-is-the-same-typescript.md
 
+import { readDayBoundaryHour } from "../state/day";
 import type { MemoryStore } from "../store/memory";
 import * as keys from "../store/keys";
 import type { Ipc } from "./index";
@@ -128,6 +129,7 @@ export function browserIpc(store: MemoryStore, options: BrowserIpcOptions): Ipc 
           windowBounds: bounds === null ? null : (JSON.parse(bounds) as WindowBoundsState),
           theme: readTheme(store.get(keys.THEME_PREFERENCE)),
           sidebarCollapsed: store.get(keys.SIDEBAR_COLLAPSED) === "true",
+          dayBoundaryHour: readDayBoundaryHour(store.get(keys.DAY_BOUNDARY_HOUR)),
           captureTarget: readCaptureTarget(store),
           quickCaptureShortcut: store.get(keys.QUICK_CAPTURE_SHORTCUT),
           version: __EKANBAN_VERSION__,
@@ -158,6 +160,10 @@ export function browserIpc(store: MemoryStore, options: BrowserIpcOptions): Ipc 
     setThemePreference: (theme) =>
       write(() => {
         store.set(keys.THEME_PREFERENCE, theme);
+      }),
+    setDayBoundaryHour: (hour) =>
+      write(() => {
+        store.set(keys.DAY_BOUNDARY_HOUR, String(hour));
       }),
     setWindowTitle: (title) => {
       // ブラウザにウィンドウのタイトルバーが無いので、タブの見出しに出す。

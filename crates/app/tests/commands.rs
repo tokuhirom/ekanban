@@ -99,6 +99,26 @@ fn the_startup_state_carries_everything_the_window_needs_to_open() {
     assert_eq!(startup.open_board_id, harness.stored().id);
     assert_eq!(startup.capture_target, None);
     assert_eq!(startup.quick_capture_shortcut, None);
+    // 何も選ばれていなければ、日は午前 4 時に変わる（ADR 0048）。
+    assert_eq!(startup.day_boundary_hour, 4);
+}
+
+/// 日付の切り替わりを選ぶと、次の起動でそれが返る（ADR 0048）。
+#[test]
+fn the_startup_state_carries_the_chosen_day_boundary_hour() {
+    let harness = Harness::open();
+
+    commands::set_day_boundary_hour(&harness.state, 0).expect("stored");
+
+    let (_, startup) = commands::load_startup_state(Source::Sqlite(harness.path.clone()))
+        .expect("the state is read");
+    assert_eq!(startup.day_boundary_hour, 0, "0 時境界に戻せる");
+
+    // 24 時は無い。断られた値は覚えない。
+    assert!(commands::set_day_boundary_hour(&harness.state, 24).is_err());
+    let (_, startup) = commands::load_startup_state(Source::Sqlite(harness.path.clone()))
+        .expect("the state is read");
+    assert_eq!(startup.day_boundary_hour, 0);
 }
 
 /// 最後に開いていたボードが消えていたら、先頭のボードに黙って戻る。
@@ -182,6 +202,7 @@ fn the_display_state_survives_a_restart() {
     assert_eq!(startup.theme, ThemePreference::Dark);
     assert!(startup.sidebar_collapsed);
     assert_eq!(startup.window_bounds.map(|b| b.height), Some(500.));
+    assert_eq!(startup.day_boundary_hour, 4);
 }
 
 // ---------------------------------------------------------------- 盤面の読み書き

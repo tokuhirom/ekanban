@@ -35,7 +35,7 @@ import type { Tag } from "../ipc/types/Tag";
 import type { ThemePreference } from "../ipc/types/ThemePreference";
 import { sectionsFor } from "../shell/menu";
 import { applyTheme } from "../shell/theme";
-import { dayHasTurned, localDay } from "./day";
+import { dayHasTurned, DEFAULT_DAY_BOUNDARY_HOUR, localDay } from "./day";
 import { describeBoardError } from "./errors";
 
 /** カードの編集パネルが開いている対象。新しいカードはまだ ID を持たない。 */
@@ -126,6 +126,9 @@ export interface BoardState {
   /** 選ばれているテーマ。「システムに合わせる」の判定は CSS が持つ（`shell/theme.ts`）。 */
   theme: ThemePreference;
   setTheme: (theme: ThemePreference) => void;
+  /** 日付が変わる時刻（0〜23）。基準日はここから作る（ADR 0048）。 */
+  dayBoundaryHour: number;
+  setDayBoundaryHour: (hour: number) => void;
   /** 盤面の取り消し・やり直し。入力欄の中の取り消しとは別（`shell/keys.ts`）。 */
   undo: () => void;
   redo: () => void;
@@ -213,6 +216,8 @@ export function useBoardState(): BoardState {
   const [tagId, setTagIdValue] = useState<number | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [theme, setThemeValue] = useState<ThemePreference>("system");
+  // 日付が変わる時刻（ADR 0048）。起動のときに置き場所から届くまでは既定の 4。
+  const [dayBoundaryHour, setDayBoundaryHourValue] = useState(DEFAULT_DAY_BOUNDARY_HOUR);
   // ドラッグ中だけの盤面。**Rust には渡しません**——離した瞬間に 1 回だけ
   // `move_card` / `move_column` を呼び、返ったスナップショットで置き換えます
   // （`docs/DESIGN.md`「ドラッグ＆ドロップ」、ADR 0018）。
@@ -365,6 +370,7 @@ export function useBoardState(): BoardState {
         setPlatform(startup.platform);
         setThemeValue(startup.theme);
         applyTheme(startup.theme);
+        setDayBoundaryHourValue(startup.dayBoundaryHour);
         setQuickCaptureShortcut(startup.quickCaptureShortcut);
         setAbout({ version: startup.version, databasePath: startup.databasePath });
 
@@ -392,11 +398,21 @@ export function useBoardState(): BoardState {
   // **期限の判定はここでします**（`model/due.ts`）。基準日はこの 1 つで、
   // 進めれば「⚠」も件数も一緒に付いてきます。取り直しに行く相手はもう
   // いません。契機は分ごとのタイマーと、窓が見えたとき・前に出たときの 3 つ。
-  const [today, setToday] = useState(() => localDay(new Date()));
+  //
+  // **日は 0 時に変わるとは限りません**（ADR 0048）。境界時刻は設定から届く
+  // 1 つで、それが変われば基準日もその場で作り直します——`⚠` と件数は同じ
+  // 基準日から出ているので、両方いっしょに動きます。
+  const [today, setToday] = useState(() => localDay(new Date(), DEFAULT_DAY_BOUNDARY_HOUR));
   useEffect(() => {
     const turn = () => {
-      setToday((current) => (dayHasTurned(current, new Date()) ? localDay(new Date()) : current));
+      setToday((current) =>
+        dayHasTurned(current, new Date(), dayBoundaryHour)
+          ? localDay(new Date(), dayBoundaryHour)
+          : current,
+      );
     };
+    // 境界時刻が変わった直後にも合わせる。次の見張りまで古い基準日で待たない。
+    turn();
     const timer = setInterval(turn, 60_000);
     document.addEventListener("visibilitychange", turn);
     window.addEventListener("focus", turn);
@@ -405,7 +421,7 @@ export function useBoardState(): BoardState {
       document.removeEventListener("visibilitychange", turn);
       window.removeEventListener("focus", turn);
     };
-  }, []);
+  }, [dayBoundaryHour]);
 
   /// いまのキャプチャ先。決め方はキャプチャの窓と同じ（`model/capture.ts`）。
   const captureTarget = useMemo(
@@ -553,6 +569,20 @@ export function useBoardState(): BoardState {
       applyTheme(next);
       void ipc.setThemePreference(next).catch((error: unknown) => {
         report("テーマを覚えられませんでした", error);
+      });
+    },
+    [ipc, report],
+  );
+
+  /// 日付が変わる時刻を選ぶ（ADR 0048）。
+  ///
+  /// **基準日を作り直すのは見張りの effect** で、この値に依っています。ここで
+  /// `today` を触ると、作る場所が 2 つになります。
+  const setDayBoundaryHour = useCallback(
+    (hour: number) => {
+      setDayBoundaryHourValue(hour);
+      void ipc.setDayBoundaryHour(hour).catch((error: unknown) => {
+        report("日付の切り替わりを覚えられませんでした", error);
       });
     },
     [ipc, report],
@@ -799,6 +829,8 @@ export function useBoardState(): BoardState {
     sidebarCollapsed,
     theme,
     setTheme,
+    dayBoundaryHour,
+    setDayBoundaryHour,
     undo,
     redo,
     matched,
