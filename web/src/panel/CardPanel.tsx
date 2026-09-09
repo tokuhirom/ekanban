@@ -46,6 +46,7 @@ import { useAppActions } from "../shell/actions";
 import { DUE_DATE_HELP, dueDatePreview, parseDueDate } from "../model/due";
 import { isComposing } from "../shell/ime";
 import { Description } from "./Description";
+import { DueDateField } from "./DueDateField";
 import type { Editing } from "../state/board";
 import {
   checklistToSend,
@@ -433,48 +434,26 @@ export function CardPanel({
             のはやめました**（#169）——欄が 2 つ横に並ぶと、どちらも幅が足りず、
             期限の placeholder が切れてタグのチップは 1 つで折り返していました。
             期限・チェックリスト・タグは新しいカードにも出します（#127）。 */}
-        {/* 期限は文字で打ちます（#134、ADR 0031）。`type="date"` をやめたのは、
-            カレンダーの見た目と操作が webview ごとに違い、キーボードから速く
-            打てないためです。**読み方は Rust に 1 つだけ**——「明日」が何日かを
-            ここでも数えると、`due_statuses` を出した判定と食い違います。 */}
-        {/* 外す × は欄に重ねず右へ並べます。期限が入っているときだけ出すので、
-            期限なしのカードでは欄が入力 1 つになります（#128）。 */}
-        <div className="due-field">
-          <input
-            id="card-due-date"
-            type="text"
-            className="field-input card-due-input"
-            aria-label="期限"
-            placeholder="期限（9/12、明日、金、+3）"
-            autoComplete="off"
-            value={draft.dueDate}
-            onChange={(event) => {
-              edit({ ...latest.current, dueDate: event.target.value });
-            }}
-            onBlur={() => {
-              if (editing.kind === "card") void commit();
-            }}
-            // 1 行の欄なので `Enter` で確定（`docs/DESIGN.md`）。
-            onKeyDown={(event) => {
-              if (event.key !== "Enter" || isComposing(event.nativeEvent)) return;
-              event.preventDefault();
-              if (editing.kind === "card") void commit();
-            }}
-          />
-          {draft.dueDate !== "" && (
-            <button
-              type="button"
-              className="ghost due-clear"
-              aria-label="期限を外す"
-              title="期限を外す"
-              onClick={() => {
-                change((current) => ({ ...current, dueDate: "" }));
-              }}
-            >
-              ×
-            </button>
-          )}
-        </div>
+        {/* 期限は、カレンダーから選んでも文字で打っても入ります（#194、
+            ADR 0046）。カレンダーは自分で描きます——`type="date"` をやめたのは、
+            見た目と操作が webview ごとに違ったからです（ADR 0031）。**読み方は
+            `model/due.ts` に 1 つだけ**——「明日」が何日かをここでも数えると、
+            カードに出した判定と食い違います。 */}
+        <DueDateField
+          value={draft.dueDate}
+          today={today}
+          onType={(next) => {
+            edit({ ...latest.current, dueDate: next });
+          }}
+          onCommit={() => {
+            if (editing.kind === "card") void commit();
+          }}
+          // 選んだ日はその場で確定します（#141）——右クリックメニューから期限を
+          // 当てるのと、同じ意味になります。
+          onPick={(next) => {
+            change((current) => ({ ...current, dueDate: next }));
+          }}
+        />
         {/* 打った文字がどう読まれたかを、確定する前に見せます。読めない間は
             何も出しません——打っている途中の文字はまだ間違いではないので、
             断りは確定のときに欄の脇へ出ます。**期限の欄の直後に置きます**——

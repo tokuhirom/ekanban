@@ -137,6 +137,8 @@ test("新しいカードにも期限・チェックリスト・タグを付け�
 
   await page.locator(".card-title-input").fill("備えて足すカード");
   await page.locator(".card-due-input").fill("2026-12-31");
+  // 期限に触るとカレンダーが開く（#194）。下の欄はその裏なので、畳んでから触る。
+  await page.locator(".card-due-input").press("Escape");
   await page.locator(".add-checklist-item").click();
   await page.locator(".checklist-text").fill("先にやる");
   await page.locator(".tags-input-field").fill("足すときのタグ");
@@ -219,6 +221,7 @@ test("期限やタグごと足したカードも、Undo 1 回で消える", asyn
   await page.locator(".column").first().locator(".add-card").click();
   await page.locator(".card-title-input").fill("戻す対象");
   await page.locator(".card-due-input").fill("2026-12-31");
+  await page.locator(".card-due-input").press("Escape");
   await page.locator(".add-checklist-item").click();
   await page.locator(".checklist-text").fill("項目");
   await page.locator(".save-card").click();
@@ -525,8 +528,7 @@ test("右クリックの「なし」で期限が外れる", async ({ page }) => 
     .toBeNull();
 });
 
-/// 期限はカレンダーから選ぶ欄（#120）。`type="date"` なので、打ち込める形は
-/// `"YYYY-MM-DD"` だけ。ポップアップそのものは OS が出すので、ここでは見られない。
+/// 期限の欄は普通のテキスト欄（ADR 0031）。`"YYYY-MM-DD"` はそのまま読まれる。
 test("欄に打った日付が、そのまま保存される", async ({ page }) => {
   await openBoard(page);
   await openFirstCard(page);
@@ -599,6 +601,101 @@ test("読めない期限は、欄の脇で断られて保存されない", async
       .flatMap((column) => column.cards)
       .find((each) => each.id === cardId)?.dueDate,
   ).toBe(before);
+});
+
+/// 期限はカレンダーからも選べる（#194、ADR 0046）。**欄に触れば開きます**
+/// ——押さないと出てこないカレンダーは、無いのと同じくらい気づけない。
+/// 押した日はその場で確定するので、閉じるのを待たずに SQLite へ届く。
+test("カレンダーから選んだ日が、そのまま保存される", async ({ page }) => {
+  await openBoard(page);
+  await openFirstCard(page);
+  const cardId = Number(
+    await page.locator(".column").first().locator(".card").first().getAttribute("data-card"),
+  );
+
+  // 出る月を決めるために、まず 12 月を打つ。ここではまだ確定しない。
+  await page.locator(".card-due-input").fill("2026-12-31");
+  await expect(page.locator(".due-calendar")).toBeVisible();
+  await expect(page.locator(".due-calendar-month")).toHaveText("2026年12月");
+
+  await page.locator('.due-calendar-day[data-date="2026-12-15"]').click();
+  await expect(page.locator(".card-due-input")).toHaveValue("2026-12-15");
+  // 選んだら畳む。次に触りたいのは、たいてい別の欄。
+  await expect(page.locator(".due-calendar")).toBeHidden();
+  await expect
+    .poll(async () =>
+      (await storedBoard(page)).columns
+        .flatMap((column) => column.cards)
+        .find((card) => card.id === cardId)?.dueDate,
+    )
+    .toBe("2026-12-15");
+});
+
+test("カレンダーの月送りで、前後の月へ渡れる", async ({ page }) => {
+  await openBoard(page);
+  await openFirstCard(page);
+  const cardId = Number(
+    await page.locator(".column").first().locator(".card").first().getAttribute("data-card"),
+  );
+
+  await page.locator(".card-due-input").fill("2026-12-31");
+  await page.getByRole("button", { name: "次の月" }).click();
+  await expect(page.locator(".due-calendar-month")).toHaveText("2027年1月");
+  await page.getByRole("button", { name: "前の月" }).click();
+  await expect(page.locator(".due-calendar-month")).toHaveText("2026年12月");
+
+  await page.getByRole("button", { name: "次の月" }).click();
+  await page.locator('.due-calendar-day[data-date="2027-01-05"]').click();
+  await expect
+    .poll(async () =>
+      (await storedBoard(page)).columns
+        .flatMap((column) => column.cards)
+        .find((card) => card.id === cardId)?.dueDate,
+    )
+    .toBe("2027-01-05");
+});
+
+/// カレンダーの近道は、右クリックメニューと同じ候補（`web/src/board/due.ts`）に
+/// 「なし」を足したもの。同じ言葉が 2 か所で違う日を指さないように。
+test("カレンダーの近道で、今日を当てて外せる", async ({ page }) => {
+  await openBoard(page);
+  await openFirstCard(page);
+  const cardId = Number(
+    await page.locator(".column").first().locator(".card").first().getAttribute("data-card"),
+  );
+  const stored = async () =>
+    (await storedBoard(page)).columns
+      .flatMap((column) => column.cards)
+      .find((card) => card.id === cardId)?.dueDate;
+
+  await page.getByRole("button", { name: "カレンダーから選ぶ" }).click();
+  await page.locator(".due-calendar-choices").getByRole("button", { name: "今日" }).click();
+  await expect.poll(stored).toBe(localDay(new Date()));
+
+  await page.getByRole("button", { name: "カレンダーから選ぶ" }).click();
+  await page.locator(".due-calendar-choices").getByRole("button", { name: "なし" }).click();
+  await expect(page.locator(".card-due-input")).toHaveValue("");
+  await expect.poll(stored).toBeNull();
+});
+
+/// `Escape` はカレンダーだけを畳む。パネルまで届くと、カレンダーを閉じたつもりで
+/// 編集中のパネルごと閉じることになる。
+test("Escape はカレンダーだけを畳み、パネルは開いたまま", async ({ page }) => {
+  await openBoard(page);
+  await openFirstCard(page);
+
+  await page.locator(".card-due-input").click();
+  await expect(page.locator(".due-calendar")).toBeVisible();
+
+  await page.locator(".card-due-input").press("Escape");
+  await expect(page.locator(".due-calendar")).toBeHidden();
+  await expect(page.locator(".card-panel")).toBeVisible();
+  // 畳んだあとの焦点は欄に戻る。戻した焦点で開き直さない。
+  await expect(page.locator(".card-due-input")).toBeFocused();
+
+  // もう一度の Escape は、いつもどおりパネルを閉じる。
+  await page.locator(".card-due-input").press("Escape");
+  await expect(page.locator(".card-panel")).toBeHidden();
 });
 
 /// 外す × は、期限が入っているときだけ出す（#128）。新しいカードは期限が
