@@ -23,7 +23,7 @@ import {
 } from "../model/board";
 import type { DueCounts, DueStatus } from "../model/due";
 import { dueCounts, dueStatus } from "../model/due";
-import { resolveCaptureTarget } from "../model/capture";
+import { resolveCaptureTarget, type CaptureDestination } from "../model/capture";
 import { filterCards } from "../model/search";
 import { useIpc } from "../ipc";
 import { asAppError, describeFailure } from "../ipc/error";
@@ -82,6 +82,9 @@ export interface BoardState {
   boardOf: (boardId: number) => Board | null;
   /** 開いているボードのカラムを、クイックキャプチャの入れ先にする。 */
   setCaptureColumn: (columnId: number) => void;
+  /** いまのキャプチャ先。**ボードをまたぎます**——開いていないボードを指して
+   * いることがあるので、名前まで引いたものを渡す（`model/capture.ts`）。 */
+  captureTarget: CaptureDestination | null;
   /** ダイアログに出す知らせ。読んだら `dismissAlert` で消す。 */
   alert: Alert | null;
   dismissAlert: () => void;
@@ -347,10 +350,12 @@ export function useBoardState(): BoardState {
 
   useEffect(() => {
     let cancelled = false;
-    // 環境の答え（グローバルホットキーを使えるか）も一緒に聞きます。メニューの
-    // 文言に入るので、掛ける前に要ります（ADR 0030）。
-    Promise.all([ipc.startupState(), ipc.quickCaptureStatus()])
-      .then(([startup, status]) => {
+    // **ホットキーの可否はここで聞きません**（ADR 0047）。理由を出す先は設定
+    // 画面の割り当ての欄で、メニューの文言ではなくなりました。聞くのは「設定…」
+    // を開くときです（`board/Board.tsx`）。
+    ipc
+      .startupState()
+      .then((startup) => {
         if (cancelled) return;
         readDocuments(startup.openBoardId);
         setStoredCaptureTarget(startup.captureTarget);
@@ -365,7 +370,7 @@ export function useBoardState(): BoardState {
 
         // メニューバーを掛ける（ADR 0043）。**構成を持っているのはこちら**
         // （`shell/menu.ts`）で、殻はそれを OS のメニューに変換するだけです。
-        void ipc.setMenu(sectionsFor(startup.platform, status.unavailable));
+        void ipc.setMenu(sectionsFor(startup.platform));
       })
       .catch((error: unknown) => {
         if (!cancelled) report("ボードを読み込めませんでした", error);
@@ -801,6 +806,7 @@ export function useBoardState(): BoardState {
     boards,
     boardOf,
     setCaptureColumn,
+    captureTarget,
     today,
     createBoard,
     deleteBoard,
