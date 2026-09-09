@@ -54,7 +54,7 @@ function Demo({
   );
 }
 
-async function main(): Promise<void> {
+function main(): void {
   const root = document.getElementById("root");
   if (root === null) throw new Error("#root がない");
 
@@ -63,8 +63,7 @@ async function main(): Promise<void> {
   setIpc(ipc);
   hardenBoard();
 
-  const status = await ipc.quickCaptureStatus();
-  const sections = webSections(platform, status.unavailable);
+  const sections = webSections(platform);
 
   // 未捕捉の例外は Rust 側と同じ経路に流す（`docs/DESIGN.md`「アプリが伝えること」）。
   // ブラウザではログファイルに書けないので、コンソールに出て終わります。
@@ -87,4 +86,4 @@ async function main(): Promise<void> {
   );
 }
 
-void main();
+main();

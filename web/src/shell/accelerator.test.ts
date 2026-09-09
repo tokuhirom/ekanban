@@ -30,6 +30,8 @@ describe("parseAccelerator", () => {
     });
     expect(parseAccelerator("Cmd+Ctrl+S")?.code).toBe("KeyS");
     expect(parseAccelerator("F11")?.code).toBe("F11");
+    // 「設定…」の割り当て（ADR 0047）。英数字でもファンクションキーでもない。
+    expect(parseAccelerator("CmdOrCtrl+,")?.code).toBe("Comma");
   });
 
   it("読めないものは丸めずに断る", () => {
@@ -72,6 +74,8 @@ describe("matchesAccelerator", () => {
       true,
     );
     expect(matchesAccelerator(press("KeyM", { ctrlKey: true }), "CmdOrCtrl+N", "linux")).toBe(false);
+    expect(matchesAccelerator(press("Comma", { ctrlKey: true }), "CmdOrCtrl+,", "linux")).toBe(true);
+    expect(matchesAccelerator(press("Comma", { metaKey: true }), "CmdOrCtrl+,", "macos")).toBe(true);
   });
 });
 
@@ -80,6 +84,9 @@ describe("formatAccelerator", () => {
     expect(formatAccelerator("CmdOrCtrl+Shift+B", "macos")).toBe("⇧⌘B");
     expect(formatAccelerator("CmdOrCtrl+Shift+B", "linux")).toBe("Ctrl+Shift+B");
     expect(formatAccelerator("Cmd+Ctrl+S", "macos")).toBe("⌃⌘S");
+    // 記号は `Comma` に戻さず、書いてあるとおりに出す。
+    expect(formatAccelerator("CmdOrCtrl+,", "macos")).toBe("⌘,");
+    expect(formatAccelerator("CmdOrCtrl+,", "linux")).toBe("Ctrl+,");
   });
 
   it("読めないものはそのまま出す", () => {

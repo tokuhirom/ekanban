@@ -47,21 +47,16 @@ function predefined(item: Predefined): Item {
   return { kind: "predefined", item };
 }
 
-/// 「クイックキャプチャのショートカット…」。
+/// 「設定…」。**アプリ全体の設定への入り口はこれ 1 つ**です（ADR 0047）。
 ///
-/// 使えない環境では灰色にし、**理由を文言に入れます**。灰色の項目は押せないので、
-/// 押したときに理由を出す道がありません。判定は起動中に変わりません。
-function quickCapture(unavailable: string | null): Item {
-  const label = "クイックキャプチャのショートカット…";
-  return unavailable === null
-    ? app("setQuickCaptureShortcut", label)
-    : {
-        kind: "app",
-        action: "setQuickCaptureShortcut",
-        label: `${label}（${unavailable}）`,
-        accelerator: null,
-        enabled: false,
-      };
+/// 置き場所は OS の慣習に従います——macOS はアプリメニュー、ほかは「ファイル」の
+/// 末尾（閉じる・終了の上）。割り当ては `CmdOrCtrl+,` で、どちらでも同じ。
+///
+/// **使えない環境の理由はここに入りません。** グローバルホットキーを作れない
+/// 環境でも、テーマは選べます。理由を出すのは設定画面の割り当ての欄で、
+/// そこだけが灰色になります（`shell/SettingsDialog.tsx`）。
+function settings(): Item {
+  return app("openSettings", "設定…", "CmdOrCtrl+,");
 }
 
 /// どの OS でも同じ「編集」メニュー。
@@ -130,14 +125,14 @@ function fileHead(): Item[] {
   ];
 }
 
-function macosSections(unavailable: string | null): Section[] {
+function macosSections(): Section[] {
   return [
     {
       name: "ekanban",
       items: [
         predefined("about"),
         SEPARATOR,
-        quickCapture(unavailable),
+        settings(),
         SEPARATOR,
         predefined("services"),
         SEPARATOR,
@@ -177,12 +172,15 @@ function macosSections(unavailable: string | null): Section[] {
 }
 
 /// macOS 以外のメニューバー。
-function drawnSections(unavailable: string | null): Section[] {
+function drawnSections(): Section[] {
   return [
     {
       name: "ファイル",
       items: [
         ...fileHead(),
+        SEPARATOR,
+        settings(),
+        SEPARATOR,
         windowItem("closeWindow", "ウインドウを閉じる", "CmdOrCtrl+W"),
         windowItem("quit", "終了", "CmdOrCtrl+Q"),
       ],
@@ -199,8 +197,6 @@ function drawnSections(unavailable: string | null): Section[] {
     {
       name: "ヘルプ",
       items: [
-        quickCapture(unavailable),
-        SEPARATOR,
         app("backupDatabase", "データベースをコピー…"),
         app("revealDatabase", "データベースの場所をフォルダで開く"),
         app("revealBackups", "バックアップの場所をフォルダで開く"),
@@ -215,12 +211,10 @@ function drawnSections(unavailable: string | null): Section[] {
 ///
 /// macOS には OS が描くアプリメニューとウインドウメニューがあり、ほかの環境には
 /// ありません。そのぶん「終了」と「ekanban について」の置き場所が変わります
-/// （[ADR 0015]）。
-///
-/// `unavailable` は、この環境でグローバルホットキーを使えない理由。使えるなら
-/// `null`（`quickCaptureStatus`）。
-export function sectionsFor(platform: Platform, unavailable: string | null): Section[] {
-  return platform === "macos" ? macosSections(unavailable) : drawnSections(unavailable);
+/// （[ADR 0015]）。**「設定…」の置き場所もここで変わります**——macOS は
+/// アプリメニュー、ほかは「ファイル」の末尾（ADR 0047）。
+export function sectionsFor(platform: Platform): Section[] {
+  return platform === "macos" ? macosSections() : drawnSections();
 }
 
 /// ページが描くメニューバー（[ADR 0035]）。
@@ -240,8 +234,8 @@ export function sectionsFor(platform: Platform, unavailable: string | null): Sec
 /// ならします。**描く側で「前が区切り線だったか」を数えさせません。**
 ///
 /// [ADR 0035]: ../../../docs/adr/0035-a-browser-build-of-the-real-core.md
-export function webSections(platform: Platform, unavailable: string | null): Section[] {
-  return sectionsFor(platform, unavailable)
+export function webSections(platform: Platform): Section[] {
+  return sectionsFor(platform)
     .map((section) => ({
       name: section.name,
       items: tidySeparators(
@@ -256,8 +250,7 @@ export function webSections(platform: Platform, unavailable: string | null): Sec
 /// ブラウザに相手がいない項目を、**灰色にして理由を文言に入れる**。
 ///
 /// 消しません。消すと「この機能はこのアプリに無い」に見えます。灰色の項目は
-/// 押せず、押せない以上理由を出す先が無いので、`quickCapture` と同じように
-/// 文言に入れます。
+/// 押せず、押せない以上理由を出す先が無いので、理由のほうを文言に入れます。
 ///
 /// ファイル管理でフォルダを開くのと、データベースの控えがそれです。前者は
 /// ブラウザから OS のファイル管理を呼べないため、後者は**ブラウザ版に

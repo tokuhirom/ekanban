@@ -42,7 +42,7 @@ import { dueStatus } from "../model/due";
 import { useFileActions } from "../shell/files";
 import { isComposing } from "../shell/ime";
 import { targetOf, undoIntent } from "../shell/keys";
-import { ShortcutDialog } from "../shell/ShortcutDialog";
+import { SettingsDialog } from "../shell/SettingsDialog";
 import { useBoardState } from "../state/board";
 import { CardFace, CardMenu } from "./Card";
 import { Column } from "./Column";
@@ -123,9 +123,9 @@ export function Board() {
   const [cardMenu, setCardMenu] = useState<{ cardId: number; x: number; y: number } | null>(null);
   const [addingColumn, setAddingColumn] = useState(false);
   const [about, setAbout] = useState(false);
-  // 割り当てのダイアログ。使えない環境なら理由を持って開く（押せる項目は
-  // メニュー側で灰色になっているが、そこを通らない道もある）。
-  const [shortcutDialog, setShortcutDialog] = useState<QuickCaptureStatus | null>(null);
+  // 設定ダイアログ（ADR 0047）。**開くときにホットキーの可否を聞きます**——
+  // 割り当ての欄を灰色にするかどうかがそれで決まり、メニューにはもう出ません。
+  const [settings, setSettings] = useState<QuickCaptureStatus | null>(null);
   const searchInput = useRef<HTMLInputElement>(null);
   // 書き出す中身はここで組み立てます（Markdown だけ、ADR 0045）。ドラッグ中の
   // 見た目ではなく、保存されている盤面を渡します。
@@ -179,14 +179,14 @@ export function Board() {
     exportBoardMarkdown: () => {
       files.exportBoard("markdown");
     },
-    setQuickCaptureShortcut: () => {
+    openSettings: () => {
       void ipc
         .quickCaptureStatus()
         .then((status) => {
-          setShortcutDialog(status);
+          setSettings(status);
         })
         .catch(() => {
-          setShortcutDialog({ unavailable: null, failure: null });
+          setSettings({ unavailable: null, failure: null });
         });
     },
     backupDatabase: files.backupDatabase,
@@ -720,15 +720,18 @@ export function Board() {
           onDismiss={state.dismissAlert}
         />
       )}
-      {shortcutDialog !== null && (
-        <ShortcutDialog
-          current={state.quickCaptureShortcut}
-          unavailable={shortcutDialog.unavailable}
-          failure={shortcutDialog.failure}
+      {settings !== null && (
+        <SettingsDialog
+          theme={state.theme}
+          setTheme={state.setTheme}
+          shortcut={state.quickCaptureShortcut}
+          unavailable={settings.unavailable}
+          failure={settings.failure}
+          onShortcutChanged={state.setQuickCaptureShortcut}
+          captureTarget={state.captureTarget}
           platform={platform}
-          onChanged={state.setQuickCaptureShortcut}
           onClose={() => {
-            setShortcutDialog(null);
+            setSettings(null);
           }}
         />
       )}

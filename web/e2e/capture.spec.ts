@@ -2,8 +2,9 @@
 //
 // **ホットキーそのものはここに出ません。** グローバルな割り当ては OS が押しかたを
 // 捕まえるもので、ブラウザからは押せません（そもそも Wayland では使えない、
-// [ADR 0012]）。ここで確かめるのは、押されたあとの窓と、入れ先の決まり方、
-// 割り当ての読み書きです。
+// [ADR 0012]）。ここで確かめるのは、押されたあとの窓と、入れ先の決まり方です。
+// **割り当ては設定画面のもの**になったので、そちらは `settings.spec.ts` が
+// 見ます（ADR 0047）。
 //
 // キャプチャの窓は**別のエントリポイント**（`capture.html`）なので、そのまま
 // 開けます。閉じるところだけが本物ではありません——ブラウザに閉じる窓が
@@ -11,7 +12,7 @@
 //
 // [ADR 0012]: ../../../docs/adr/0012-focus-after-quick-capture-on-linux.md
 
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 
 import {
   editStoredBoard,
@@ -21,22 +22,12 @@ import {
   startHarness,
   stopHarness,
   storedBoard,
-  storedSetting,
 } from "./harness";
 
-import type {} from "../src/ipc/browser";
 import { addCard } from "../src/model/board";
-import { QUICK_CAPTURE_SHORTCUT } from "../src/store/keys";
-import type { AppAction } from "../src/ipc/types/AppAction";
 
 test.beforeEach(startHarness);
 test.afterEach(stopHarness);
-
-async function chooseMenu(page: Page, action: AppAction): Promise<void> {
-  await page.evaluate((name: AppAction) => {
-    window.ekanbanMenu?.(name);
-  }, action);
-}
 
 test("1 行を打って Enter で、入れ先のカラムの末尾に足される", async ({ page }) => {
   const before = seededBoard();
@@ -112,27 +103,4 @@ test("ほかの窓が盤面を変えたら、開いているボードにも出�
   );
 
   await expect(page.locator(".card", { hasText: "別の窓から足したカード" })).toBeVisible();
-});
-
-/// ページの外まで届く割り当ては、この組み立てでは作れない（ADR 0035）。
-///
-/// **消さずに、理由を出します。** 何ができないのかを画面で読めることが
-/// 決めごとで、押せるのに何も起きない状態を作らないためです。
-///
-/// 割り当てそのもの——押しているキーがその場に出る、記録される、解除できる
-/// ——は OS への登録が要るので、**手で確かめます**（ADR 0041 が殻の側に残した
-/// 4 つのうちの 1 つ）。押されたキーを文字列にするところは
-/// `src/shell/shortcut.test.ts` が見ています。
-test("ブラウザでは、割り当てを作れない理由がその場に出る", async ({ page }) => {
-  await openBoard(page);
-  await chooseMenu(page, "setQuickCaptureShortcut");
-  const dialog = page.getByRole("dialog");
-  await expect(dialog).toBeVisible();
-
-  await expect(dialog.locator(".dialog-detail").first()).toContainText("ブラウザ版");
-
-  // 押しても割り当てにはならない。閉じもしない——読む相手はこの理由なので。
-  await page.keyboard.press("KeyK");
-  await expect(dialog).toBeVisible();
-  expect(await storedSetting(page, QUICK_CAPTURE_SHORTCUT)).toBeNull();
 });

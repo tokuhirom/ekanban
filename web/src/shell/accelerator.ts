@@ -88,7 +88,22 @@ function codeOf(key: string): string | null {
   if (/^[A-Za-z]$/.test(key)) return `Key${key.toUpperCase()}`;
   if (/^[0-9]$/.test(key)) return `Digit${key}`;
   if (/^F([1-9]|1[0-9]|2[0-4])$/i.test(key)) return key.toUpperCase();
-  return null;
+  return PUNCTUATION.get(key) ?? null;
+}
+
+/// 英数字でもファンクションキーでもない、割り当てに使うキー。
+///
+/// `,` は「設定…」の `CmdOrCtrl+,` です（ADR 0047）。muda 側は `,` も `Comma` も
+/// 同じ `Code::Comma` に読むので、**書くほうを 1 つに決めます**——`shell/menu.ts`
+/// には `,` と書き、その形をここでも読みます。増やすときは、必ず muda が
+/// 読める綴りであることを確かめること（読めない文字列はメニューを組む時点で
+/// `Err` になり、メニューが掛からないまま終わります）。
+const PUNCTUATION = new Map<string, string>([[",", "Comma"]]);
+
+/// 割り当てのキーを、メニューに出す形に戻す。`codeOf` の逆。
+function keyOf(code: string): string {
+  for (const [key, mapped] of PUNCTUATION) if (mapped === code) return key;
+  return code.replace(/^Key|^Digit/, "");
 }
 
 /// 押されたキーが、この割り当てかどうか。
@@ -122,7 +137,7 @@ export function formatAccelerator(accelerator: string, platform: Platform): stri
   const parsed = parseAccelerator(accelerator);
   if (parsed === null) return accelerator;
   const isMac = platform === "macos";
-  const key = parsed.code.replace(/^Key|^Digit/, "");
+  const key = keyOf(parsed.code);
 
   if (isMac) {
     // macOS の並び順は Ctrl → Alt → Shift → Cmd で固定です。

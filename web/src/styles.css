@@ -1374,7 +1374,95 @@ button.danger {
   color: var(--color-muted-foreground);
 }
 
-.shortcut-dialog kbd {
+/* ---------------------------------------------------------------- 設定 */
+/* アプリ全体の設定（ADR 0047）。中身が 3 つ並ぶぶん、ほかのダイアログより
+ * 広く、縦に溢れたらここだけが巻き取る。 */
+.settings-dialog {
+  width: 420px;
+  max-height: 100%;
+}
+
+.settings {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  /* スクロールする箱までの間の flex アイテムは `min-height: 0`
+   * （`docs/DESIGN.md`「画面の作り」）。 */
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.settings-heading {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-muted-foreground);
+}
+
+.settings-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.settings-choice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* いま何が選ばれているか・どこが入れ先かを読む行。 */
+.settings-value {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.settings-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-muted-foreground);
+}
+
+/* 割り当てを捕まえる欄。**焦点があるあいだだけキーを受けます**（ADR 0030）。
+ * 受けているかどうかが枠の色で読めること。 */
+.shortcut-capture {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+}
+
+.shortcut-capture:focus {
+  outline: none;
+}
+
+.shortcut-capture.is-capturing {
+  border-color: var(--color-info);
+}
+
+/* 使えない環境では灰色にし、理由を文言に出す（`docs/DESIGN.md`）。 */
+.shortcut-capture.is-disabled {
+  color: var(--color-muted-foreground);
+  background: var(--color-accent);
+}
+
+.clear-shortcut {
+  align-self: flex-start;
+}
+
+.settings kbd {
   padding: 2px 7px;
   border: 1px solid var(--color-border);
   border-bottom-width: 2px;

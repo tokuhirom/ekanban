@@ -17,11 +17,17 @@ import { isComposing } from "./ime";
 interface ShellProps {
   title: string;
   onCancel: () => void;
+  /** 枠そのものに足す class。中身の高さが違うダイアログのため。 */
+  className?: string;
   children: ReactNode;
 }
 
 /// 共通の枠。`Escape` で閉じ、開いた瞬間に中の最初のコントロールへ焦点を移す。
-function Shell({ title, onCancel, children }: ShellProps) {
+///
+/// 設定ダイアログ（`shell/SettingsDialog.tsx`）もこれを使います。**枠を 2 つ
+/// 持ちません**——`Escape` の扱いと焦点の移し方は、どのダイアログでも同じで
+/// なければならないものです。
+export function Shell({ title, onCancel, className, children }: ShellProps) {
   const titleId = useId();
   const box = useRef<HTMLDivElement>(null);
 
@@ -45,7 +51,13 @@ function Shell({ title, onCancel, children }: ShellProps) {
         }
       }}
     >
-      <div className="dialog" role="dialog" aria-modal="true" aria-labelledby={titleId} ref={box}>
+      <div
+        className={className === undefined ? "dialog" : `dialog ${className}`}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        ref={box}
+      >
         <h2 className="dialog-title" id={titleId}>
           {title}
         </h2>

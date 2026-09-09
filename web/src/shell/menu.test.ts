@@ -35,7 +35,7 @@ const APP_ACTIONS: AppAction[] = [
   "focusSearch",
   "toggleBoardList",
   "toggleArchiveView",
-  "setQuickCaptureShortcut",
+  "openSettings",
   "useLightTheme",
   "useDarkTheme",
   "useSystemTheme",
@@ -48,8 +48,8 @@ const APP_ACTIONS: AppAction[] = [
 /// macOS の OS が持っている項目。ほかの環境では出しようがない。
 const MACOS_ONLY: Predefined[] = ["services", "hide", "hideOthers", "showAll"];
 
-const macos = (): Section[] => sectionsFor("macos", null);
-const drawn = (): Section[] => sectionsFor("linux", null);
+const macos = (): Section[] => sectionsFor("macos");
+const drawn = (): Section[] => sectionsFor("linux");
 
 function items(sections: Section[]): Item[] {
   return sections.flatMap((section) => section.items);
@@ -168,7 +168,10 @@ describe("sectionsFor", () => {
         for (const modifier of parts) {
           expect(modifiers, `${id} carries an unknown modifier ${modifier}`).toContain(modifier);
         }
-        const known = /^[A-Z]$/.test(key) || /^F([1-9]|1[0-9]|2[0-4])$/.test(key);
+        // `,` は「設定…」の割り当て（ADR 0047）。muda は `,` と `Comma` を
+        // 同じ `Code::Comma` に読むので、書くほうを `,` に決めています。
+        const known =
+          /^[A-Z]$/.test(key) || /^F([1-9]|1[0-9]|2[0-4])$/.test(key) || key === ",";
         expect(known, `${id} carries an unknown key ${key}`).toBe(true);
       }
     }
@@ -192,13 +195,30 @@ describe("sectionsFor", () => {
     }
   });
 
-  /// 使えない環境のクイックキャプチャは、消さずに灰色にして理由を文言に入れる。
-  it("は、割り当てを作れない環境で理由を文言に入れる", () => {
-    const item = items(sectionsFor("linux", "ブラウザ版では作れません")).find(
-      (each) => each.kind === "app" && each.action === "setQuickCaptureShortcut",
-    );
-    expect(item?.kind === "app" && item.enabled).toBe(false);
-    expect(item?.kind === "app" && item.label).toContain("ブラウザ版では作れません");
+  /// 設定への入り口は 1 つで、置き場所は OS の慣習どおり（ADR 0047）。
+  ///
+  /// **理由を文言に入れる項目ではありません。** ホットキーを作れない環境でも
+  /// テーマは選べるので、灰色にするのは設定画面の割り当ての欄だけです。
+  it("は、設定への入り口を OS の慣習の場所に 1 つだけ置く", () => {
+    for (const [bar, sections] of [
+      ["macOS", macos()],
+      ["drawn", drawn()],
+    ] as const) {
+      const opens = appActions(sections).filter((action) => action === "openSettings");
+      expect(opens, `${bar} bar carries one 設定… item`).toEqual(["openSettings"]);
+
+      const item = items(sections).find(
+        (each) => each.kind === "app" && each.action === "openSettings",
+      );
+      expect(item?.kind === "app" && item.enabled).toBe(true);
+      expect(item?.kind === "app" && item.accelerator).toBe("CmdOrCtrl+,");
+    }
+
+    // macOS はアプリメニュー、ほかは「ファイル」の末尾（閉じる・終了の上）。
+    const inSection = (sections: Section[], name: string): AppAction[] =>
+      appActions(sections.filter((section) => section.name === name));
+    expect(inSection(macos(), "ekanban")).toContain("openSettings");
+    expect(inSection(drawn(), "ファイル")).toContain("openSettings");
   });
 });
 
@@ -209,13 +229,13 @@ describe("webSections", () => {
   /// 届きません。**どちらも「押しても何も起きない項目」になる**ので出しません。
   it("は、OS が持っているものを落とす", () => {
     for (const platform of PLATFORMS) {
-      const sections = webSections(platform, null);
+      const sections = webSections(platform);
       const kinds = new Set(items(sections).map((item) => item.kind));
       expect(kinds.has("predefined")).toBe(false);
       expect(kinds.has("window")).toBe(false);
 
       // 殻のメニューにある操作だけが出ていること。ページにだけ項目を足さない。
-      const shell = appActions(sectionsFor(platform, null));
+      const shell = appActions(sectionsFor(platform));
       for (const action of appActions(sections)) {
         expect(shell, `${action} は殻のメニューに無い`).toContain(action);
       }
@@ -229,7 +249,7 @@ describe("webSections", () => {
   /// させません**——出す側で畳んでおけば、描くほうは並べるだけで済みます。
   it("は、浮いた区切り線を残さない", () => {
     for (const platform of PLATFORMS) {
-      for (const section of webSections(platform, null)) {
+      for (const section of webSections(platform)) {
         expect(section.items.at(0)?.kind).not.toBe("separator");
         expect(section.items.at(-1)?.kind).not.toBe("separator");
         for (let at = 1; at < section.items.length; at += 1) {
@@ -245,7 +265,7 @@ describe("webSections", () => {
 
   /// ブラウザに相手がいない項目は、消さずに灰色にして理由を出すこと。
   it("は、できないことを灰色にして理由を出す", () => {
-    const drawnItems = items(webSections("linux", null));
+    const drawnItems = items(webSections("linux"));
     const find = (wanted: AppAction) => {
       const found = drawnItems.find((item) => item.kind === "app" && item.action === wanted);
       if (found?.kind !== "app") throw new Error(`${wanted} が出ていない`);
