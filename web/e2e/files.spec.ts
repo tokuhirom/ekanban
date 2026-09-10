@@ -12,20 +12,13 @@ import { readFileSync } from "node:fs";
 
 import { expect, test, type Page } from "@playwright/test";
 
-import { editStoredBoard, openBoard, startHarness, stopHarness, storedBoard } from "./harness";
+import { chooseMenu, editStoredBoard, openBoard, startHarness, stopHarness, storedBoard } from "./harness";
 import { archiveCard } from "../src/model/board";
 
-import type {} from "../src/ipc/browser";
 import type { AppAction } from "../src/ipc/types/AppAction";
 
 test.beforeEach(startHarness);
 test.afterEach(stopHarness);
-
-async function chooseMenu(page: Page, action: AppAction): Promise<void> {
-  await page.evaluate((name: AppAction) => {
-    window.ekanbanMenu?.(name);
-  }, action);
-}
 
 /// メニューを選び、受け取ったファイルの中身を読む。
 ///

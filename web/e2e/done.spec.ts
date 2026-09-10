@@ -6,11 +6,7 @@
 
 import { expect, test, type Page } from "@playwright/test";
 
-import { openBoard, startHarness, stopHarness, storedBoard } from "./harness";
-
-// `window.ekanbanMenu` の宣言を読み込むためだけの取り込み（値は使わない）。
-import type {} from "../src/ipc/browser";
-import type { AppAction } from "../src/ipc/types/AppAction";
+import { chooseMenu, openBoard, startHarness, stopHarness, storedBoard } from "./harness";
 
 test.beforeEach(startHarness);
 test.afterEach(stopHarness);
@@ -24,13 +20,6 @@ async function toggleDone(page: Page, index: number, label: string): Promise<voi
   const item = column.locator(".set-column-done");
   await expect(item).toHaveText(label);
   await item.click();
-}
-
-/// メニューバーの項目を選ぶ。webview では Rust から `app:action` で届くもの。
-async function chooseMenu(page: Page, action: AppAction): Promise<void> {
-  await page.evaluate((name: AppAction) => {
-    window.ekanbanMenu?.(name);
-  }, action);
 }
 
 test("完了扱いにすると、印が出て、カードが沈み、期限を数えなくなる", async ({ page }) => {

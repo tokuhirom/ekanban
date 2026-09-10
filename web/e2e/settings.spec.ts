@@ -16,20 +16,15 @@
 
 import { expect, test, type Page } from "@playwright/test";
 
-import { openBoard, startHarness, stopHarness, storedSetting } from "./harness";
+import { chooseMenu, openBoard, startHarness, stopHarness, storedSetting } from "./harness";
 import { DAY_BOUNDARY_HOUR, QUICK_CAPTURE_SHORTCUT, THEME_PREFERENCE } from "../src/store/keys";
-
-// `window.ekanbanMenu` の宣言を読み込むためだけの取り込み（値は使わない）。
-import type {} from "../src/ipc/browser";
 
 test.beforeEach(startHarness);
 test.afterEach(stopHarness);
 
 /// 「設定…」が押されたことにして、開くまで待つ。
 async function openSettings(page: Page) {
-  await page.evaluate(() => {
-    window.ekanbanMenu?.("openSettings");
-  });
+  await chooseMenu(page, "openSettings");
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
   return dialog;

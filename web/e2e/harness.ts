@@ -13,9 +13,12 @@
 
 import { expect, type Page } from "@playwright/test";
 
+import type { AppAction } from "../src/ipc/types/AppAction";
 import type { Board } from "../src/ipc/types/Board";
 import type { BoardDocument } from "../src/ipc/types/BoardDocument";
 import { STORAGE_KEY } from "../src/ipc/local";
+// `window.ekanbanMenu` の宣言を読み込むためだけの取り込み（値は使わない）。
+import type {} from "../src/ipc/browser";
 import type { BoardDocument as ModelDocument, Outcome } from "../src/model/board";
 import { cloneDocument } from "../src/model/board";
 import { MemoryStore } from "../src/store/memory";
@@ -144,6 +147,25 @@ export async function editStoredBoard(
   expect(act(document).ok, "モデルが受け付ける").toBe(true);
   store.saveDocument(document, document.pendingEvents);
   await write(page, store);
+}
+
+/// メニューの項目が押されたことにする。
+///
+/// **口が開くのを待ってから呼びます。** `window.ekanbanMenu` を付けるのは React の
+/// effect（`src/ipc/browser.ts` の `onAppAction`）なので、ページが `load` を出した
+/// あとでも、盤面の `.column` が描かれたあとでも、まだ付いていないことがあります。
+/// `page.reload()` の直後がそれで、webkit では 10 回に 1 回ほど当たります。
+///
+/// **`?.` で呼びません。** 口が無いまま押すと、選んだはずのメニューが黙って捨てられ、
+/// 何も起きていない画面を待った先の `expect` が落ちます。落ちる場所と原因が離れると、
+/// 環境の遅さで出たり出なかったりする失敗にしか見えません。ここで落とします。
+export async function chooseMenu(page: Page, action: AppAction): Promise<void> {
+  await page.waitForFunction(() => window.ekanbanMenu !== undefined);
+  await page.evaluate((name: AppAction) => {
+    const choose = window.ekanbanMenu;
+    if (choose === undefined) throw new Error("メニューの口がまだ開いていない");
+    choose(name);
+  }, action);
 }
 
 /// ボードの窓を開く。**開く前に盤面を置きます**——ページが読むより先に

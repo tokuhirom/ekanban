@@ -11,26 +11,15 @@
 
 import { expect, test, type Page } from "@playwright/test";
 
-import { openBoard, startHarness, stopHarness, storedBoard, storedSetting } from "./harness";
+import { chooseMenu, openBoard, startHarness, stopHarness, storedBoard, storedSetting } from "./harness";
 import {
   FILTER_SEARCH,
   SIDEBAR_COLLAPSED,
   THEME_PREFERENCE,
 } from "../src/store/keys";
 
-// `window.ekanbanMenu` の宣言を読み込むためだけの取り込み（値は使わない）。
-import type {} from "../src/ipc/browser";
-import type { AppAction } from "../src/ipc/types/AppAction";
-
 test.beforeEach(startHarness);
 test.afterEach(stopHarness);
-
-/// メニューが押されたことにする。
-async function chooseMenu(page: Page, action: AppAction): Promise<void> {
-  await page.evaluate((name: AppAction) => {
-    window.ekanbanMenu?.(name);
-  }, action);
-}
 
 async function storedTitles(page: Page): Promise<string[]> {
   const board = await storedBoard(page);
