@@ -117,3 +117,46 @@ test("生成は取り消しに積まれず、Cmd+Z は直前のユーザー操�
     .toBe(0);
   await expect(page.locator(".card-recurring")).toHaveCount(0);
 });
+
+/// タグの欄はカードの編集パネルと同じもの（`panel/TagsInput.tsx`）。ここで見る
+/// のは、**打った名前でタグが作られて定義に付く**こと——ボードのタグを全部
+/// 並べた押しボタンではなくなったので、経路そのものが変わっています。
+test("繰り返しのタグは打って作れ、周期に使えない先読みは灰色になる", async ({ page }) => {
+  const today = localDay(new Date(), DEFAULT_DAY_BOUNDARY_HOUR);
+
+  await page.clock.install({ time: new Date(`${today}T12:00:00`) });
+  await openBoard(page);
+
+  await chooseMenu(page, "manageRecurrences");
+  const panel = page.locator(".recurrence-panel");
+  await panel.locator(".recurrence-add .recurrence-title-input").fill("メールを見る");
+  await panel.locator(".add-recurrence").click();
+
+  const row = panel.locator(".recurrence-row");
+  await expect(row).toHaveCount(1);
+
+  // 既定は「毎日」なので、先読みは触れない。灰色にしているだけでなく、
+  // 理由も文言に出す（`docs/DESIGN.md`「色だけに意味を持たせない」）。
+  const lead = row.getByLabel("メールを見る の先読み日数");
+  await expect(lead).toBeDisabled();
+  await expect(row.locator(".recurrence-field.is-disabled")).toHaveCount(1);
+  await expect(row).toContainText("毎日・平日は先読みを持ちません");
+
+  // 「毎週」にすると触れるようになる。
+  await row.getByLabel("メールを見る の周期").selectOption("weekly");
+  await expect(lead).toBeEnabled();
+  await expect(row.locator(".recurrence-field.is-disabled")).toHaveCount(0);
+
+  // カードの編集パネルと同じ欄——打って Enter で、無ければ作って付ける。
+  await row.getByLabel("メールを見る のタグ").fill("朝");
+  await row.getByLabel("メールを見る のタグ").press("Enter");
+
+  await expect(row.locator(".tags-input-chip")).toHaveText(/朝/);
+  await expect
+    .poll(async () => {
+      const board = await storedBoard(page);
+      const tag = board.tags.find((each) => each.name === "朝");
+      return board.recurrences[0]?.tagIds.includes(tag?.id ?? -1) ?? false;
+    }, { message: "作ったタグが定義に付いている" })
+    .toBe(true);
+});
