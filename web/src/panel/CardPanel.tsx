@@ -41,7 +41,6 @@ import {
   copyCard as copyCardIn,
   updateCardDetails,
 } from "../model/board";
-import type { Tag } from "../ipc/types/Tag";
 import { useAppActions } from "../shell/actions";
 import { DUE_DATE_HELP, dueDatePreview, parseDueDate } from "../model/due";
 import { isComposing } from "../shell/ime";
@@ -65,7 +64,8 @@ import {
   type CardDraft,
   type DraftChecklistItem,
 } from "./draft";
-import { AUTO_TAG_COLOR, findTagByName, suggestTags, tagChipStyle } from "./tags";
+import { AUTO_TAG_COLOR } from "./tags";
+import { TagsInput } from "./TagsInput";
 
 /// 断りの見出し。**カードのコマンドが返すものと同じ文言**にします——送る前に
 /// 断ったか、送って断られたかで、出る言葉が変わらないように。
@@ -644,127 +644,6 @@ export function CardPanel({
         )}
       </footer>
     </aside>
-  );
-}
-
-/// カードに付けるタグの欄。選んだタグのチップと、打ち込む欄（#115、ADR 0027）。
-///
-/// **打った名前が既にあるタグならそれを選び、無ければ作って選びます。** 大文字
-/// 小文字と前後の空白は無視して突き合わせるので、同じ名前のタグが 2 つできる
-/// ことはありません。作るところまでをここに置くのは、タグ整理パネルを開いて
-/// 戻ってくる往復が、カードを書いている最中には重すぎるからです。名前の変更・
-/// 色・削除は今までどおりタグ整理パネルにしか置きません。
-///
-/// チップの `✕` は「このカードから外す」で、タグそのものは残ります。
-function TagsInput({
-  tags,
-  selected,
-  failure,
-  onToggle,
-  onCreate,
-}: {
-  tags: readonly Tag[];
-  selected: readonly number[];
-  failure: AppError | null;
-  onToggle: (tagId: number) => void;
-  onCreate: (name: string) => Promise<void>;
-}) {
-  const [typed, setTyped] = useState("");
-  const chips = selected
-    .map((tagId) => tags.find((tag) => tag.id === tagId))
-    .filter((tag): tag is Tag => tag !== undefined);
-  const suggestions = suggestTags(tags, selected, typed);
-
-  /// 打った名前を確定する。既にあれば選ぶだけ、無ければ作る。
-  function commit() {
-    const name = typed.trim();
-    if (name === "") return;
-    const existing = findTagByName(tags, name);
-    setTyped("");
-    if (existing !== null) {
-      if (!selected.includes(existing.id)) onToggle(existing.id);
-      return;
-    }
-    void onCreate(name);
-  }
-
-  return (
-    <>
-      <div className="tags-input">
-        {chips.map((tag) => (
-          <span
-            key={tag.id}
-            className="tag-chip tags-input-chip"
-            style={tagChipStyle(tag)}
-          >
-            {tag.name}
-            <button
-              type="button"
-              className="tags-input-remove"
-              aria-label={`${tag.name} を外す`}
-              onClick={() => {
-                onToggle(tag.id);
-              }}
-            >
-              ✕
-            </button>
-          </span>
-        ))}
-        <input
-          className="tags-input-field"
-          value={typed}
-          placeholder={
-            chips.length === 0 ? "タグを打って Enter（無ければ作ります）" : ""
-          }
-          // 見出しを出さなくなったので、名前はここで持ちます（#144）。
-          aria-label="タグ"
-          onChange={(event) => {
-            setTyped(event.target.value);
-          }}
-          onKeyDown={(event) => {
-            // 1 行の欄なので Enter で確定する（`docs/DESIGN.md`）。IME の変換を
-            // 確定する Enter でタグを作らないよう `shell/ime.ts` を通す。
-            if (event.key === "Enter" && !isComposing(event.nativeEvent)) {
-              event.preventDefault();
-              commit();
-              return;
-            }
-            // 空の欄での Backspace は末尾のチップを外す。打ち間違えたタグを、
-            // チップまでポインタを運ばずに取り消せるようにする。
-            const last = chips[chips.length - 1];
-            if (
-              event.key === "Backspace" &&
-              typed === "" &&
-              last !== undefined
-            ) {
-              event.preventDefault();
-              onToggle(last.id);
-            }
-          }}
-        />
-      </div>
-      <FieldFailure failure={failure} field="tagName" />
-      {/* 候補は打っているあいだだけ出す（#169）。開いた時点でまだ付けていない
-          タグを全部並べると、ボードのタグが増えるほどカード 1 枚の編集画面が
-          埋まる。どんなタグがあるかを一覧するのはタグ整理パネルの仕事。 */}
-      {suggestions.length > 0 && (
-        <div className="button-row tag-suggestions">
-          {suggestions.map((tag) => (
-            <button
-              key={tag.id}
-              type="button"
-              className="secondary"
-              onClick={() => {
-                setTyped("");
-                onToggle(tag.id);
-              }}
-            >
-              {tag.name}
-            </button>
-          ))}
-        </div>
-      )}
-    </>
   );
 }
 

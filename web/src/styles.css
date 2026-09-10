@@ -645,6 +645,17 @@ button.danger {
   font: inherit;
 }
 
+/* 触れない欄は、ブラウザ任せにせず**こちらで灰色にする**。既定の見た目は
+ * エンジンごとに違い、ダークテーマでは打てる欄とほとんど区別が付かない。
+ * 触れないことは文言でも出す（`docs/DESIGN.md`「色だけに意味を持たせない」）。 */
+.field-input:disabled {
+  border-color: var(--color-border);
+  background: var(--color-accent);
+  color: var(--color-muted-foreground);
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
 /* パネルは「カードを大きくしたもの」（#144）。タイトルは見出し無しの大きい欄で、
  * 期限とタグはその直下の 1 行。
  *
@@ -1227,8 +1238,14 @@ button.danger {
   min-width: 0;
 }
 
-.recurrence-weekdays,
-.recurrence-tags {
+/* 区画の中に直に置いた欄（説明・チェックリスト・タグ）は、横に並べるための
+ * `flex: 1 1 140px` を持ち越さない。`.recurrence-row` は縦並びなので、その
+ * 140px が**高さの基準**になり、中身がそれより低い欄の下に余白が居座る。 */
+.recurrence-row > .recurrence-field {
+  flex: 0 0 auto;
+}
+
+.recurrence-weekdays {
   display: flex;
   flex-wrap: wrap;
   gap: 2px;
@@ -1250,12 +1267,20 @@ button.danger {
   resize: vertical;
 }
 
-/* 押されている曜日とタグは、色だけでなく `✓` でも出す（`docs/DESIGN.md`
+/* 押されている曜日は、色だけでなく `✓` でも出す（`docs/DESIGN.md`
  * 「色だけに意味を持たせない」）。枠のほうはその補いとして付ける。 */
-.recurrence-weekday[aria-pressed="true"],
-.recurrence-tags .tag-chip[aria-pressed="true"] {
+.recurrence-weekday[aria-pressed="true"] {
   outline: 2px solid var(--color-info);
   outline-offset: 1px;
+}
+
+/* 周期によっては使えない欄（毎日・平日の先読み）。**区画ごと灰色にする**
+ * ——欄だけを灰色にすると、見出しと注記が同じ濃さのまま残り、止まっている
+ * のが欄 1 つなのか区画なのか読めない。 */
+.recurrence-field.is-disabled .field-label,
+.recurrence-field.is-disabled .field-note {
+  color: var(--color-muted-foreground);
+  opacity: 0.6;
 }
 
 .recurrence-summary {

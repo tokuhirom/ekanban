@@ -20,11 +20,12 @@ import type { Recurrence } from "../ipc/types/Recurrence";
 import type { Schedule } from "../ipc/types/Schedule";
 import type { Tag } from "../ipc/types/Tag";
 import type { BoardDocument, Outcome, RecurrenceDraft } from "../model/board";
-import { addRecurrence, removeRecurrence, updateRecurrence } from "../model/board";
+import { addRecurrence, addTag, removeRecurrence, updateRecurrence } from "../model/board";
 import { describeSchedule, leadDaysOf } from "../model/recurrence";
 import { useAppActions } from "../shell/actions";
 import { isComposing } from "../shell/ime";
-import { tagChipStyle } from "./tags";
+import { AUTO_TAG_COLOR } from "./tags";
+import { TagsInput } from "./TagsInput";
 
 type Run = (act: (document: BoardDocument) => Outcome<unknown>) => Promise<AppError | null>;
 
@@ -204,6 +205,28 @@ function RecurrenceRow({
     setFailed(await run((document) => updateRecurrence(document, recurrence.id, draftWith(changes))));
   }
 
+  /// 打った名前のタグをその場で作り、この定義に付ける（#115、[ADR 0027]）。
+  ///
+  /// **作るのと付けるのを 1 回の `run()` にまとめます**——カードの編集パネルは
+  /// 下書きを持っているので分けられますが、ここは触った時点で確定する作りなので、
+  /// 分けると作っただけで付いていない状態が置き場所に残ります。色は渡しません
+  /// ——決めていないタグには自動で色が付きます（ADR 0044）。
+  ///
+  /// [ADR 0027]: ../../../docs/adr/0027-creating-tags-while-editing-a-card.md
+  async function createTag(name: string) {
+    setFailed(
+      await run((document) => {
+        const created = addTag(document, name, AUTO_TAG_COLOR);
+        if (!created.ok) return created;
+        return updateRecurrence(
+          document,
+          recurrence.id,
+          draftWith({ tagIds: [...recurrence.tagIds, created.value] }),
+        );
+      }),
+    );
+  }
+
   const { schedule } = recurrence;
   const lead = leadDaysOf(schedule, recurrence.leadDays);
   const leadable = schedule.kind !== "daily" && schedule.kind !== "weekday";
@@ -347,7 +370,12 @@ function RecurrenceRow({
           </select>
         </label>
 
-        <label className="recurrence-field">
+        {/* 毎日と平日は先読みを持ちません（#198）。**欄は消さずに灰色にします**
+            ——消すと周期を変えたときに行が動き、そこに何があったのかも読めなく
+            なります。灰色は欄だけでなく見出しと注記にも当てて、区画ごと止まって
+            いることが見て取れるようにし、理由は文言でも出します（`docs/DESIGN.md`
+            「色だけに意味を持たせない」）。 */}
+        <label className={`recurrence-field${leadable ? "" : " is-disabled"}`}>
           <span className="field-label">先読み</span>
           <input
             className="field-input recurrence-lead-input"
@@ -355,8 +383,6 @@ function RecurrenceRow({
             min={0}
             max={60}
             value={lead}
-            // 毎日と平日は先読みを持ちません（#198）。押せない理由を文言に
-            // 入れるので、消さずに灰色にします。
             disabled={!leadable}
             aria-label={`${recurrence.title} の先読み日数`}
             onChange={(event) => {
@@ -419,35 +445,25 @@ function RecurrenceRow({
         />
       </label>
 
-      {tags.length > 0 && (
-        <div className="recurrence-field">
-          <span className="field-label">タグ</span>
-          <div className="recurrence-tags">
-            {tags.map((tag) => {
-              const on = recurrence.tagIds.includes(tag.id);
-              return (
-                <button
-                  key={tag.id}
-                  type="button"
-                  className="tag-chip"
-                  style={tagChipStyle(tag)}
-                  aria-pressed={on}
-                  aria-label={`${recurrence.title} に ${tag.name} を付ける`}
-                  onClick={() => {
-                    const tagIds = on
-                      ? recurrence.tagIds.filter((id) => id !== tag.id)
-                      : [...recurrence.tagIds, tag.id];
-                    void commit({ tagIds });
-                  }}
-                >
-                  {on ? "✓ " : ""}
-                  {tag.name}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
+      {/* カードの編集パネルと**同じ欄**です（`panel/TagsInput.tsx`）——付ける
+          ものが同じなら、打ち方も同じにします。無いタグはここで作れます。 */}
+      <div className="recurrence-field">
+        <span className="field-label">タグ</span>
+        <TagsInput
+          tags={tags}
+          selected={recurrence.tagIds}
+          failure={failed}
+          // 定義の数だけ並ぶ欄なので、読み上げでどれのタグか分かるようにする。
+          context={recurrence.title}
+          onToggle={(tagId) => {
+            const tagIds = recurrence.tagIds.includes(tagId)
+              ? recurrence.tagIds.filter((id) => id !== tagId)
+              : [...recurrence.tagIds, tagId];
+            void commit({ tagIds });
+          }}
+          onCreate={createTag}
+        />
+      </div>
 
       <p className="field-note recurrence-summary">
         {describeSchedule(schedule)}
