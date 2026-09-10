@@ -71,6 +71,51 @@ test("空のまま Enter を押しても、何も足さない", async ({ page })
   expect((await storedBoard(page)).columns[0]?.cards.length ?? 0).toBe(before);
 });
 
+test("1 行に @ で期限を書くと、タイトルから外れて期限になる", async ({ page }) => {
+  await openCapture(page);
+  await page.locator(".capture-input").fill("会議の資料 @2026-09-12");
+  // 押す前に、どう読まれたかがヒント行に出る（ADR 0031、ADR 0051）。
+  await expect(page.locator(".capture-hint")).toHaveText("→ 会議の資料 ／ 2026-09-12（土）");
+  await page.locator(".capture-input").press("Enter");
+
+  await expect
+    .poll(async () => {
+      const card = (await storedBoard(page)).columns[0]?.cards.at(-1);
+      return { title: card?.title, dueDate: card?.dueDate };
+    })
+    .toEqual({ title: "会議の資料", dueDate: "2026-09-12" });
+});
+
+test("1 行に # でタグを書くと、そのタグが作られて付く", async ({ page }) => {
+  await openCapture(page);
+  await page.locator(".capture-input").fill("床を掃く @2026-09-12 #家事");
+  await page.locator(".capture-input").press("Enter");
+
+  await expect
+    .poll(async () => {
+      const board = await storedBoard(page);
+      const card = board.columns[0]?.cards.at(-1);
+      const tag = board.tags.find((each) => each.name === "家事");
+      return { title: card?.title, tagged: tag !== undefined && card?.tagIds.includes(tag.id) };
+    })
+    .toEqual({ title: "床を掃く", tagged: true });
+});
+
+test("記号があっても読めなければ、1 行がまるごとタイトルになる", async ({ page }) => {
+  await openCapture(page);
+  await page.locator(".capture-input").fill("メールは foo@example.com");
+  // 触らないので、ヒント行も動かない。
+  await expect(page.locator(".capture-hint")).toHaveText("Enter で追加、Escape で閉じる");
+  await page.locator(".capture-input").press("Enter");
+
+  await expect
+    .poll(async () => {
+      const card = (await storedBoard(page)).columns[0]?.cards.at(-1);
+      return { title: card?.title, dueDate: card?.dueDate };
+    })
+    .toEqual({ title: "メールは foo@example.com", dueDate: null });
+});
+
 test("入れ先を選ぶと、そのカラムに印が出て、キャプチャもそこへ入る", async ({ page }) => {
   await openBoard(page);
   const second = page.locator(".column").nth(1);

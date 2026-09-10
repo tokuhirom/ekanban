@@ -130,3 +130,4 @@
 | [0048](0048-the-day-turns-at-four-in-the-morning.md) | 日付の切り替わりを選べるようにし、既定を午前 4 時にする | 2026-09-09 | 有効 |
 | [0049](0049-recurring-cards-are-defined-apart-from-the-board.md) | 繰り返しは定義を盤面と別に持ち、生成の真実を定義側に置く | 2026-09-09 | 有効 |
 | [0050](0050-one-field-for-attaching-tags.md) | タグを付ける欄は 1 つの部品に寄せる | 2026-09-10 | 有効 |
+| [0051](0051-typing-a-due-date-and-tags-in-quick-capture.md) | クイックキャプチャの 1 行に期限とタグを書く | 2026-09-10 | 有効 |
