@@ -12,21 +12,11 @@
 
 import { expect, test, type Page } from "@playwright/test";
 
-import { openBoard, startHarness, stopHarness, storedBoard } from "./harness";
+import { chooseMenu, openBoard, startHarness, stopHarness, storedBoard } from "./harness";
 import { DEFAULT_DAY_BOUNDARY_HOUR, localDay } from "../src/state/day";
-
-// `window.ekanbanMenu` の宣言を読み込むためだけの取り込み（値は使わない）。
-import type {} from "../src/ipc/browser";
-import type { AppAction } from "../src/ipc/types/AppAction";
 
 test.beforeEach(startHarness);
 test.afterEach(stopHarness);
-
-async function chooseMenu(page: Page, action: AppAction): Promise<void> {
-  await page.evaluate((name: AppAction) => {
-    window.ekanbanMenu?.(name);
-  }, action);
-}
 
 /// 置き場所に入っている、繰り返しが出したカード。
 async function recurringTitles(page: Page): Promise<string[]> {
