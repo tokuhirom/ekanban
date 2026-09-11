@@ -1,5 +1,12 @@
 # Changelog
 
+## [v0.3.2](https://github.com/tokuhirom/ekanban/compare/v0.3.1...v0.3.2) - 2026-09-10
+
+### 変更
+- Attach tags the same way everywhere, and grey out what a schedule cannot use by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/202
+- Wait for the menu handler before choosing from it in the screen tests by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/203
+- Read a due date and tags out of the quick capture line by @tokuhirom in https://github.com/tokuhirom/ekanban/pull/206
+
 ## [v0.3.1](https://github.com/tokuhirom/ekanban/compare/v0.3.0...v0.3.1) - 2026-09-09
 
 ### 変更
